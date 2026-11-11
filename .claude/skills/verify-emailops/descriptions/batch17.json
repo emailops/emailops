@@ -7,8 +7,6 @@
     "src-tauri/src/db/emails/crud.rs::the_unread_check_seeks_the_thread": "La comprobación de «sin leer» de cada fila busca su hilo por índice en lugar de recorrer el correo sin leer de toda la cuenta.",
     "src-tauri/src/db/emails/mailbox_state.rs::unread_threads_are_the_threads_with_any_live_unread_message": "Un hilo cuenta como no leído si alguno de sus mensajes no borrados lo está, y solo dentro de su propia cuenta.",
     "src-tauri/src/db/emails/mailbox_state.rs::unread_threads_seeks_each_thread_instead_of_walking_the_account": "La consulta de hilos no leídos busca cada hilo por índice en lugar de recorrer la cuenta entera.",
-    "src-tauri/src/db/emails/search.rs::an_unread_filter_lists_threads_with_any_unread_message": "Un filtro del sidebar con «No leídos» incluye un hilo si cualquier mensaje está sin leer, aunque el que coincide con el filtro ya esté leído.",
-    "src-tauri/src/db/emails/search.rs::an_unread_tag_filter_lists_threads_with_any_unread_message": "Un filtro por etiqueta con «No leídos» deja fuera los hilos ya leídos del todo.",
     "src-tauri/src/services/emails/mod.rs::an_inbox_conversation_is_unread_when_any_message_is": "Una conversación de la bandeja se muestra como no leída si cualquiera de sus mensajes lo está, con o sin el filtro activo."
   },
   "vitest": {
@@ -22,6 +20,13 @@
     "src/components/Inbox/Inbox.unreadToggle.test.tsx::turns the unread filter on and off": "Pulsar «No leídos» y «Todos» activa y desactiva el filtro.",
     "src/components/Inbox/Inbox.unreadToggle.test.tsx::stays available on a sidebar filter": "El toggle sigue visible cuando hay un filtro del sidebar activo.",
     "src/components/Inbox/Inbox.unreadToggle.test.tsx::is hidden while a free-text search is active": "El toggle se oculta durante una búsqueda de texto libre, que ya admite «is:unread».",
-    "src/components/Inbox/Inbox.unreadToggle.test.tsx::says there is nothing unread when the unread list is empty": "Con «No leídos» activo y la lista vacía, la lista dice que no hay correos sin leer."
+    "src/components/Inbox/Inbox.unreadToggle.test.tsx::says there is nothing unread when the unread list is empty": "Con «No leídos» activo y la lista vacía, la lista dice que no hay correos sin leer.",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::renders an icon-only star button on the same row as Give feedback": "Comprueba que junto a «Give feedback» hay un botón cuadrado solo con el icono de estrella, en la misma fila y a su derecha.",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::opens an explanatory dialog instead of the browser": "Comprueba que el botón de estrella abre un diálogo que explica la petición y nombra el repositorio, sin abrir todavía el navegador.",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::opens the repository in the system browser on Visit and closes the dialog": "Comprueba que «Visit GitHub» abre la URL del repositorio en el navegador del sistema y cierra el diálogo.",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::opens nothing on Cancel": "Comprueba que «Cancel» cierra el diálogo sin abrir ninguna URL.",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::logs a system error when the browser cannot be opened": "Comprueba que si el navegador no se puede abrir queda una entrada de error con fuente «system» en el panel de Logs.",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::still lists the three feedback kinds": "Comprueba que el popover de «Give feedback» sigue listando sus tres tipos (general, error, idea).",
+    "src/components/Sidebar/FeedbackMenu.test.tsx::delegates the picked kind to onSelect": "Comprueba que elegir un tipo de feedback en el popover lo entrega al callback onSelect."
   }
 }

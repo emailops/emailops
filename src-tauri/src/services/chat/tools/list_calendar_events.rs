@@ -149,17 +149,15 @@ impl Tool for ListCalendarEventsTool {
     }
 
     fn is_available(&self, db: &Database) -> bool {
-        // Only advertise the tool when at least one connected account has
-        // calendar integration enabled (per-account opt-in on a Gmail /
-        // Outlook account) — setups without it never see the tool, so it
-        // doesn't tax their prompt budget.
+        // Only advertise the tool when at least one connected account has a
+        // calendar (Gmail / Outlook API, or an IMAP account's ICS feeds) with
+        // the integration enabled — setups without it never see the tool, so
+        // it doesn't tax their prompt budget.
         db.list_accounts()
             .map(|accounts| {
-                accounts.iter().any(|a| {
-                    a.enabled
-                        && crate::sync::calendar_provider::provider_supports_calendar(&a.provider)
-                        && db.calendar_enabled(&a.id).unwrap_or(false)
-                })
+                accounts
+                    .iter()
+                    .any(|a| a.enabled && crate::services::calendar::capability::calendar_available(db, a))
             })
             .unwrap_or(false)
     }
@@ -177,11 +175,9 @@ impl Tool for ListCalendarEventsTool {
             }
             Err(e) => return Ok(ToolOutput::text(format!("Calendar error: {e}"))),
         };
-        if !crate::sync::calendar_provider::provider_supports_calendar(&account.provider)
-            || !ctx.db.calendar_enabled(&account.id).unwrap_or(false)
-        {
+        if !crate::services::calendar::capability::calendar_available(ctx.db, &account) {
             return Ok(ToolOutput::text(
-                "This account has no calendar integration enabled (enable it in Settings → Calendar; only Gmail and Outlook calendars are supported)."
+                "This account has no calendar integration enabled (enable it in Settings → Calendar; IMAP accounts need a subscribed calendar feed first)."
                     .to_string(),
             ));
         }
@@ -456,6 +452,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         })
         .expect("seed account");
     }
@@ -513,6 +510,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         })
         .expect("seed account");
         let ctx = ToolCtx {

@@ -124,10 +124,12 @@ to find mail the user received, drop `from` and search again.",
             );
         }
     }
-    let has_calendar = ctx.db.get_account(ctx.account_id).ok().flatten().is_some_and(|a| {
-        crate::sync::calendar_provider::provider_supports_calendar(&a.provider)
-            && ctx.db.calendar_enabled(&a.id).unwrap_or(false)
-    });
+    let has_calendar = ctx
+        .db
+        .get_account(ctx.account_id)
+        .ok()
+        .flatten()
+        .is_some_and(|a| crate::services::calendar::capability::calendar_available(ctx.db, &a));
     if has_calendar {
         out.push_str(
             " If the question is about a meeting or another scheduled event, call list_calendar_events \
@@ -325,6 +327,12 @@ pub struct SearchEmailsTool;
 impl Tool for SearchEmailsTool {
     fn name(&self) -> &'static str {
         "search_emails"
+    }
+
+    /// The result rows are fenced by `format_search_emails_output*`; the
+    /// page and coverage notes ahead of them are ours.
+    fn fences_its_output(&self) -> bool {
+        true
     }
 
     fn description(&self) -> &'static str {
@@ -642,9 +650,9 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                     ));
                 }
                 let mut body = if include_bodies {
-                    render_rows(ctx, &emails, Some(&fetch_bodies(&emails)))
+                    render_rows(ctx, &emails, Some(&fetch_bodies(&emails)), ascending)
                 } else {
-                    render_rows(ctx, &emails, None)
+                    render_rows(ctx, &emails, None, ascending)
                 };
                 // A full page is only a slice: probe how many threads match
                 // in total so the model can say "at least 156", not "25", and
@@ -725,7 +733,7 @@ Example: search_emails({\"from\": \"alice@example.com\", \"limit\": 25}).",
                                 "(no matches in the requested date window — \
 showing recent matches without since/until instead)\n",
                             );
-                            out.push_str(&render_rows(ctx, emails, None));
+                            out.push_str(&render_rows(ctx, emails, None, ascending));
                             return Ok(ToolOutput::text_with_email_refs(out, ids(emails)));
                         }
                         Ok(_) => {
@@ -757,7 +765,8 @@ showing recent matches without since/until instead)\n",
                     participants_arg,
                 ) {
                     let mut out = String::from("(no email matched all keywords — broadened to any keyword)\n");
-                    out.push_str(&render_rows(ctx, &merged, None));
+                    // The any-keyword fallback always sorts newest-first.
+                    out.push_str(&render_rows(ctx, &merged, None, false));
                     return Ok(ToolOutput::text_with_email_refs(out, ids(&merged)));
                 }
 
@@ -864,9 +873,9 @@ impl SearchEmailsTool {
                     Some((id, thread_clean::clean_email_body(&new, per_email)))
                 })
                 .collect();
-            out.push_str(&render_rows(ctx, &kept, Some(&cleaned)));
+            out.push_str(&render_rows(ctx, &kept, Some(&cleaned), false));
         } else {
-            out.push_str(&render_rows(ctx, &kept, None));
+            out.push_str(&render_rows(ctx, &kept, None, false));
         }
         let ids: Vec<String> = kept.iter().map(|e| e.id.clone()).collect();
         Ok(ToolOutput::text_with_email_refs(out, ids))
@@ -874,12 +883,14 @@ impl SearchEmailsTool {
 }
 
 /// Formats result rows with each thread's message count, so the model can
-/// tell a lone email from the latest message of a longer exchange. A failed
-/// count only drops the `messages=` field; the results still go out.
+/// tell a lone email from one message of a longer exchange (its latest match,
+/// or its earliest when `oldest_first`). A failed count only drops the
+/// `messages=` field; the results still go out.
 fn render_rows(
     ctx: &ToolCtx<'_>,
     rows: &[crate::models::Email],
     bodies: Option<&std::collections::HashMap<String, String>>,
+    oldest_first: bool,
 ) -> String {
     let threads: Vec<(&str, &str)> = rows
         .iter()
@@ -890,8 +901,8 @@ fn render_rows(
         std::collections::HashMap::new()
     });
     match bodies {
-        Some(bodies) => format_search_emails_output_with_bodies(rows, bodies, &sizes),
-        None => format_search_emails_output(rows, &sizes),
+        Some(bodies) => format_search_emails_output_with_bodies(rows, bodies, &sizes, oldest_first),
+        None => format_search_emails_output(rows, &sizes, oldest_first),
     }
 }
 
@@ -1173,6 +1184,7 @@ simply be a different one)"
         let out = crate::services::chat::format_search_emails_output(
             &[read, email("u", "bob", "me@x.com", 200)],
             &std::collections::HashMap::new(),
+            false,
         );
         let row = |id: &str| {
             out.lines()

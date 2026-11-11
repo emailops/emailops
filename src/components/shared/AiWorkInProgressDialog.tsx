@@ -87,15 +87,15 @@ export function AiWorkInProgressDialog({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
-      <div className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
-        <h3 className="text-base font-semibold text-gray-100 mb-2">{t('settings:aiWork.title')}</h3>
+      <div className="theme-chrome bg-white border border-gray-200 rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
+        <h3 className="text-base font-semibold text-gray-900 mb-2">{t('settings:aiWork.title')}</h3>
         {error && (
-          <div role="alert" className="mb-3 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">
+          <div role="alert" className="mb-3 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
             {error}
           </div>
         )}
-        <p className="text-sm text-gray-300 mb-2">{t('settings:aiWork.body')}</p>
-        <ul className="text-sm text-gray-200 mb-3 list-disc pl-5 space-y-0.5">
+        <p className="text-sm text-gray-700 mb-2">{t('settings:aiWork.body')}</p>
+        <ul className="text-sm text-gray-700 mb-3 list-disc pl-5 space-y-0.5">
           {summarizeWork(work).map((line) => (
             <li key={line.kind}>
               {[
@@ -109,10 +109,10 @@ export function AiWorkInProgressDialog({
             </li>
           ))}
         </ul>
-        {sendsMailToOpenRouter(activity.provider, work) && (
-          <p className="text-sm text-amber-300 mb-3">{t('settings:aiWork.openRouter')}</p>
+        {sendsMailToOpenRouter(activity, work) && (
+          <p className="text-sm text-amber-700 mb-3">{t('settings:aiWork.openRouter')}</p>
         )}
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-gray-500">
           {phase === 'ask' && t('settings:aiWork.help')}
           {phase === 'stopping' && t('settings:aiWork.stopping')}
           {phase === 'waiting' && t('settings:aiWork.waiting')}
@@ -120,7 +120,7 @@ export function AiWorkInProgressDialog({
         <div className="flex gap-2 justify-end mt-5">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
           >
             {t('common:actions.cancel')}
           </button>
@@ -128,7 +128,7 @@ export function AiWorkInProgressDialog({
             <>
               <button
                 onClick={() => choose('waiting')}
-                className="px-3 py-1.5 text-sm bg-gray-700 text-gray-200 rounded hover:bg-gray-600 transition-colors"
+                className="px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
               >
                 {t('settings:aiWork.wait')}
               </button>

@@ -23,16 +23,16 @@ export function DocumentsSettings() {
   };
 
   if (isLoading) {
-    return <p className="text-gray-400 text-sm p-4">{t('common:state.loading')}</p>;
+    return <p className="text-gray-500 text-sm p-4">{t('common:state.loading')}</p>;
   }
 
   return (
     <SettingsPanel>
-      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+      {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>}
       <section>
         <div className="flex items-center justify-between py-2">
           <div>
-            <label className="block text-sm font-medium text-gray-300">{t('settings:documents.enable')}</label>
+            <label className="block text-sm font-medium text-gray-700">{t('settings:documents.enable')}</label>
             <p className="text-xs text-gray-500 mt-0.5">{t('settings:documents.enableDesc')}</p>
           </div>
           <button
@@ -40,7 +40,7 @@ export function DocumentsSettings() {
             data-testid="shared-docs-toggle"
             onClick={handleToggle}
             className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-              enabled ? 'bg-primary-600' : 'bg-gray-600'
+              enabled ? 'bg-primary-600' : 'bg-gray-300'
             }`}
             role="switch"
             aria-checked={enabled}

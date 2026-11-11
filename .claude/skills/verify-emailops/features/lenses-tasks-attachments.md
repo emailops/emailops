@@ -22,7 +22,7 @@ the OS quarantine mark, and opening one whose type can run code asks first.
 Preconditions: baseline. The demo email *Corrected Larkspur Freight renewal quote* (find it with the search box: `Larkspur`) carries `larkspur-client-portal.webloc` (a shortcut stored on disk) and `larkspur-renewal-terms.html` (inline). Confirmed live on 30/09/2026.
 
 - Confirmation → open the email, `$V wd click 'button[title^="larkspur-client-portal.webloc"]'` → `$V wd exists '[data-testid="cancel-open-attachment"]'` prints `present`; the dialog names the file and says it is a shortcut. `$V wd click '[data-testid="cancel-open-attachment"]'` closes it. **Never** click `confirm-open-attachment`: that hands the file to the OS.
-- Preview → `$V wd click 'button[title^="larkspur-renewal-terms.html"]'` → `iframe[title="larkspur-renewal-terms.html"]` has `sandbox=""` and a `data:text/html;base64,` source; close with `button[title="Close"]`.
+- Preview → `$V wd click 'button[title^="larkspur-renewal-terms.html"]'` → the tab shows the page like an email body: `iframe[title="Email content"]` with `sandbox="allow-scripts"`, its remote image without a `src`, and *Remote images were blocked…* with **Show images** (never click it on a real sender); close with `button[title="Close"]`. Driven live 31/10/2026.
 - Views → `$V wd click 'button*=Lenses'`, `button*=Tasks`, `button*=Attachments` render content.
 
 ## Gotchas
@@ -37,6 +37,8 @@ Preconditions: baseline. The demo email *Corrected Larkspur Freight renewal quot
 | rules, suggestions, retroactive apply | unit (`services::attachments`, `services::attachment_suggestions`) |
 | Lens scope, extraction, coercion, isolation of a failing Lens, stop from the queue | unit on an in-memory DB (`services::lenses::*`, `db::lenses`) |
 | rule collects a file on sync; a dangerous collected file is refused until confirmed | integration (`a_headless_sync_applies_attachment_rules_to_new_mail`, `a_dangerous_attachment_collected_by_a_rule_is_refused_until_confirmed`, …) |
+| an HTML attachment renders like an email body, with remote content by consent | vitest (`EmailView/AttachmentTabView.render`, `Attachments/AttachmentViewer.render`) + e2e (`Adjuntos/página web como el cuerpo de un correo`) |
+| the chat's Lens tools leave out a row of deleted mail | unit (`db::lenses`) + eval (`lens_rows_leave_out_trashed_mail` in `retrieval_exclusions.yaml`) |
 | Lens CRUD and runs | integration (`*lens*`, `backfill_*` — the latter are counted under Accounts by their name) |
 | attachment and Lens command arguments (`confirmed` included) | contract (`src/lib/apiContract/lenses.api.test.ts`) |
 | dialog, hook, viewer, rule modal, stores | vitest (`useOpenAttachment`, `AttachmentTabView`, `Attachments/*`, `attachmentStore`, `Lenses/*`) |

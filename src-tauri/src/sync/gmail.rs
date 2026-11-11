@@ -1,4 +1,5 @@
 use crate::services::app_handle::AppHandle;
+use crate::util::email_addr::split_address_list;
 use async_trait::async_trait;
 use reqwest::{Client, Response, StatusCode};
 use serde::Deserialize;
@@ -41,7 +42,7 @@ pub(crate) fn mailbox_from_labels(labels: &[String]) -> &'static str {
     }
 }
 
-const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
+pub(crate) const GMAIL_API_BASE: &str = "https://gmail.googleapis.com/gmail/v1";
 const GMAIL_BATCH_URL: &str = "https://www.googleapis.com/batch/gmail/v1";
 const GMAIL_MAX_RETRIES: u32 = 5;
 /// Records per `users.history.list` page (the API default; its maximum is 500).
@@ -664,6 +665,7 @@ impl GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -675,6 +677,8 @@ impl GmailClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: true,
             subject: &normalized_subject,
             in_reply_to: target.message_id.filter(|v| !v.trim().is_empty()),
             references: target.references.filter(|v| !v.trim().is_empty()),
@@ -708,6 +712,7 @@ impl GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -717,6 +722,8 @@ impl GmailClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: true,
             subject,
             in_reply_to: None,
             references: None,
@@ -748,6 +755,7 @@ impl GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -760,6 +768,8 @@ impl GmailClient {
             from_name: None,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: true,
             subject,
             in_reply_to,
             references,
@@ -781,12 +791,22 @@ impl GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments, reply)?;
+        let payload = self.draft_payload(
+            from_email,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+            reply,
+        )?;
         let url = format!("{}/users/me/drafts", self.base_url);
         let response = self.send_post_json_no_resend(&url, &payload, "create draft").await?;
         let draft: GmailDraftId = response.json().await?;
@@ -799,12 +819,22 @@ impl GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        let payload = self.draft_payload(from_email, to_emails, cc_emails, subject, body, attachments, reply)?;
+        let payload = self.draft_payload(
+            from_email,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+            reply,
+        )?;
         let url = format!("{}/users/me/drafts/{}", self.base_url, provider_draft_id);
         let response = self
             .send_request_with_retry("update draft", |client, token| {
@@ -917,8 +947,17 @@ impl GmailClient {
             // Take the token from the content we actually read, not from the
             // listing: if the draft was saved in between, storing the listed id
             // would pin us to content we never fetched.
-            let message_id = Some(msg.id.clone());
-            let (email, _cat, _atts) = self.parse_message(msg).await?;
+            let message_id = msg.id.clone();
+            // Only a draft or a sent copy carries `Bcc`; the message parse
+            // does not keep it.
+            let bcc = msg
+                .payload
+                .headers
+                .iter()
+                .find(|h| h.name.eq_ignore_ascii_case("Bcc"))
+                .map(|h| split_address_list(&h.value))
+                .unwrap_or_default();
+            let (email, _cat, atts) = self.parse_message(msg).await?;
             // The parsed body is HTML; split it so the composer renders the rich
             // source instead of escaping it as literal text.
             let (body, body_html) = crate::util::html::split_draft_body(&email.body);
@@ -927,13 +966,24 @@ impl GmailClient {
                 provider_draft_id: draft_id.clone(),
                 to_addresses: email.recipients,
                 cc_addresses: email.cc,
+                bcc_addresses: bcc,
                 subject: email.subject,
                 body,
                 body_html,
                 // Gmail's `internalDate`, already parsed onto the message —
                 // for a draft that's when it was last saved.
                 updated_at: Some(email.timestamp),
-                provider_message_id: message_id,
+                attachments: atts
+                    .into_iter()
+                    .map(|att| crate::models::ProviderDraftAttachment {
+                        message_id: message_id.clone(),
+                        attachment_id: att.attachment_id,
+                        filename: att.filename,
+                        mime_type: att.mime_type,
+                        inline_data: att.inline_data,
+                    })
+                    .collect(),
+                provider_message_id: Some(message_id),
                 in_reply_to,
             });
         }
@@ -943,7 +993,14 @@ impl GmailClient {
         })
     }
 
+    /// One message that panics on parse is an error for that message only; the
+    /// sync skips it and carries on (see `util::panic_guard`).
     async fn parse_message(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
+        let what = format!("Reading Gmail message {}", msg.id);
+        crate::util::panic_guard::run_isolated(&what, self.parse_message_unguarded(msg)).await
+    }
+
+    async fn parse_message_unguarded(&self, msg: GmailMessage) -> Result<(Email, EmailCategory, Vec<AttachmentInfo>)> {
         let headers = &msg.payload.headers;
 
         // Preserve message order: `capture` depends on it for both the topmost
@@ -994,7 +1051,7 @@ impl GmailClient {
         let cc = split_address_list(&cc_header);
 
         // Get body content
-        let body = self.extract_body(&msg.id, &msg.payload).await;
+        let body = self.extract_body(&msg.id, &msg.payload).await?;
 
         // Collect file attachment metadata
         let attachment_infos = Self::collect_attachment_infos(&msg.payload);
@@ -1175,7 +1232,10 @@ impl GmailClient {
         decode_base64_url_bytes(&att.data)
     }
 
-    async fn extract_body(&self, message_id: &str, payload: &GmailPayload) -> String {
+    /// `Err` when a part of the body could not be fetched: a stored message is
+    /// never downloaded again, so storing it incomplete would be for good. A
+    /// part Gmail no longer has cannot be waited for, and is left out.
+    async fn extract_body(&self, message_id: &str, payload: &GmailPayload) -> Result<String> {
         // Try to get HTML body first, fall back to plain text (inline data)
         // A proper (unnamed, inline) body part always wins; only when none
         // exists does a named text part count, since some mailers put a
@@ -1209,20 +1269,22 @@ impl GmailClient {
             if let Some(att_id) = html_att {
                 match self.fetch_attachment(message_id, &att_id).await {
                     Ok(data) => html = data,
-                    Err(e) => crate::services::logger::log(
+                    Err(e @ AppError::NotFound(_)) => crate::services::logger::log(
                         "error",
                         "sync",
-                        format!("Gmail: could not fetch the HTML body of {message_id}: {e}"),
+                        format!("Gmail: the HTML body of {message_id} is gone: {e}"),
                     ),
+                    Err(e) => return Err(e),
                 }
             } else if let Some(att_id) = plain_att() {
                 match self.fetch_attachment(message_id, &att_id).await {
                     Ok(data) => html = plain_text_to_html(&data),
-                    Err(e) => crate::services::logger::log(
+                    Err(e @ AppError::NotFound(_)) => crate::services::logger::log(
                         "error",
                         "sync",
-                        format!("Gmail: could not fetch the text body of {message_id}: {e}"),
+                        format!("Gmail: the text body of {message_id} is gone: {e}"),
                     ),
+                    Err(e) => return Err(e),
                 }
             }
         }
@@ -1247,7 +1309,8 @@ impl GmailClient {
                                 use base64::{engine::general_purpose::STANDARD, Engine};
                                 STANDARD.encode(&bytes)
                             }
-                            Err(_) => continue,
+                            Err(AppError::NotFound(_)) => continue,
+                            Err(e) => return Err(e),
                         },
                         None => continue,
                     },
@@ -1257,7 +1320,7 @@ impl GmailClient {
             }
         }
 
-        html
+        Ok(html)
     }
 }
 
@@ -1564,6 +1627,16 @@ impl GmailClient {
                     // forever". Same message text as every other failure.
                     if status == StatusCode::NOT_FOUND {
                         return Err(AppError::NotFound(format!(
+                            "Failed to {}: {}",
+                            operation,
+                            format_gmail_error(status, &body)
+                        )));
+                    }
+                    // Gmail refuses the request itself (a thread id it does not
+                    // know, a header it rejects): sent again unchanged, it fails
+                    // the same way. Typed so callers do not repeat it.
+                    if status == StatusCode::BAD_REQUEST {
+                        return Err(AppError::InvalidInput(format!(
                             "Failed to {}: {}",
                             operation,
                             format_gmail_error(status, &body)
@@ -1942,6 +2015,7 @@ impl EmailProvider for GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -1952,6 +2026,7 @@ impl EmailProvider for GmailClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
             target,
             subject,
             body,
@@ -1966,12 +2041,22 @@ impl EmailProvider for GmailClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<provider::SentMessageMeta> {
-        self.send_new_email(from_email, from_name, to_emails, cc_emails, subject, body, attachments)
-            .await
+        self.send_new_email(
+            from_email,
+            from_name,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+        )
+        .await
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
@@ -1983,13 +2068,23 @@ impl EmailProvider for GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        self.create_draft(from_email, to_emails, cc_emails, subject, body, attachments, reply)
-            .await
+        self.create_draft(
+            from_email,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+            reply,
+        )
+        .await
     }
 
     async fn update_draft(
@@ -1998,6 +2093,7 @@ impl EmailProvider for GmailClient {
         from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -2008,6 +2104,7 @@ impl EmailProvider for GmailClient {
             from_email,
             to_emails,
             cc_emails,
+            bcc_emails,
             subject,
             body,
             attachments,
@@ -2107,9 +2204,11 @@ impl EmailProvider for GmailClient {
             .send_batch_and_parse(message_ids, "full", BOUNDARY, "batch get messages")
             .await?;
 
-        // Slot results by original index. 429s are tracked for retry.
+        // Slot results by original index. Transient failures are tracked for retry.
         let mut final_results: Vec<Option<ProviderResult>> = (0..message_ids.len()).map(|_| None).collect();
         let mut rate_limited: Vec<usize> = Vec::new();
+        let mut delay_ms = GMAIL_INITIAL_BACKOFF_MS;
+        let mut retry_plan = plan_batch_wait(&initial_parts, delay_ms, crate::services::clock::now_secs());
 
         for (idx, part) in slot_batch_parts(initial_parts, message_ids.len())
             .into_iter()
@@ -2120,7 +2219,7 @@ impl EmailProvider for GmailClient {
                 // fill-in below, so one gap costs one message, not the chunk.
                 None => {}
                 Some(Ok(json)) => final_results[idx] = Some(self.parse_batch_part_json(&json).await),
-                Some(Err(429)) => rate_limited.push(idx),
+                Some(Err(status)) if is_retryable_batch_status(status) => rate_limited.push(idx),
                 Some(Err(status)) => {
                     final_results[idx] = Some(Err(AppError::SyncError(format!(
                         "Batch sub-request failed with HTTP {}",
@@ -2130,20 +2229,29 @@ impl EmailProvider for GmailClient {
             }
         }
 
-        // Retry any 429-rate-limited sub-requests with exponential backoff.
-        let mut delay_ms = GMAIL_INITIAL_BACKOFF_MS;
+        // Retry sub-requests that failed transiently, for as long as they ask.
         for attempt in 0..GMAIL_MAX_RETRIES {
             if rate_limited.is_empty() {
                 break;
             }
 
+            let wait_ms = match retry_plan {
+                RetryPlan::Wait(wait_ms) => wait_ms,
+                RetryPlan::GateUntil(until_secs) => {
+                    if let Some(account_id) = &self.account_id {
+                        set_rate_limit_gate(account_id, until_secs);
+                    }
+                    self.emit_rate_limit_gate_log("batch get messages", StatusCode::TOO_MANY_REQUESTS, until_secs);
+                    break;
+                }
+            };
             self.emit_retry_log(
                 &format!("{} rate-limited batch sub-request(s)", rate_limited.len()),
                 attempt + 1,
-                delay_ms,
+                wait_ms,
                 StatusCode::TOO_MANY_REQUESTS,
             );
-            sleep(Duration::from_millis(delay_ms.min(GMAIL_MAX_BACKOFF_MS))).await;
+            sleep(Duration::from_millis(wait_ms)).await;
             delay_ms = (delay_ms * 2).min(GMAIL_MAX_BACKOFF_MS);
 
             let retry_ids: Vec<&str> = rate_limited.iter().map(|&i| message_ids[i]).collect();
@@ -2163,6 +2271,8 @@ impl EmailProvider for GmailClient {
                 }
             };
 
+            retry_plan = plan_batch_wait(&retry_parts, delay_ms, crate::services::clock::now_secs());
+
             // The retry re-sends only the rate-limited ids, so a part's index is
             // a position within `rate_limited`, not within `message_ids`.
             let mut still_limited: Vec<usize> = Vec::new();
@@ -2175,7 +2285,7 @@ impl EmailProvider for GmailClient {
                     // Still unanswered — keep it queued for the next attempt.
                     None => still_limited.push(original_idx),
                     Some(Ok(json)) => final_results[original_idx] = Some(self.parse_batch_part_json(&json).await),
-                    Some(Err(429)) => still_limited.push(original_idx),
+                    Some(Err(status)) if is_retryable_batch_status(status) => still_limited.push(original_idx),
                     Some(Err(status)) => {
                         final_results[original_idx] = Some(Err(AppError::SyncError(format!(
                             "Batch sub-request failed with HTTP {}",
@@ -2187,10 +2297,10 @@ impl EmailProvider for GmailClient {
             rate_limited = still_limited;
         }
 
-        // Any remaining 429s after all retry attempts → permanent error for this sync.
+        // Whatever still fails after the retries → permanent error for this sync.
         for idx in rate_limited {
             final_results[idx] = Some(Err(AppError::SyncError(
-                "Batch sub-request rate limited — retries exhausted".to_string(),
+                "Batch sub-request still failing — retries exhausted".to_string(),
             )));
         }
 
@@ -2227,8 +2337,12 @@ pub(crate) struct BatchPart {
     /// usable Content-ID, which leaves position as the only way to attribute
     /// the part.
     pub index: Option<usize>,
-    /// `Ok(json)` for a 2xx sub-response, `Err(http_status)` otherwise.
+    /// `Ok(json)` for a 2xx sub-response, `Err(http_status)` otherwise. A 403
+    /// about the quota reads as 429, which is what it means.
     pub outcome: std::result::Result<String, u16>,
+    /// What a failed sub-response says about retrying: its `Retry-After`
+    /// header and its body, the two places Gmail puts the hint.
+    pub failure: Option<(reqwest::header::HeaderMap, String)>,
 }
 
 /// Split a multipart/mixed `body` on `boundary` and extract JSON from each part.
@@ -2244,16 +2358,39 @@ fn parse_batch_parts(body: &str, boundary: &str) -> Vec<BatchPart> {
         }
 
         let index = batch_part_index(part);
-        let outcome = match extract_json_from_batch_part(part) {
-            Some((status, json)) if (200..300).contains(&status) => Ok(json),
-            Some((status, _)) => Err(status),
+        let (outcome, failure) = match extract_json_from_batch_part(part) {
+            Some((status, json)) if (200..300).contains(&status) => (Ok(json), None),
+            Some((403, json)) if is_retryable_gmail_error(StatusCode::FORBIDDEN, &json) => {
+                (Err(429), Some((batch_part_retry_after(part), json)))
+            }
+            Some((status, json)) => (Err(status), Some((batch_part_retry_after(part), json))),
             // Malformed part — treat as an unknown server error
-            None => Err(0),
+            None => (Err(0), None),
         };
-        results.push(BatchPart { index, outcome });
+        results.push(BatchPart {
+            index,
+            outcome,
+            failure,
+        });
     }
 
     results
+}
+
+/// The `Retry-After` of a part's inner response, as a header map for
+/// [`plan_rate_limit_wait`].
+fn batch_part_retry_after(part: &str) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    let value = part.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("retry-after")
+            .then(|| value.trim().parse().ok())?
+    });
+    if let Some(value) = value {
+        headers.insert(reqwest::header::RETRY_AFTER, value);
+    }
+    headers
 }
 
 /// Read the sub-request index out of a part's `Content-ID` header.
@@ -2386,6 +2523,33 @@ enum RetryPlan {
     GateUntil(i64),
 }
 
+/// Whether a sub-response is worth asking for again. A 403 about the quota has
+/// already been read as 429 by [`parse_batch_parts`].
+fn is_retryable_batch_status(status: u16) -> bool {
+    StatusCode::from_u16(status).is_ok_and(|status| is_retryable_gmail_error(status, ""))
+}
+
+/// How long to wait before re-sending a batch's failed parts: one request
+/// carries them all, so the longest wait any of them asked for applies. Parts
+/// that will not be retried have no say.
+fn plan_batch_wait(parts: &[BatchPart], fallback_delay_ms: u64, now_secs: i64) -> RetryPlan {
+    let mut wait_ms = fallback_delay_ms.min(GMAIL_MAX_BACKOFF_MS);
+    let mut gate_until: Option<i64> = None;
+    for part in parts {
+        let (Err(status), Some((headers, body))) = (&part.outcome, &part.failure) else {
+            continue;
+        };
+        if !is_retryable_batch_status(*status) {
+            continue;
+        }
+        match plan_rate_limit_wait(headers, body, fallback_delay_ms, now_secs) {
+            RetryPlan::Wait(asked) => wait_ms = wait_ms.max(asked),
+            RetryPlan::GateUntil(until) => gate_until = gate_until.max(Some(until)),
+        }
+    }
+    gate_until.map_or(RetryPlan::Wait(wait_ms), RetryPlan::GateUntil)
+}
+
 /// Pick the wait strategy for a retryable response. The provider's own hint
 /// (`Retry-After` header, or the "Retry after <RFC3339>" timestamp Gmail
 /// embeds in 429 error messages) wins over the exponential fallback; hints
@@ -2494,52 +2658,13 @@ fn format_gmail_error(status: StatusCode, body: &str) -> String {
         .unwrap_or_else(|| format!("HTTP {} {}", status.as_u16(), body))
 }
 
-/// Split an address-list header into its entries, each kept verbatim
-/// (`"Name" <a@b>` or `a@b`, the shape Gmail rows store). Commas inside a
-/// quoted display name, an `<addr>` or a `(comment)` do not split.
-fn split_address_list(raw: &str) -> Vec<String> {
-    let mut entries = Vec::new();
-    let mut current = String::new();
-    let (mut in_quotes, mut escaped, mut angle, mut comment) = (false, false, 0u32, 0u32);
-    for c in raw.chars() {
-        if escaped {
-            escaped = false;
-        } else if in_quotes {
-            match c {
-                '\\' => escaped = true,
-                '"' => in_quotes = false,
-                _ => {}
-            }
-        } else {
-            match c {
-                '"' => in_quotes = true,
-                '<' => angle += 1,
-                '>' => angle = angle.saturating_sub(1),
-                '(' => comment += 1,
-                ')' => comment = comment.saturating_sub(1),
-                ',' if angle == 0 && comment == 0 => {
-                    entries.push(std::mem::take(&mut current));
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        current.push(c);
-    }
-    entries.push(current);
-    entries
-        .into_iter()
-        .map(|e| e.trim().to_string())
-        .filter(|e| !e.is_empty())
-        .collect()
-}
-
 fn parse_email_address(from: &str) -> (String, String) {
-    // Parse "Name <email@example.com>" or "email@example.com"
-    if let Some(start) = from.find('<') {
-        if let Some(end) = from.find('>') {
+    // Parse "Name <email@example.com>" or "email@example.com". The address is
+    // the last <…>: a display name may itself hold '<' or '>'.
+    if let Some(start) = from.rfind('<') {
+        if let Some(len) = from[start + 1..].find('>') {
             let name = from[..start].trim().trim_matches('"').to_string();
-            let email = from[start + 1..end].to_string();
+            let email = from[start + 1..start + 1 + len].to_string();
             return (if name.is_empty() { email.clone() } else { name }, email);
         }
     }
@@ -3119,6 +3244,49 @@ mod tests {
         assert_eq!(none, None);
     }
 
+    // Gmail answers 400 to a draft it cannot take (a thread id it does not
+    // know, a header it refuses). Typed, so the draft sync can tell that
+    // sending the same content again is pointless.
+    #[tokio::test]
+    async fn a_draft_gmail_refuses_as_malformed_is_invalid_input() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/drafts"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": {
+                    "code": 400,
+                    "message": "Invalid thread_id value",
+                    "errors": [{ "reason": "invalidArgument" }]
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-draft-refused".into())).with_base_url(server.uri());
+
+        let err = EmailProvider::create_draft(
+            &client,
+            "ada@example.com",
+            &["bob@example.com".to_string()],
+            &[],
+            &[],
+            "Hello",
+            &EmailBody::plain("hi"),
+            &[],
+            None,
+        )
+        .await
+        .expect_err("Gmail refuses the draft");
+        assert!(
+            matches!(&err, AppError::InvalidInput(message) if message.contains("Invalid thread_id value")),
+            "got {err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn far_future_rate_limit_fails_fast_and_gates_account() {
         use wiremock::matchers::any;
@@ -3159,6 +3327,41 @@ mod tests {
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
+    /// Gmail's `raw` has no envelope: the blind copy must be in the `Bcc`
+    /// header, which Gmail removes before delivering (#270).
+    #[tokio::test]
+    async fn a_send_hands_gmail_the_bcc_header() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id":"m","threadId":"t"}"#, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        client
+            .send_new_email(
+                "me@example.com",
+                None,
+                &[],
+                &[],
+                &["hidden@example.com".to_string()],
+                "hi",
+                &EmailBody::plain("body"),
+                &[],
+            )
+            .await
+            .expect("send");
+
+        let request = &server.received_requests().await.unwrap()[0];
+        let payload: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        let mime = base64_url_decode(payload["raw"].as_str().unwrap()).unwrap();
+        assert!(mime.contains("Bcc: hidden@example.com"), "{mime}");
+    }
+
     /// A 5xx on `messages.send` does not mean the mail was not sent; the
     /// retry loop used to send it again.
     #[tokio::test]
@@ -3185,6 +3388,7 @@ mod tests {
                 "me@example.com",
                 None,
                 &["them@example.com".to_string()],
+                &[],
                 &[],
                 "hi",
                 &EmailBody::plain("body"),
@@ -3263,6 +3467,7 @@ mod tests {
                 None,
                 &["them@example.com".to_string()],
                 &[],
+                &[],
                 &crate::sync::provider::ReplyTarget {
                     provider_message_id: "",
                     thread_id: "",
@@ -3296,6 +3501,7 @@ mod tests {
             .draft_payload(
                 "me@example.com",
                 &["them@example.com".to_string()],
+                &[],
                 &[],
                 "Re: hi",
                 &EmailBody::plain("draft"),
@@ -3500,6 +3706,40 @@ mod tests {
         )
     }
 
+    /// The read-back after each push stores what the pull returns, so a pulled
+    /// draft without its `Bcc` would lose the blind copies (#270).
+    #[tokio::test]
+    async fn a_pulled_draft_keeps_its_blind_copies() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(drafts_list_page(&[("d-1", "m-1")], None), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        let with_bcc = full_draft_body("d-1", "m-1", "Hello").replace(
+            r#"{"name":"To","value":"dest@example.com"}"#,
+            r#"{"name":"To","value":"dest@example.com"},{"name":"Bcc","value":"hidden@example.com"}"#,
+        );
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts/d-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(with_bcc, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pulled = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert_eq!(pulled.changed[0].bcc_addresses, vec!["hidden@example.com".to_string()]);
+    }
+
     #[tokio::test]
     async fn unchanged_drafts_are_not_re_read_on_the_next_pull() {
         // Regression: 91k `drafts.get` calls against ~100 drafts, because the
@@ -3562,6 +3802,56 @@ mod tests {
             .filter(|r| r.url.path().starts_with("/users/me/drafts/"))
             .count();
         assert_eq!(gets, 2, "the second pull must add zero drafts.get calls");
+    }
+
+    #[tokio::test]
+    async fn a_draft_reports_its_attachments_under_its_message_id() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(drafts_list_page(&[("d-1", "m-1")], None), "application/json"),
+            )
+            .mount(&server)
+            .await;
+        let full = r#"{"id":"d-1","message":{"id":"m-1","threadId":"t-1","labelIds":["DRAFT"],
+            "internalDate":"1700000000000","snippet":"",
+            "payload":{"mimeType":"multipart/mixed",
+              "headers":[{"name":"Subject","value":"With a file"},{"name":"To","value":"dest@example.com"}],
+              "body":{"size":0},
+              "parts":[
+                {"mimeType":"text/plain","filename":"","headers":[],"body":{"size":2,"data":"aGk"}},
+                {"mimeType":"application/pdf","filename":"report.pdf","headers":[],
+                 "body":{"size":16,"attachmentId":"att-1"}},
+                {"mimeType":"text/csv","filename":"small.csv","headers":[],
+                 "body":{"size":3,"data":"YSxi"}}
+              ]}}}"#;
+        Mock::given(method("GET"))
+            .and(path("/users/me/drafts/d-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(full, "application/json"))
+            .mount(&server)
+            .await;
+
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = client
+            .list_drafts(&std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        let attachments = &pull.changed[0].attachments;
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(
+            attachments[0].message_id, "m-1",
+            "bytes are fetched by message, not draft"
+        );
+        assert_eq!(attachments[0].attachment_id, "att-1");
+        assert_eq!(attachments[0].filename, "report.pdf");
+        assert_eq!(attachments[0].mime_type, "application/pdf");
+        assert_eq!(attachments[1].attachment_id, "");
+        assert_eq!(attachments[1].inline_data.as_deref(), Some("YSxi"));
     }
 
     #[tokio::test]
@@ -3745,6 +4035,41 @@ mod tests {
         );
     }
 
+    // --- parse_email_address tests ---
+
+    #[test]
+    fn sender_parse_splits_name_and_address() {
+        assert_eq!(
+            parse_email_address(r#""Jane Doe" <jane@example.com>"#),
+            ("Jane Doe".to_string(), "jane@example.com".to_string())
+        );
+        assert_eq!(
+            parse_email_address("jane@example.com"),
+            ("jane@example.com".to_string(), "jane@example.com".to_string())
+        );
+    }
+
+    /// A display name holding '>' before the address made the sync panic on
+    /// a reversed slice, and the account stopped syncing for good.
+    #[test]
+    fn sender_parse_takes_a_name_with_angle_brackets() {
+        assert_eq!(
+            parse_email_address(r#""News >> Weekly" <news@example.com>"#),
+            ("News >> Weekly".to_string(), "news@example.com".to_string())
+        );
+        assert_eq!(
+            parse_email_address(r#""a <b" <x@example.com>"#),
+            ("a <b".to_string(), "x@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn sender_parse_never_panics_on_a_malformed_header() {
+        for from in ["> <", "Name > x <", "<", ">", "Name <unclosed@example.com", ""] {
+            let _ = parse_email_address(from);
+        }
+    }
+
     // --- find_body_part tests ---
 
     /// An `.html` file attached ahead of the real body used to be picked as
@@ -3768,6 +4093,62 @@ mod tests {
         );
     }
 
+    /// A body too large to travel inline arrives as an attachment id.
+    fn payload_with_body_behind_an_attachment() -> GmailPayload {
+        make_payload(
+            "multipart/alternative",
+            None,
+            Some(vec![make_part_with_attachment("text/html", "att-1")]),
+        )
+    }
+
+    /// `status` for the body fetch, on a client pointed at a mock Gmail.
+    async fn client_whose_attachments_answer(status: u16) -> (GmailClient, wiremock::MockServer) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/me/messages/m-1/attachments/att-1"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&server)
+            .await;
+        let client = GmailClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        (client, server)
+    }
+
+    /// Stored without its body the message could never be repaired: the sync
+    /// skips every id it holds. Failing it puts it on the retry list.
+    #[tokio::test]
+    async fn a_body_that_could_not_be_fetched_fails_the_message() {
+        let (client, _server) = client_whose_attachments_answer(403).await;
+        let payload = payload_with_body_behind_an_attachment();
+
+        assert!(client.extract_body("m-1", &payload).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_body_gmail_no_longer_has_leaves_the_message_empty() {
+        let (client, _server) = client_whose_attachments_answer(404).await;
+        let payload = payload_with_body_behind_an_attachment();
+
+        assert_eq!(client.extract_body("m-1", &payload).await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn an_inline_image_that_could_not_be_fetched_fails_the_message() {
+        let (client, _server) = client_whose_attachments_answer(403).await;
+        let mut image = make_part_with_attachment("image/png", "att-1");
+        image.headers = Some(vec![GmailHeader {
+            name: "Content-ID".to_string(),
+            value: "<img-1>".to_string(),
+        }]);
+        let html = make_part("text/html", Some(&encode(r#"<img src="cid:img-1">"#)), None);
+        let payload = make_payload("multipart/related", None, Some(vec![html, image]));
+
+        assert!(client.extract_body("m-1", &payload).await.is_err());
+    }
+
     /// Some mailers put a name on the ONLY html part. Skipping named parts
     /// must not leave such a message with an empty body.
     #[tokio::test]
@@ -3776,7 +4157,7 @@ mod tests {
         let mut named = make_part("text/html", Some(&encode("<p>only body</p>")), None);
         named.filename = Some("body.html".to_string());
         let payload = make_payload("multipart/mixed", None, Some(vec![named]));
-        assert_eq!(client.extract_body("m-1", &payload).await, "<p>only body</p>");
+        assert_eq!(client.extract_body("m-1", &payload).await.unwrap(), "<p>only body</p>");
     }
 
     #[tokio::test]
@@ -3789,7 +4170,7 @@ mod tests {
             None,
             Some(vec![named, make_part("text/plain", Some(&encode("real body")), None)]),
         );
-        let body = client.extract_body("m-1", &payload).await;
+        let body = client.extract_body("m-1", &payload).await.unwrap();
         assert!(body.contains("real body"), "{body}");
         assert!(!body.contains("attached page"), "{body}");
     }
@@ -3801,7 +4182,7 @@ mod tests {
         named.filename = Some("body.html".to_string());
         let forwarded = make_part("message/rfc822", None, Some(vec![named]));
         let payload = make_payload("multipart/mixed", None, Some(vec![forwarded]));
-        assert_eq!(client.extract_body("m-1", &payload).await, "");
+        assert_eq!(client.extract_body("m-1", &payload).await.unwrap(), "");
     }
 
     #[test]
@@ -4019,14 +4400,14 @@ mod tests {
                 make_part("text/html", Some(&encode("<b>html</b>")), None),
             ]),
         );
-        assert_eq!(client.extract_body("msg1", &payload).await, "<b>html</b>");
+        assert_eq!(client.extract_body("msg1", &payload).await.unwrap(), "<b>html</b>");
     }
 
     #[tokio::test]
     async fn extract_body_converts_plain_to_html() {
         let client = gmail_client();
         let payload = make_payload("text/plain", Some(&encode("line1\nline2")), None);
-        let body = client.extract_body("msg2", &payload).await;
+        let body = client.extract_body("msg2", &payload).await.unwrap();
         assert!(body.contains("line1"));
         assert!(body.contains("line2"));
         assert!(body.contains("<br>"));
@@ -4045,7 +4426,7 @@ mod tests {
             parts: None,
             mime_type: Some("multipart/mixed".to_string()),
         };
-        assert!(client.extract_body("msg3", &payload).await.is_empty());
+        assert!(client.extract_body("msg3", &payload).await.unwrap().is_empty());
     }
 
     // --- plain_text_to_html tests ---
@@ -4194,6 +4575,21 @@ mod tests {
     fn mailbox_self_sent_email_stays_in_inbox() {
         // Self-sent emails carry both labels — they should remain visible in inbox.
         assert_eq!(mailbox_from_labels(&labels(&["INBOX", "SENT"])), "inbox");
+    }
+
+    /// The message that stopped an account's sync for good: its sender name
+    /// holds '>' before the address.
+    #[tokio::test]
+    async fn a_message_from_a_sender_name_with_angle_brackets_is_read() {
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let mut msg = test_message(&["INBOX"]);
+        for h in msg.payload.headers.iter_mut().filter(|h| h.name == "From") {
+            h.value = r#""News >> Weekly" <news@example.com>"#.to_string();
+        }
+
+        let (email, _, _) = client.parse_message(msg).await.expect("parse");
+
+        assert_eq!(email.sender_email, "news@example.com");
     }
 
     #[tokio::test]
@@ -4725,6 +5121,123 @@ mod batch_slotting_tests {
         }
         body.push_str("--bnd--\r\n");
         body
+    }
+
+    const QUOTA_403: &str = r#"{"error":{"code":403,"errors":[{"reason":"rateLimitExceeded"}]}}"#;
+    const DENIED_403: &str = r#"{"error":{"code":403,"errors":[{"reason":"forbidden"}]}}"#;
+    const MESSAGE: &str = r#"{"id":"m","threadId":"t","labelIds":["INBOX"],"snippet":"","internalDate":"1700000000000",
+        "payload":{"mimeType":"text/plain","headers":[],"body":{"size":0}}}"#;
+
+    #[test]
+    fn a_403_about_the_quota_reads_as_rate_limited() {
+        let body = envelope(&[part(0, 403, QUOTA_403), part(1, 403, DENIED_403)]);
+
+        let slotted = slot_batch_parts(parse_batch_parts(&body, "bnd"), 2);
+
+        assert!(matches!(slotted[0], Some(Err(429))), "{:?}", slotted[0]);
+        assert!(matches!(slotted[1], Some(Err(403))), "{:?}", slotted[1]);
+    }
+
+    fn part_retrying_after(i: usize, seconds: u64) -> String {
+        format!(
+            "\r\nContent-Type: application/http\r\nContent-ID: <response-item{i}>\r\n\r\nHTTP/1.1 429 X\r\nRetry-After: {seconds}\r\n\r\n{{}}\r\n"
+        )
+    }
+
+    #[test]
+    fn the_wait_before_a_batch_retry_follows_the_longest_hint_of_its_parts() {
+        const NOW: i64 = 1_753_366_000;
+        let plan = |parts: &[String]| plan_batch_wait(&parse_batch_parts(&envelope(parts), "bnd"), 1_000, NOW);
+
+        assert_eq!(plan(&[part(0, 200, "{}"), part(1, 503, "{}")]), RetryPlan::Wait(1_000));
+        assert_eq!(
+            plan(&[part_retrying_after(0, 5), part_retrying_after(1, 12)]),
+            RetryPlan::Wait(12_000)
+        );
+        assert_eq!(
+            plan(&[part_retrying_after(0, 5), part_retrying_after(1, 300)]),
+            RetryPlan::GateUntil(NOW + 300)
+        );
+        // A part that is not retried has no say in how long the others wait.
+        let denied =
+            "\r\nContent-ID: <response-item0>\r\n\r\nHTTP/1.1 400 X\r\nRetry-After: 300\r\n\r\n{}\r\n".to_string();
+        assert_eq!(plan(&[denied]), RetryPlan::Wait(1_000));
+    }
+
+    /// A chunk answering `first`, then `second` to anything sent after it, on an
+    /// account of its own: a rate-limit gate outlives the mock server, and the
+    /// next test may get the same port.
+    async fn gmail_batching(first: String, second: String) -> (wiremock::MockServer, GmailClient, String) {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        static NEXT_ACCOUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+        let answer = |body: String| ResponseTemplate::new(200).set_body_raw(body, "multipart/mixed; boundary=bnd");
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(answer(first))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(answer(second))
+            .mount(&server)
+            .await;
+        let account = format!(
+            "batch-test-{}",
+            NEXT_ACCOUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let client = GmailClient::new("tok".into(), None, None, Some(account.clone())).with_base_url(server.uri());
+        (server, client, account)
+    }
+
+    #[tokio::test]
+    async fn a_part_that_failed_transiently_is_fetched_again() {
+        for failed in [part(1, 503, "{}"), part(1, 403, QUOTA_403)] {
+            let (server, client, _) = gmail_batching(
+                envelope(&[part(0, 200, MESSAGE), failed]),
+                envelope(&[part(0, 200, MESSAGE)]),
+            )
+            .await;
+
+            let results = provider::EmailProvider::batch_get_messages(&client, &["m-1", "m-2"])
+                .await
+                .expect("batch");
+
+            assert!(results.iter().all(Result::is_ok), "{results:?}");
+            assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_part_that_failed_for_good_is_not_fetched_again() {
+        let (server, client, _) = gmail_batching(envelope(&[part(0, 403, DENIED_403)]), String::new()).await;
+
+        let results = provider::EmailProvider::batch_get_messages(&client, &["m-1"])
+            .await
+            .expect("batch");
+
+        assert!(results[0].is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    /// Every retry inside the provider's window is charged against the quota
+    /// it says is exhausted.
+    #[tokio::test]
+    async fn a_part_told_to_wait_for_minutes_pauses_the_account_instead_of_retrying() {
+        let (server, client, account) = gmail_batching(envelope(&[part_retrying_after(0, 600)]), String::new()).await;
+
+        let results = tokio::time::timeout(
+            Duration::from_secs(5),
+            provider::EmailProvider::batch_get_messages(&client, &["m-1"]),
+        )
+        .await
+        .expect("must not sleep through the backoff ladder")
+        .expect("batch");
+
+        assert!(results[0].is_err());
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        assert!(rate_limit_gate_until(&account, crate::services::clock::now_secs()).is_some());
     }
 
     /// The request labels every sub-request `Content-ID: <item{i}>` and Gmail

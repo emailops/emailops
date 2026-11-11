@@ -1,5 +1,6 @@
 import { type DragEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import * as api from '@/lib/api';
 import { isDocDrag, readDocDrag, writeDocDrag } from '@/lib/docDrag';
 import { childFolders, folderPath } from '@/lib/docFolders';
@@ -37,7 +38,7 @@ function docDropTarget(onDrop: (docId: string) => void, setOver: (over: boolean)
   };
 }
 
-const DROP_OVER = 'bg-primary-900/40 ring-1 ring-primary-500';
+const DROP_OVER = 'bg-primary-50 ring-1 ring-primary-500';
 
 interface DocRowProps {
   doc: SharedDoc;
@@ -62,7 +63,7 @@ function DocRow({ doc, selected, location, onSelect, onDelete }: DocRowProps) {
             ? t('documents:status.shared', { count: others })
             : t('documents:status.private');
   return (
-    <li className={`group flex items-center ${selected ? 'bg-gray-700/60' : 'hover:bg-gray-800'}`}>
+    <li className={`group flex items-center ${selected ? 'bg-primary-50' : 'hover:bg-gray-50'}`}>
       <button
         type="button"
         data-testid={`shared-doc-row-${doc.id}`}
@@ -71,7 +72,7 @@ function DocRow({ doc, selected, location, onSelect, onDelete }: DocRowProps) {
         onClick={onSelect}
         className="flex-1 min-w-0 text-left px-4 py-2"
       >
-        <span className="block text-sm text-gray-200 truncate">{doc.title}</span>
+        <span className="block text-sm text-gray-800 truncate">{doc.title}</span>
         <span className="block text-xs text-gray-500 truncate">
           {t(`documents:kind.${doc.kind}` as const)} · {location ?? status}
         </span>
@@ -82,7 +83,7 @@ function DocRow({ doc, selected, location, onSelect, onDelete }: DocRowProps) {
         title={t('documents:delete')}
         aria-label={t('documents:delete')}
         onClick={onDelete}
-        className="hidden group-hover:block mr-2 p-1 rounded text-gray-500 hover:text-red-300 hover:bg-gray-700"
+        className="hidden group-hover:block mr-2 p-1 rounded text-gray-500 hover:text-red-700 hover:bg-gray-100"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -126,7 +127,7 @@ function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowP
             value={name}
             onChange={(e) => setName(e.target.value)}
             aria-label={t('documents:folders.name')}
-            className="w-full px-2 py-1 text-xs rounded bg-gray-800 border border-gray-600 text-gray-200"
+            className="w-full px-2 py-1 text-xs rounded bg-white border border-gray-300 text-gray-800"
           />
         </form>
       </li>
@@ -134,7 +135,7 @@ function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowP
   }
   return (
     <li
-      className={`group flex items-center ${over ? DROP_OVER : 'hover:bg-gray-800'}`}
+      className={`group flex items-center ${over ? DROP_OVER : 'hover:bg-gray-50'}`}
       {...docDropTarget(onDropDoc, setOver)}
     >
       <button
@@ -143,7 +144,7 @@ function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowP
         onClick={onOpen}
         className="flex-1 min-w-0 flex items-center gap-2 text-left px-4 py-2"
       >
-        <svg className="w-4 h-4 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4 flex-shrink-0 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -151,7 +152,7 @@ function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowP
             d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"
           />
         </svg>
-        <span className="text-sm text-gray-200 truncate">{folder.name}</span>
+        <span className="text-sm text-gray-800 truncate">{folder.name}</span>
       </button>
       {confirming ? (
         <span className="flex items-center gap-1 pr-2">
@@ -166,7 +167,7 @@ function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowP
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            className="px-1.5 py-0.5 text-[11px] rounded bg-gray-700 text-gray-200"
+            className="px-1.5 py-0.5 text-[11px] rounded bg-gray-100 text-gray-800"
           >
             {t('documents:cancel')}
           </button>
@@ -176,14 +177,14 @@ function FolderRow({ folder, onOpen, onDropDoc, onRename, onDelete }: FolderRowP
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="px-1.5 py-0.5 text-[11px] rounded text-gray-400 hover:text-white hover:bg-gray-700"
+            className="px-1.5 py-0.5 text-[11px] rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
           >
             {t('documents:folders.rename')}
           </button>
           <button
             type="button"
             onClick={() => setConfirming(true)}
-            className="px-1.5 py-0.5 text-[11px] rounded text-gray-400 hover:text-red-300 hover:bg-gray-700"
+            className="px-1.5 py-0.5 text-[11px] rounded text-gray-500 hover:text-red-700 hover:bg-gray-100"
           >
             {t('documents:folders.delete')}
           </button>
@@ -207,7 +208,7 @@ function Crumb({ label, onOpen, onDropDoc }: CrumbProps) {
       type="button"
       onClick={onOpen}
       {...docDropTarget(onDropDoc, setOver)}
-      className={`rounded px-1 hover:text-white ${over ? DROP_OVER : ''}`}
+      className={`rounded px-1 hover:text-gray-900 ${over ? DROP_OVER : ''}`}
     >
       {label}
     </button>
@@ -333,11 +334,11 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
   const shownError = actionError ?? error;
 
   return (
-    <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-[#1e1e1e]" data-testid="documents-view">
-      <aside className="w-72 flex-shrink-0 border-r border-gray-700 flex flex-col min-h-0">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-700">
-          <h2 className="text-sm font-semibold text-gray-200 flex-1 whitespace-nowrap">{t('documents:title')}</h2>
-          <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 text-[10px] font-semibold uppercase">
+    <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden bg-white" data-testid="documents-view">
+      <aside className="w-72 flex-shrink-0 border-r border-gray-200 flex flex-col min-h-0">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200">
+          <h2 className="text-sm font-semibold text-gray-800 flex-1 whitespace-nowrap">{t('documents:title')}</h2>
+          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold uppercase">
             {t('settings:dialog.experimental')}
           </span>
           <button
@@ -346,7 +347,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             title={t('documents:folders.new')}
             aria-label={t('documents:folders.new')}
             onClick={() => setCreating((c) => (c === 'folder' ? null : 'folder'))}
-            className="p-1 rounded text-gray-300 hover:text-white hover:bg-gray-700"
+            className="p-1 rounded text-gray-700 hover:text-gray-900 hover:bg-gray-100"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -363,7 +364,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             title={t('documents:import.hint')}
             aria-label={t('documents:import.button')}
             onClick={() => void handleImport()}
-            className="p-1 rounded text-gray-300 hover:text-white hover:bg-gray-700"
+            className="p-1 rounded text-gray-700 hover:text-gray-900 hover:bg-gray-100"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
@@ -383,7 +384,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             {t('documents:new')}
           </button>
         </div>
-        <div className="px-3 py-2 border-b border-gray-700">
+        <div className="px-3 py-2 border-b border-gray-200">
           <input
             type="search"
             data-testid="shared-doc-search"
@@ -391,25 +392,23 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             onChange={(e) => void search(e.target.value)}
             placeholder={t('documents:searchPlaceholder')}
             aria-label={t('documents:searchPlaceholder')}
-            className="w-full px-2 py-1 text-xs rounded bg-gray-800 border border-gray-600 text-gray-200"
+            className="w-full px-2 py-1 text-xs rounded bg-white border border-gray-300 text-gray-800"
           />
         </div>
         {shownError && (
-          <div className="mx-3 mt-3 p-2 bg-red-900/30 border border-red-800 rounded text-red-300 text-xs">
-            {shownError}
-          </div>
+          <div className="mx-3 mt-3 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-xs">{shownError}</div>
         )}
         {notice && !shownError && (
           <div
             data-testid="shared-doc-notice"
-            className="mx-3 mt-3 p-2 bg-gray-800 border border-gray-700 rounded text-gray-300 text-xs"
+            className="mx-3 mt-3 p-2 bg-gray-50 border border-gray-200 rounded text-gray-700 text-xs"
           >
             {notice}
           </div>
         )}
         {creating && (
           <form
-            className="flex flex-col gap-2 px-4 py-3 border-b border-gray-700"
+            className="flex flex-col gap-2 px-4 py-3 border-b border-gray-200"
             onSubmit={(e) => {
               e.preventDefault();
               void handleCreate();
@@ -420,25 +419,28 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder={creating === 'folder' ? t('documents:folders.name') : t('documents:newTitlePlaceholder')}
-              className="px-2 py-1 text-xs rounded bg-gray-800 border border-gray-600 text-gray-200"
+              className="px-2 py-1 text-xs rounded bg-white border border-gray-300 text-gray-800"
             />
             <div className="flex gap-2">
               {creating === 'doc' && (
-                <select
-                  data-testid="shared-doc-new-kind"
+                <Select
+                  testId="shared-doc-new-kind"
+                  ariaLabel={t('documents:kind.doc')}
                   value={kind}
-                  onChange={(e) => setKind(e.target.value === 'sheet' ? 'sheet' : 'doc')}
-                  className="flex-1 px-2 py-1 text-xs rounded bg-gray-800 border border-gray-600 text-gray-200"
-                >
-                  <option value="doc">{t('documents:kind.doc')}</option>
-                  <option value="sheet">{t('documents:kind.sheet')}</option>
-                </select>
+                  options={[
+                    { value: 'doc', label: t('documents:kind.doc') },
+                    { value: 'sheet', label: t('documents:kind.sheet') },
+                  ]}
+                  onChange={(v) => setKind(v === 'sheet' ? 'sheet' : 'doc')}
+                  size="xs"
+                  className="flex-1"
+                />
               )}
               <button
                 type="submit"
                 data-testid="shared-doc-create"
                 disabled={!title.trim()}
-                className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-200 disabled:opacity-40"
+                className="px-2 py-1 text-xs rounded bg-gray-100 hover:bg-gray-200 text-gray-800 disabled:opacity-40"
               >
                 {t('documents:create')}
               </button>
@@ -485,7 +487,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
                 </>
               )}
               <nav
-                className="flex flex-wrap items-center gap-1 px-4 pt-3 pb-1 text-xs text-gray-400"
+                className="flex flex-wrap items-center gap-1 px-4 pt-3 pb-1 text-xs text-gray-500"
                 data-testid="doc-breadcrumb"
               >
                 <Crumb label={t('documents:root')} onOpen={() => openFolder(null)} onDropDoc={dropInto(null)} />
@@ -530,7 +532,7 @@ export function DocumentsView({ accountId }: DocumentsViewProps) {
             </>
           )}
         </div>
-        <p className="px-4 py-2 text-[11px] text-gray-500 border-t border-gray-700">{t('documents:intro')}</p>
+        <p className="px-4 py-2 text-[11px] text-gray-500 border-t border-gray-200">{t('documents:intro')}</p>
       </aside>
       {selected && accountEmail ? (
         <DocumentPane

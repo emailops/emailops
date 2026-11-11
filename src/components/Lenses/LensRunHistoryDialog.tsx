@@ -56,21 +56,21 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
           <button
             type="button"
             onClick={onClose}
-            className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+            className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-800 hover:bg-gray-100"
           >
             {t('common:actions.close')}
           </button>
         </div>
       }
     >
-      {isLoading && <div className="p-4 text-xs text-gray-400">{t('lenses:runHistory.loading')}</div>}
-      {error && <div className="p-4 text-xs text-red-400">{error}</div>}
+      {isLoading && <div className="p-4 text-xs text-gray-500">{t('lenses:runHistory.loading')}</div>}
+      {error && <div className="p-4 text-xs text-red-600">{error}</div>}
       {!isLoading && !error && runs.length === 0 && (
-        <div className="p-4 text-xs text-gray-400">{t('lenses:runHistory.empty')}</div>
+        <div className="p-4 text-xs text-gray-500">{t('lenses:runHistory.empty')}</div>
       )}
       {runs.length > 0 && (
         <table className="w-full text-left text-xs">
-          <thead className="text-gray-400">
+          <thead className="text-gray-500">
             <tr>
               <th className="px-3 py-2 font-medium">{t('lenses:runHistory.started')}</th>
               <th className="px-3 py-2 font-medium">{t('lenses:runHistory.kind')}</th>
@@ -84,18 +84,18 @@ export function LensRunHistoryDialog({ lensId, lensName, open, onClose }: LensRu
           <tbody>
             {runs.map((r) => (
               <Fragment key={r.id}>
-                <tr className="border-t border-gray-800">
-                  <td className="px-3 py-2 align-top text-gray-300">{formatDayMonthYearTime(r.startedAt)}</td>
-                  <td className="px-3 py-2 align-top text-gray-300">
+                <tr className="border-t border-gray-200">
+                  <td className="px-3 py-2 align-top text-gray-700">{formatDayMonthYearTime(r.startedAt)}</td>
+                  <td className="px-3 py-2 align-top text-gray-700">
                     {t(`lenses:runHistory.kinds.${r.kind}`, { defaultValue: r.kind })}
                   </td>
                   <td className="px-3 py-2 align-top">
                     <StatusBadge status={r.status} />
                   </td>
-                  <td className="px-3 py-2 align-top text-gray-300">{r.processed}</td>
-                  <td className="px-3 py-2 align-top text-green-300">{r.succeeded}</td>
-                  <td className="px-3 py-2 align-top text-red-300">{r.failed}</td>
-                  <td className="px-3 py-2 align-top text-gray-400">{formatDuration(r)}</td>
+                  <td className="px-3 py-2 align-top text-gray-700">{r.processed}</td>
+                  <td className="px-3 py-2 align-top text-green-700">{r.succeeded}</td>
+                  <td className="px-3 py-2 align-top text-red-700">{r.failed}</td>
+                  <td className="px-3 py-2 align-top text-gray-500">{formatDuration(r)}</td>
                 </tr>
                 {lensId && (r.failed > 0 || r.errorMessage) && (
                   <tr>
@@ -117,14 +117,14 @@ function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation(['lenses']);
   const cls =
     status === 'success'
-      ? 'border-green-700/60 text-green-300 bg-green-900/30'
+      ? 'border-green-200 text-green-700 bg-green-50'
       : status === 'failed'
-        ? 'border-red-700/60 text-red-300 bg-red-900/30'
+        ? 'border-red-200 text-red-700 bg-red-50'
         : status === 'cancelled'
-          ? 'border-yellow-700/60 text-yellow-300 bg-yellow-900/30'
+          ? 'border-yellow-200 text-yellow-700 bg-yellow-50'
           : status === 'running'
-            ? 'border-blue-700/60 text-blue-300 bg-blue-900/30'
-            : 'border-gray-700/60 text-gray-300';
+            ? 'border-blue-200 text-blue-700 bg-blue-50'
+            : 'border-gray-200 text-gray-700';
   return (
     <span className={`inline-block rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>
       {t(`lenses:runHistory.statuses.${status}`, { defaultValue: status })}

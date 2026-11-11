@@ -268,7 +268,6 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         ariaLabel={t('compose:font')}
         disabled={disabled}
         size="xs"
-        variant="light"
       />
       <Select
         value={format.size}
@@ -279,7 +278,6 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         ariaLabel={t('compose:fontSize')}
         disabled={disabled}
         size="xs"
-        variant="light"
       />
 
       {linkPopoverOpen && (

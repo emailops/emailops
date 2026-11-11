@@ -1,0 +1,64 @@
+# Open document: with a PDF attachment open in the viewer, the chat answers
+# from the PDF's text.
+#
+# The demo DB writes a real mock invoice PDF for every vendor invoice. The
+# Hetzner one's total (€41.77) and line items appear ONLY in the PDF — the
+# email body says "The full breakdown is in the PDF" — so finding the total in
+# the answer proves the document reached the prompt.
+#
+# Cases name the PDF by `ambient_attachment_filename`: the generator redraws
+# attachment ids on every `make demo-db`.
+
+- id: demo_open_pdf_summary
+  question: "Summarise this document: what it is, who it is from, and the key dates and amounts."
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: smoke
+  ambient_attachment_filename: "hetzner-invoice-feb.pdf"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["41.77", "41,77"]
+  expected_answer_not_contains:
+    - "cannot access"
+    - "can't access"
+  expected_output: "A Hetzner Cloud invoice for February 2026 (issue date 2026-05-14) billed to EmailOps Labs: two CPX31 cloud servers in Falkenstein (€35.78), 100 GB of volume storage (€4.80) and a floating IPv4 (€1.19), for a total of €41.77 with €0.00 VAT under reverse charge."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: demo_open_pdf_amounts_es
+  question: "¿Cuáles son los puntos clave, fechas e importes de este documento?"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: smoke
+  ambient_attachment_filename: "hetzner-invoice-feb.pdf"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["41.77", "41,77"]
+  expected_output: "Es una factura de Hetzner Cloud de febrero de 2026 (emitida el 2026-05-14) para EmailOps Labs: dos servidores CPX31 en Falkenstein (35,78 €), 100 GB de almacenamiento (4,80 €) y una IPv4 flotante (1,19 €); total 41,77 €, IVA 0,00 € por inversión del sujeto pasivo."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: demo_open_long_pdf_late_fact_8k
+  # A contract longer than its slot in an 8k prompt (the demo's synthetic
+  # larkspur-master-services-agreement.pdf, ~27k characters). The fee sits in
+  # clause 37 of 40, past what a cut-to-fit read keeps, so only reading the
+  # whole document in parts finds it.
+  question: "What is the early termination fee in this agreement, and how long is the term?"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: full
+  n_ctx: 8192
+  ambient_attachment_filename: "larkspur-master-services-agreement.pdf"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["1,750", "1.750", "1750"]
+  expected_answer_not_contains:
+    - "does not mention"
+    - "doesn't mention"
+    - "not mentioned"
+  expected_output: "The early termination fee is EUR 1,750, payable within 30 days of the termination date if Larkspur Freight ends the agreement early other than for the provider's material breach. The term is 24 months from 1 March 2026."
+  metrics:
+    - answer_relevancy
+    - faithfulness

@@ -1,12 +1,13 @@
-import { type ReactNode, useCallback, useEffect } from 'react';
+import { type ReactNode, useCallback, useEffect, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useOverlay } from '@/stores/overlayStore';
 
 /**
- * Generic dark-themed modal scaffold used across settings/dialogs/confirms.
+ * Generic modal scaffold used across settings/dialogs/confirms.
  *
  * Centralizes overlay + size + a11y wiring (Escape to close, click-outside to
- * close, header/body/footer slots) so callers stop duplicating the same
+ * close, focus kept inside while open and handed back on close, a name from
+ * the title, header/body/footer slots) so callers stop duplicating the same
  * `fixed inset-0 z-50 flex items-center justify-center bg-black/...` shell.
  *
  * Use the dedicated slots for clearer call-sites:
@@ -19,6 +20,17 @@ import { useOverlay } from '@/stores/overlayStore';
  */
 
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '5xl';
+
+/** What Tab can land on. `.hidden` is the composers' invisible file input. */
+const FOCUSABLE = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"]):not(.hidden)',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+  '[contenteditable="true"]',
+].join(', ');
 
 const SIZE_CLASS: Record<ModalSize, string> = {
   sm: 'max-w-sm',
@@ -83,17 +95,58 @@ export function Modal({
   zIndex = 50,
   nonBlocking = false,
 }: ModalProps) {
-  useOverlay(open);
+  const isTopOverlay = useOverlay(open);
   const { t } = useTranslation(['common']);
-  // Escape-to-close. Bound to window so focused inputs don't swallow it.
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Read while rendering: a field with autoFocus takes the focus on commit,
+  // before any effect here could see where it was.
+  const openerRef = useRef<Element | null>(null);
+  const wasOpenRef = useRef(false);
+  if (open && !wasOpenRef.current) openerRef.current = document.activeElement;
+  wasOpenRef.current = open;
+  // Escape-to-close. Bound to the document so focused inputs don't swallow it,
+  // and it runs before the app-wide handler on the window, which consumes every
+  // Escape. Only the top overlay answers, and it marks the key as used for the
+  // one below.
   useEffect(() => {
     if (!open || disableEscape) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
+      e.preventDefault();
+      onClose();
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, disableEscape, onClose]);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [open, disableEscape, onClose, isTopOverlay]);
+
+  // Focus moves in on open (unless a field already took it) and back to where
+  // it was on close. A non-blocking dialog leaves it where it is: the chat
+  // driving the dialog keeps the keyboard.
+  useEffect(() => {
+    if (!open || nonBlocking) return;
+    if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.focus();
+    return () => {
+      if (openerRef.current instanceof HTMLElement) openerRef.current.focus();
+    };
+  }, [open, nonBlocking]);
+
+  const handleTab = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || nonBlocking || !isTopOverlay() || !panelRef.current) return;
+    const focusable = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (!first) {
+      e.preventDefault();
+    } else if (e.shiftKey && (active === first || active === panelRef.current)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   const handleBackdrop = useCallback(
     (e: React.MouseEvent) => {
@@ -119,23 +172,31 @@ export function Modal({
       // the panel is closed (the variable is unset) or the modal is blocking.
       style={nonBlocking ? { zIndex, right: 'var(--chat-dock-width, 0px)' } : { zIndex }}
       onClick={handleBackdrop}
+      onKeyDown={handleTab}
       role="dialog"
       aria-modal={nonBlocking ? undefined : 'true'}
+      aria-labelledby={title ? titleId : undefined}
     >
       <div
-        className={`${SIZE_CLASS[size]} flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-gray-700 bg-[#252526] shadow-2xl${
+        ref={panelRef}
+        tabIndex={-1}
+        className={`theme-chrome ${SIZE_CLASS[size]} flex max-h-[90vh] w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-2xl focus:outline-none${
           nonBlocking ? ' pointer-events-auto' : ''
         }`}
       >
         {title !== undefined && (
-          <div className="flex items-start justify-between gap-4 border-b border-gray-700 px-6 py-4">
+          <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
             <div className="min-w-0 flex-1">
-              {title && <h2 className="text-sm font-semibold text-gray-100">{title}</h2>}
-              {subtitle && <p className="mt-0.5 text-xs text-gray-400">{subtitle}</p>}
+              {title && (
+                <h2 id={titleId} className="text-sm font-semibold text-gray-900">
+                  {title}
+                </h2>
+              )}
+              {subtitle && <p className="mt-0.5 text-xs text-gray-500">{subtitle}</p>}
             </div>
             <button
               onClick={onClose}
-              className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+              className="rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
               title={t('common:actions.close')}
               aria-label={t('common:actions.closeDialog')}
             >
@@ -151,7 +212,7 @@ export function Modal({
         </div>
 
         {footer && (
-          <div className="flex items-center justify-end gap-3 border-t border-gray-700 px-6 py-4">{footer}</div>
+          <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">{footer}</div>
         )}
       </div>
     </div>

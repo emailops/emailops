@@ -40,4 +40,6 @@ Preconditions: baseline, focus outside any input (`$V wd js 'document.activeElem
 | every real overlay blocks `#`, `Delete`, `e`, `s`, `b`, `j`; Backspace never deletes; overlay registry guard | vitest (`useGlobalShortcuts.overlays`, `overlayStore`) |
 | unit (Rust), integration, contract | n/a: the shortcuts are frontend-only and call the same store actions and commands the buttons call, covered under their own features |
 | `?` overlay, `j`/`k`, `s`, `e` auto-advance, tooltips, nothing behind the ⋮ menu / image viewer / Settings | e2e (`Atajos/*`) |
+| Escape reaches a `Modal` and Settings before the app-wide handler consumes it; only the top dialog answers | vitest (`Modal.a11y`, `SettingsDialog.escape`) + e2e (`Compose/cerrar con archivos pregunta`, `Ajustes/Escape cierra el diálogo`) |
+| `Modal` focus: moves in, wraps on Tab, returns to the opener | vitest (`Modal.a11y`) + e2e (`Atajos/Modal retiene el foco y Escape lo cierra`) |
 | eval | n/a: no model involved |

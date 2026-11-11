@@ -22,7 +22,6 @@ use crate::models::{Account, AppLogEvent, ChatMessageSource, ChatTrace, Draft, E
 use crate::services::dashboard::AccountDashboard;
 use crate::services::events::EventSink;
 use crate::services::logger::Logger;
-use crate::services::search::SearchMethod;
 
 use super::{render, OutputMode, RenderStyle};
 
@@ -210,8 +209,10 @@ pub fn exit_code(err: &AppError) -> u8 {
     match err {
         AppError::InvalidInput(_)
         | AppError::Skill(_)
+        | AppError::DataMove(_)
         | AppError::AttachmentConfirmationRequired { .. }
-        | AppError::OutboxNotPending => 2,
+        | AppError::OutboxNotPending
+        | AppError::ReadOnlyCalendar => 2,
         AppError::NotFound(_) => 3,
         AppError::AuthError(_)
         | AppError::OAuthError(_)
@@ -219,7 +220,11 @@ pub fn exit_code(err: &AppError) -> u8 {
         | AppError::NeedsReauth { .. }
         | AppError::CalendarPermissionDenied { .. } => 4,
         AppError::HttpError(_) | AppError::SyncError(_) | AppError::NoArchiveFolder | AppError::NoSpamFolder => 5,
-        AppError::AiError(_) | AppError::AiDisabled | AppError::AiDataPolicy { .. } | AppError::BudgetExceeded(_) => 6,
+        AppError::AiError(_)
+        | AppError::AiDisabled
+        | AppError::AiDataPolicy { .. }
+        | AppError::AiContextExceeded
+        | AppError::BudgetExceeded(_) => 6,
         AppError::Cancelled => 130,
         AppError::DbError(_) | AppError::JsonError(_) | AppError::IoError(_) | AppError::FileNotDownloaded { .. } => 1,
     }
@@ -618,6 +623,19 @@ pub fn render_skills(overview: &crate::services::skills::SkillsOverview, style: 
     for s in &overview.skills {
         println!("  {} {}", paint(&format!("/{}", s.name), "1", color), s.description);
     }
+    for b in &overview.bundled {
+        let state = match (b.shadowed, b.enabled) {
+            (true, _) => "bundled, replaced by your skill",
+            (false, true) => "bundled, on",
+            (false, false) => "bundled, off",
+        };
+        println!(
+            "  {} {} {}",
+            paint(&format!("/{}", b.name), "1", color),
+            dim(&format!("({state})"), color),
+            b.description
+        );
+    }
     for e in &overview.errors {
         println!(
             "  {} {}: {}",
@@ -954,25 +972,19 @@ pub fn render_chat_trace(trace: Option<&ChatTrace>, sources: &[ChatMessageSource
 /// Build the body lines of a `search --trace` block. Pure (no I/O) so the line
 /// formatting is unit-testable; [`render_search_trace`] wraps these with the
 /// header/footer and prints them to stderr.
-fn format_search_trace_lines(
-    method: &SearchMethod,
-    ai_available: bool,
-    parsed: Option<&ParsedSearchQuery>,
-    shown: usize,
-    total: usize,
-) -> Vec<String> {
-    let mut lines = vec![
-        format!("method:    {:?}", method),
-        format!("ai:        {}", if ai_available { "available" } else { "unavailable" }),
-    ];
+fn format_search_trace_lines(trace: &SearchTrace<'_>) -> Vec<String> {
+    let mut lines = Vec::new();
 
     let mut filters: Vec<String> = Vec::new();
-    if let Some(p) = parsed {
+    if let Some(p) = trace.parsed {
         if let Some(f) = &p.from_filter {
             filters.push(format!("from={f}"));
         }
         if let Some(f) = &p.to_filter {
             filters.push(format!("to={f}"));
+        }
+        if let Some(f) = &p.cc_filter {
+            filters.push(format!("cc={f}"));
         }
         if let Some(f) = &p.subject_filter {
             filters.push(format!("subject={f}"));
@@ -983,8 +995,10 @@ fn format_search_trace_lines(
         if p.is_unread == Some(true) {
             filters.push("unread".to_string());
         }
-        if p.has_attachment == Some(true) {
-            filters.push("has_attachment".to_string());
+        match p.has_attachment {
+            Some(true) => filters.push("has_attachment".to_string()),
+            Some(false) => filters.push("no_attachment".to_string()),
+            None => {}
         }
         if let Some(t) = p.after_timestamp {
             filters.push(format!("after={t}"));
@@ -1004,22 +1018,32 @@ fn format_search_trace_lines(
             filters.join(" ")
         }
     ));
-    lines.push(format!("results:   {shown} shown / {total} hits"));
+    lines.push(format!("results:   {} shown / {} read", trace.shown, trace.total));
+    lines.push(format!(
+        "pages:     {} in {} ms{}",
+        trace.pages,
+        trace.ms,
+        if trace.exhausted { ", end of the list" } else { "" }
+    ));
     lines
+}
+
+/// What `search --trace` reports. `total` counts the rows read, which only
+/// equals the rows that match when `exhausted` is true.
+pub struct SearchTrace<'a> {
+    pub parsed: Option<&'a ParsedSearchQuery>,
+    pub shown: usize,
+    pub total: usize,
+    pub exhausted: bool,
+    pub pages: usize,
+    pub ms: u64,
 }
 
 /// Print a `search --trace` block to stderr (so stdout stays a clean data
 /// channel), styled to match [`render_chat_trace`].
-pub fn render_search_trace(
-    method: &SearchMethod,
-    ai_available: bool,
-    parsed: Option<&ParsedSearchQuery>,
-    shown: usize,
-    total: usize,
-    color: bool,
-) {
+pub fn render_search_trace(trace: &SearchTrace<'_>, color: bool) {
     eprintln!("\n{}", dim("── search trace ───────────────────────", color));
-    for line in format_search_trace_lines(method, ai_available, parsed, shown, total) {
+    for line in format_search_trace_lines(trace) {
         eprintln!("{}", dim(&line, color));
     }
     eprintln!("{}", dim("───────────────────────────────────────", color));
@@ -1268,8 +1292,10 @@ mod tests {
     fn parsed_with_keywords(keywords: &[&str]) -> ParsedSearchQuery {
         ParsedSearchQuery {
             keywords: keywords.iter().map(|s| s.to_string()).collect(),
+            text: keywords.join(" "),
             from_filter: None,
             to_filter: None,
+            cc_filter: None,
             subject_filter: None,
             has_attachment: None,
             is_unread: None,
@@ -1283,12 +1309,18 @@ mod tests {
     }
 
     #[test]
-    fn search_trace_reports_method_ai_and_counts() {
-        let lines = format_search_trace_lines(&SearchMethod::KeywordSearch, false, None, 5, 12);
-        assert_eq!(lines[0], "method:    KeywordSearch");
-        assert_eq!(lines[1], "ai:        unavailable");
-        assert_eq!(lines[2], "filters:   (none)");
-        assert_eq!(lines[3], "results:   5 shown / 12 hits");
+    fn search_trace_reports_counts_and_the_end_of_the_list() {
+        let lines = format_search_trace_lines(&SearchTrace {
+            parsed: None,
+            shown: 5,
+            total: 12,
+            exhausted: true,
+            pages: 2,
+            ms: 7,
+        });
+        assert_eq!(lines[0], "filters:   (none)");
+        assert_eq!(lines[1], "results:   5 shown / 12 read");
+        assert_eq!(lines[2], "pages:     2 in 7 ms, end of the list");
     }
 
     #[test]
@@ -1296,10 +1328,16 @@ mod tests {
         let mut parsed = parsed_with_keywords(&["invoice", "march"]);
         parsed.from_filter = Some("ana@acme.com".to_string());
         parsed.is_unread = Some(true);
-        let lines = format_search_trace_lines(&SearchMethod::PatternParsed, true, Some(&parsed), 3, 3);
-        assert_eq!(lines[1], "ai:        available");
+        let lines = format_search_trace_lines(&SearchTrace {
+            parsed: Some(&parsed),
+            shown: 3,
+            total: 3,
+            exhausted: false,
+            pages: 1,
+            ms: 1,
+        });
         assert_eq!(
-            lines[2],
+            lines[0],
             "filters:   from=ana@acme.com keywords=[invoice, march] unread"
         );
     }
@@ -1340,6 +1378,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: to.into_iter().map(String::from).collect(),
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Confirmar reunión Alina".to_string(),
             body: "Hola Alina".to_string(),
             body_html: None,
@@ -1403,6 +1442,7 @@ mod tests {
     fn exit_code_groups_errors_by_remediation() {
         // input
         assert_eq!(exit_code(&AppError::InvalidInput("x".into())), 2);
+        assert_eq!(exit_code(&AppError::ReadOnlyCalendar), 2);
         assert_eq!(
             exit_code(&AppError::Skill(crate::services::skills::SkillProblem::NoName)),
             2
@@ -1421,6 +1461,7 @@ mod tests {
         assert_eq!(exit_code(&AppError::AiDisabled), 6);
         assert_eq!(exit_code(&AppError::BudgetExceeded("x".into())), 6);
         assert_eq!(exit_code(&AppError::AiDataPolicy { model: "m".into() }), 6);
+        assert_eq!(exit_code(&AppError::AiContextExceeded), 6);
         // cancelled
         assert_eq!(exit_code(&AppError::Cancelled), 130);
         // catch-all

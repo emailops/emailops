@@ -10,8 +10,10 @@
   "integrationDisabled": "El calendario está desactivado para {{email}}.",
   "enableCalendarButton": "Activar calendario",
   "selectAccount": "Cuenta del calendario",
+  "allAccounts": "Todas las cuentas",
   "syncError": "Error del calendario: {{message}}",
   "reauthNeeded": "EmailOps todavía no tiene permiso para leer el calendario de esta cuenta. Inicia sesión de nuevo para conceder acceso al calendario.",
+  "reauthNeededAccount": "Hay que volver a conectar {{email}} para mostrar su calendario.",
   "reauthButton": "Iniciar sesión de nuevo",
   "reauthInProgress": "Esperando a Google/Microsoft…",
   "viewModes": {
@@ -43,7 +45,10 @@
     "meetNote": "Se añadirá automáticamente un enlace de Google Meet.",
     "createButton": "Crear",
     "creating": "Creando…",
-    "error": "No se pudo crear el evento: {{message}}"
+    "error": "No se pudo crear el evento: {{message}}",
+    "account": "Cuenta",
+    "protonHint": "Proton Calendar no tiene una API para crear eventos desde aquí. Se abre su propio formulario en este día; el evento aparecerá aquí en la próxima actualización del feed.",
+    "openProton": "Crear en Proton Calendar"
   },
   "detail": {
     "tentative": "Provisional",
@@ -74,7 +79,8 @@
     "cancellationMessage": "Añade una nota a la cancelación",
     "cancellationMessagePlaceholder": "Mensaje opcional para los asistentes",
     "googleCancellationHint": "Google envía su correo estándar de cancelación a los invitados.",
-    "deleteError": "No se pudo eliminar el evento: {{message}}"
+    "deleteError": "No se pudo eliminar el evento: {{message}}",
+    "account": "Cuenta"
   },
   "reminder": {
     "title": "Próxima reunión",
@@ -103,5 +109,16 @@
   "calendars": {
     "hideOne": "Ocultar {{name}}",
     "showOne": "Mostrar {{name}}"
+  },
+  "createInProton": "Abriendo Proton Calendar para crear el evento: elige allí la hora y el calendario (el feed compartido es de solo lectura; los cambios aparecen aquí en unas horas).",
+  "panel": {
+    "title": "Agenda",
+    "open": "Abrir el panel de calendario",
+    "close": "Cerrar el panel de calendario",
+    "openFull": "Abrir calendario completo",
+    "setupTitle": "Esta cuenta aún no tiene calendario",
+    "setupBody": "Las cuentas IMAP muestran un calendario cuando te suscribes a un feed de calendario (en Proton Calendar, su enlace de compartir) en Ajustes → Calendario.",
+    "setupButton": "Configurar en Ajustes",
+    "addEvent": "Nuevo evento en este día"
   }
 }

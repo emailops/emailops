@@ -9,15 +9,194 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bcc, editable reply subjects and replies to Reply-To.** Every composer has
+  a Bcc field, and a message can go to Cc or Bcc alone. Drafts keep their blind
+  copies. The subject of a reply or a forward can be edited before it goes. A
+  reply goes to the address a message names in its Reply-To header, such as a
+  mailing list's, instead of its sender.
+- **Drafts keep their attachments, and forwards are drafts too.** A file you
+  attach is saved with the draft as soon as it is added, so closing the
+  composer or the app no longer loses it, and a forward is saved as a draft
+  like a reply. A message takes up to 32 files of at most 25 MB each; an empty
+  file is refused with a message.
+- **Boolean search and two more operators.** In the search box, quotes find an
+  exact phrase, `OR` finds either word, `-word` or `NOT word` leaves mail with
+  that word out, and brackets group: `(invoice OR receipt) -draft`. `cc:` finds
+  mail copied to someone, and `has:attachment` or `-has:attachment` keeps only
+  mail with or without attachments.
+
+### Changed
+
+- **New mail is ready for AI search before older mail.** Embeddings are now
+  generated newest first, across all your accounts. Mail that arrives while a
+  large mailbox is still being processed goes ahead of that backlog.
+
+### Fixed
+
+- **Gmail attachments kept with the message open again.** A small attachment,
+  or one on a message you sent from EmailOps, failed to open, download or
+  forward with a "not found" error: EmailOps asked Gmail for it instead of
+  reading the copy it already had.
+- **A draft Gmail refuses is no longer sent again every minute.** Each sync used
+  to repeat the refused upload; now the draft waits until you edit it, and the
+  Logs panel shows Gmail's reason once.
+- **An IMAP server reply EmailOps cannot read no longer crashes the sync.** If a
+  command fails because of one, Logs shows the shape of the reply with its text
+  masked. A server whose list of supported features ends in a space now moves
+  mail with its own move command when it has one, instead of a copy and a
+  delete.
+- **Deleting a conversation on Proton Mail Bridge no longer erases a message
+  for good.** A message you sent to yourself is listed in both Inbox and Sent;
+  deleting its conversation moved it to Trash twice, and Bridge then deleted
+  it permanently. On IMAP accounts each message now goes to Trash once.
+
+## [0.6.18] — 2026-11-03
+
+### Added
+
+- **Skills included with the app.** Reviewed skills you can read in full and
+  switch on one by one, with no download. They are off by default, and
+  **Edit a copy** makes one your own, and the Skills view links to the guide for
+  contributing a skill.
+
+### Changed
+
+- **Skills run only when you ask.** Start a message with `/name` to apply one;
+  the chat no longer picks a skill on its own.
+- **Skills are on by default.** They left the experimental stage. The skills
+  included with the app stay off until you switch them on, and if you turned
+  skills off they stay off.
+- **Search and filters list every match.** A search or a filter lists every
+  conversation it matches, newest first, and loads more as you scroll; it used
+  to stop at 100 per account. Searching from Inbox covers all your mail except
+  Spam and Trash, and the other views search what they show. Mail the junk
+  check flagged is listed with its warning instead of left out. The Load more
+  buttons are gone, in Contacts too.
+- **Adding an account syncs faster.** The next batch of mail downloads while the
+  current one is processed, and on IMAP the Sent folder waits until the inbox is
+  in.
+
+### Fixed
+
+- **Images in older mail come back.** Mail stored before inline images were
+  downloaded properly showed empty boxes. Such a message is now fetched again
+  when you open it.
+- **AI drafts stay in one language.** A reply is written in the language of the
+  message it answers, greeting and closing included, whatever the language of
+  your instructions, your past messages or the earlier messages in the thread.
+  A note for a missing fact comes in that language too.
+- **AI drafts no longer sign twice.** When your signature applies, a draft stops
+  at its closing line and the app adds the signature.
+- The "Sent with EmailOps" line is no longer read as part of a message, so it
+  stays out of AI drafts and of the text a forward quotes.
+- **The chat no longer skips a tool the local model called slightly wrong.** A
+  call one brace short used to run nothing, and the answer made up a result.
+- **Forwarding is safer.** Send waits for the forwarded files, and files or text
+  that finish loading after you moved on no longer reach another conversation.
+- **Discard in a compose tab now removes the draft**, after asking. Closing a
+  composer that holds attached files asks first, as drafts keep only the text.
+- Reply All switched to from an open Reply now addresses everyone, and asking
+  the AI for a new draft keeps the recipients of the reply you have open.
+- Escape closes only the top dialog, dialogs keep the keyboard inside them, and
+  a failed send stays on screen however long the message is.
+- Failed or empty lists offer a way forward: a page that fails to load offers
+  Retry, and empty lists offer to show all mail, show all categories or sync.
+- A background sync no longer clears an error, the email you navigated to or the
+  list around it, and switching lists during an undo can no longer show the
+  wrong one.
+- The same thread id on two accounts now opens two tabs, and a failed lock check
+  shows an error with Retry instead of a blank window.
+- Dates and the labels of the list, the thread view and the composers follow the
+  app language. The Drafts view shows when drafts fail to load or delete.
+- **Drafts from Gmail and Outlook keep their attachments.** A draft written
+  elsewhere now arrives with its files, and editing or sending it keeps them.
+  Before, the first edit removed them from the provider and the send went out
+  without them. Until a file has been downloaded, the draft cannot be sent, and
+  your edits wait here without touching the provider's copy.
+- **Sync keeps running on networks that block the connectivity check.** The app
+  now checks that it can reach your mail servers before it reports that it is
+  offline.
+- **The chat reads open PDFs reliably.** Some PDFs made the chat turn fail or
+  lost letters from words; their text now comes through whole.
+- **Asking the chat for the first email you sent gets it.** It used to find
+  the right email and then say it had only found the most recent one.
+
+## [0.6.17] — 2026-10-29
+
+### Added
+
+- **Chat reads the open PDF.** With a PDF open in a tab, or selected in the
+  Attachments view, the chat answers about that document, and a new
+  conversation offers document starters (summarise it, key points/dates/amounts,
+  ask about it). A PDF too long for the context window is read in parts.
+- **Zoom in the PDF viewer.**
+- **Suggested requests** when opening a new chat conversation.
+- **Calendar feeds (ICS) for IMAP accounts** (Proton Calendar and others) and a
+  calendar panel docked on the right.
+- **All accounts in the calendar view**, with a colour per account.
+- **OpenAI-compatible AI provider** with a custom base URL.
+- **Choose the data folder location** from the app.
+- **Star on GitHub** button next to Give feedback.
+
+### Fixed
+
+- A message whose only content is an attachment now sends (Send was enabled
+  but did nothing).
+- A Gmail account no longer stops syncing for good when a sender's name contains
+  `<` or `>`.
+- An internal error while syncing no longer stops an account for good or leaves
+  the app waiting: a message that cannot be read is skipped, the sync carries on,
+  and the error appears in Logs.
+- A file dragged onto a composer is attached instead of opening full screen.
+- The block-sender dialog closes on confirm and reads well in dark mode.
+- The checked email row stays readable in dark mode.
+
+### Security
+
+- Chat and AI prompts handle mailbox text more defensively.
+- Dependency updates (tokio, rusqlite).
+
+## [0.6.16] — 2026-10-19
+
+### Added
+
+- **Dark theme.** **Settings → Appearance → Theme** chooses **Light**, **Dark** or
+  **System**, which follows the operating system (the default); the onboarding's
+  inbox-layout step offers the same choice. The choice survives restarts and
+  the window title bar follows it. The sidebar, settings and dialogs keep
+  their look. Messages follow the dark theme whenever they can: one that brings
+  its own dark styles uses them, a plain message or a light design is adapted
+  (with its images intact), and a design that is already dark is left alone.
 - **About tab in Settings** with the app version and links to the website,
   the source code and the new GitHub Sponsors page: EmailOps now accepts
   sponsorships. If you find it useful, **Sponsor the project** in Settings →
   About opens the sponsor page.
 - **Test a Lens's filters before saving.** **Test** in the Lens settings shows
   how many emails the filters match and the three most recent ones.
+- **Not spam.** A conversation filed in Spam offers **Not spam** (also in the
+  email row menu): it moves back to the Inbox, its junk flags are cleared and
+  the move is written back to the provider.
+- **All / Unread toggle on email lists.** **Unread** keeps the conversations
+  with any unread message (the unread messages themselves in a flat view).
+- **Font and font size in the compose toolbar**, which follows the cursor.
 
 ### Fixed
 
+- **IMAP on ports other than 993** (Proton Mail Bridge on 1143, plain IMAP on
+  143) upgrades with STARTTLS instead of failing with "record overflow", and
+  refuses to continue in clear text if the server declines.
+- IMAP sync reuses one session per sync pass and retries failed connections.
+- **Linux AppImage:** the webview recovers from COLRv1 color-font crashes, and
+  the AppImage now builds on Ubuntu 24.04.
+- AI drafts sign with the account's name instead of a "[Your name]"
+  placeholder.
+- A PDF tab keeps its scroll position across tab switches.
+- **Linux: every dropdown follows the theme.** The chat's account and
+  conversation pickers, EO Docs' kind and folder selects and the onboarding
+  language picker were native `<select>` elements, whose popup WebKitGTK
+  paints light whatever the app's theme; they now use the same owned dropdown
+  as the rest of the app (native on macOS and Windows, where the popup follows
+  the theme).
 - Adding a column to a Lens (or editing its prompt) and running the backfill
   again now fills the new column for emails the Lens had already extracted,
   keeping values edited by hand.
@@ -27,6 +206,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each under its own forwarded-message header, plus every message's
   attachments. It used to carry only the latest message, so anything that
   reply had not quoted, such as the opening message, was lost.
+
+### Security
+
+- rustls 0.23.46 (RUSTSEC-2026-0346..0349) and quinn-proto 0.11.19
+  (RUSTSEC-2026-0338..0342).
 
 ## [0.6.15] — 2026-10-08
 

@@ -151,24 +151,27 @@ describe('removeThreads / restoreThreads', () => {
 
 describe('leavesList', () => {
   it.each([
-    ['archive', 'inbox', true],
-    ['archive', 'starred', false],
-    ['archive', 'search', false],
-    ['moveToInbox', 'archive', true],
-    ['moveToInbox', 'folder:Archive', true],
-    ['moveToInbox', 'inbox', false],
-    ['unstar', 'starred', true],
-    ['unstar', 'inbox', false],
-    ['markUnread', 'inbox', false],
-    ['star', 'inbox', false],
-    ['delete', 'inbox', true],
-    ['delete', 'starred', true],
-    ['delete', 'search', true],
-    ['notSpam', 'spam', true],
-    ['notSpam', 'inbox', false],
-    ['notSpam', 'search', false],
-  ] as const)('%s in the %s list → %s', (action, list, expected) => {
-    expect(leavesList(action, list)).toBe(expected);
+    ['archive', 'inbox', false, true],
+    ['archive', 'starred', false, false],
+    ['moveToInbox', 'archive', false, true],
+    ['moveToInbox', 'folder:Archive', false, true],
+    ['moveToInbox', 'inbox', false, false],
+    ['unstar', 'starred', false, true],
+    ['unstar', 'inbox', false, false],
+    ['markUnread', 'inbox', false, false],
+    ['star', 'inbox', false, false],
+    ['delete', 'inbox', false, true],
+    ['delete', 'starred', false, true],
+    ['notSpam', 'spam', false, true],
+    ['notSpam', 'inbox', false, false],
+    // With a query, a row leaves only when it stops belonging to the list.
+    ['archive', 'inbox', true, false],
+    ['unstar', 'starred', true, false],
+    ['moveToInbox', 'archive', true, true],
+    ['notSpam', 'spam', true, true],
+    ['delete', 'inbox', true, true],
+  ] as const)('%s in the %s list, query %s → %s', (action, list, hasQuery, expected) => {
+    expect(leavesList(action, list, hasQuery)).toBe(expected);
   });
 });
 
@@ -282,7 +285,7 @@ describe('thread action store actions', () => {
     vi.mocked(api.applyThreadAction).mockResolvedValue({ failed: [] });
     const junk = email('s1', 't1', { mailbox: 'spam' });
     const kept = email('i1', 't1', { mailbox: 'inbox' });
-    useEmailStore.setState({ listScope: 'search', emails: [kept], threadEmails: [kept, junk], selectedEmail: junk });
+    useEmailStore.setState({ listScope: 'inbox', emails: [kept], threadEmails: [kept, junk], selectedEmail: junk });
 
     await useEmailStore.getState().markThreadsNotSpam([{ accountId: 'acc', threadId: 't1' }]);
 

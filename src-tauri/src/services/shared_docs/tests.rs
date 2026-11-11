@@ -9,7 +9,7 @@ use yrs::{ReadTxn, Transact};
 
 use super::crdt::test_support::{text_of, Peer};
 use super::*;
-use crate::sync::provider::{EmailCategory, FakeEmailProvider, FakeMailboxOp};
+use crate::sync::provider::{EmailCategory, FakeEmailProvider, FakeMailboxOp, FakeSentMessage};
 
 const NOW: i64 = 1_800_000_000;
 
@@ -45,6 +45,14 @@ fn install(address: &str) -> Install {
 /// Deliver to `to` every message `from` sent it since the last delivery,
 /// dropping the ones whose index is in `lose`. Returns how many arrived.
 async fn deliver_except(from: &Install, to: &Install, lose: &[usize]) -> usize {
+    // An install of the sender's own sees its messages through Sent.
+    let own = from.account.email == to.account.email;
+    deliver_filed(from, to, lose, own).await
+}
+
+/// [`deliver_except`] with the mailbox chosen by the test: `own` files the
+/// messages in the receiver's Sent mail, otherwise they land in its inbox.
+async fn deliver_filed(from: &Install, to: &Install, lose: &[usize], own: bool) -> usize {
     let sent = from.provider.sent();
     let start = {
         let mut delivered = to.delivered.lock().unwrap();
@@ -54,44 +62,10 @@ async fn deliver_except(from: &Install, to: &Install, lose: &[usize]) -> usize {
     };
     let mut arrived = 0;
     for (i, msg) in sent.iter().enumerate().skip(start) {
-        // An install of the sender's own sees its messages through Sent.
-        let own = from.account.email == to.account.email;
         if lose.contains(&i) || !(own || msg.to_emails.contains(&to.account.email)) {
             continue;
         }
-        let email = Email {
-            id: format!("{}-{i}", from.account.email),
-            account_id: to.account.id.clone(),
-            thread_id: "t-doc".into(),
-            message_id: None,
-            references: None,
-            subject: msg.subject.clone(),
-            sender: String::new(),
-            sender_email: from.account.email.clone(),
-            recipients: msg.to_emails.clone(),
-            cc: vec![],
-            body: msg.body.text.clone(),
-            snippet: String::new(),
-            timestamp: NOW + i as i64,
-            is_read: false,
-            triage_status: None,
-            category: "primary".into(),
-            mailbox: if own { "sent" } else { "inbox" }.into(),
-            is_sent: own,
-            is_starred: false,
-            headers: to.arriving_headers.lock().unwrap().clone(),
-        };
-        let infos: Vec<AttachmentInfo> = msg
-            .attachments
-            .iter()
-            .map(|a| AttachmentInfo {
-                attachment_id: "att-1".into(),
-                filename: a.filename.clone(),
-                mime_type: a.mime_type.clone(),
-                size: a.data.len() as i64,
-                inline_data: Some(a.data.clone()),
-            })
-            .collect();
+        let (email, infos) = arrival_of(from, to, i, msg, own);
         to.db.insert_emails_batch(std::slice::from_ref(&email)).unwrap();
         to.provider
             .add_message(email.clone(), EmailCategory::Primary, infos.clone());
@@ -99,6 +73,50 @@ async fn deliver_except(from: &Install, to: &Install, lose: &[usize]) -> usize {
         arrived += 1;
     }
     arrived
+}
+
+/// What `to` stores for message `i` of the ones `from` sent.
+fn arrival_of(
+    from: &Install,
+    to: &Install,
+    i: usize,
+    msg: &FakeSentMessage,
+    own: bool,
+) -> (Email, Vec<AttachmentInfo>) {
+    let email = Email {
+        id: format!("{}-{i}", from.account.email),
+        account_id: to.account.id.clone(),
+        thread_id: "t-doc".into(),
+        message_id: None,
+        references: None,
+        subject: msg.subject.clone(),
+        sender: String::new(),
+        sender_email: from.account.email.clone(),
+        recipients: msg.to_emails.clone(),
+        cc: vec![],
+        body: msg.body.text.clone(),
+        snippet: String::new(),
+        timestamp: NOW + i as i64,
+        is_read: false,
+        triage_status: None,
+        category: "primary".into(),
+        mailbox: if own { "sent" } else { "inbox" }.into(),
+        is_sent: own,
+        is_starred: false,
+        headers: to.arriving_headers.lock().unwrap().clone(),
+    };
+    let infos = msg
+        .attachments
+        .iter()
+        .map(|a| AttachmentInfo {
+            attachment_id: "att-1".into(),
+            filename: a.filename.clone(),
+            mime_type: a.mime_type.clone(),
+            size: a.data.len() as i64,
+            inline_data: Some(a.data.clone()),
+        })
+        .collect();
+    (email, infos)
 }
 
 async fn deliver(from: &Install, to: &Install) -> usize {
@@ -264,6 +282,195 @@ async fn a_message_seen_twice_is_applied_once_and_updates_are_archived() {
     );
 }
 
+/// A message a person wrote, in the conversation the document's mail lands in.
+fn person_reply(to: &Install, id: &str) -> Email {
+    Email {
+        id: id.into(),
+        account_id: to.account.id.clone(),
+        thread_id: "t-doc".into(),
+        message_id: None,
+        references: None,
+        subject: "Re: Plan".into(),
+        sender: String::new(),
+        sender_email: "alice@example.com".into(),
+        recipients: vec![to.account.email.clone()],
+        cc: vec![],
+        body: "Shall we talk about it?".into(),
+        snippet: String::new(),
+        timestamp: NOW,
+        is_read: false,
+        triage_status: None,
+        category: "primary".into(),
+        mailbox: "inbox".into(),
+        is_sent: false,
+        is_starred: false,
+        headers: None,
+    }
+}
+
+#[tokio::test]
+async fn an_archived_update_leaves_the_rest_of_its_conversation_in_the_inbox() {
+    let (alice, bob, doc) = shared_pair().await;
+    bob.db.insert_emails_batch(&[person_reply(&bob, "reply-1")]).unwrap();
+
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    deliver(&alice, &bob).await;
+
+    let state_of = |id: &str| {
+        let email = bob.db.get_email(id).unwrap().unwrap();
+        (email.mailbox, email.is_read)
+    };
+    assert_eq!(state_of("reply-1"), ("inbox".to_string(), false), "the person's reply");
+    assert_eq!(
+        state_of("alice@example.com-0"),
+        ("inbox".to_string(), false),
+        "the invitation"
+    );
+    assert_eq!(
+        state_of("alice@example.com-1"),
+        ("archive".to_string(), true),
+        "the update"
+    );
+}
+
+#[tokio::test]
+async fn an_archived_update_keeps_the_snooze_on_its_conversation() {
+    let (alice, bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    let (email, infos) = arrival_of(&alice, &bob, 1, &alice.provider.sent()[1], false);
+    bob.db.insert_emails_batch(std::slice::from_ref(&email)).unwrap();
+    // Storing new mail ends a snooze by itself: this one comes after, so only
+    // what the sync hook does to it is under test.
+    bob.db
+        .snooze_threads(&[(bob.account.id.as_str(), "t-doc")], NOW + 9_999, NOW)
+        .unwrap();
+
+    ingest_arrivals(&bob.db, &bob.account, &bob.provider, &[(email, infos)], NOW).await;
+
+    assert_eq!(bob.db.pending_snoozes().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn an_archived_update_records_a_read_and_an_archive() {
+    let (alice, bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    deliver(&alice, &bob).await;
+
+    let mut kinds: Vec<String> = bob
+        .db
+        .recent_interaction_events(&bob.account.id, 10)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.kind)
+        .collect();
+    kinds.sort();
+    assert_eq!(kinds, vec!["archive", "read"]);
+    assert_eq!(
+        bob.db
+            .get_thread_state(&bob.account.id, "t-doc")
+            .unwrap()
+            .unwrap()
+            .awaiting,
+        "resolved"
+    );
+}
+
+#[tokio::test]
+async fn an_update_that_left_the_inbox_during_the_sync_stays_where_it_went() {
+    let (alice, bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap();
+    let (email, infos) = arrival_of(&alice, &bob, 1, &alice.provider.sent()[1], false);
+    bob.db.insert_emails_batch(std::slice::from_ref(&email)).unwrap();
+    // Filed elsewhere after the batch was read from the provider.
+    bob.db
+        .connection()
+        .execute("UPDATE emails SET mailbox = 'spam' WHERE id = ?1", [&email.id])
+        .unwrap();
+
+    ingest_arrivals(&bob.db, &bob.account, &bob.provider, &[(email.clone(), infos)], NOW).await;
+
+    assert_eq!(bob.db.get_email(&email.id).unwrap().unwrap().mailbox, "spam");
+}
+
+// ── Two writers on one document ──────────────────────────────────────────
+
+const WRITERS: u64 = 6;
+const SAVES: usize = 20;
+
+fn edit_marker(client: u64, save: usize) -> String {
+    format!("[{client}.{save}]")
+}
+
+/// `SAVES` edits typed in an editor of its own, each saved on its own.
+fn save_edits(inst: &Install, doc_id: &str, client: u64) {
+    let editor = Peer::new(client);
+    for save in 0..SAVES {
+        let update = editor.insert(0, &edit_marker(client, save));
+        apply_local_update(&inst.db, &inst.account.id, doc_id, &b64().encode(update), NOW).unwrap();
+    }
+}
+
+/// The edits of `clients` the stored document does not hold.
+fn missing_edits(inst: &Install, doc_id: &str, clients: &[u64]) -> Vec<String> {
+    let text = stored_text(inst, doc_id);
+    clients
+        .iter()
+        .flat_map(|client| (0..SAVES).map(|save| edit_marker(*client, save)))
+        .filter(|edit| !text.contains(edit))
+        .collect()
+}
+
+#[test]
+fn saves_from_several_editors_at_once_keep_every_edit() {
+    let alice = install("alice@example.com");
+    let doc = create(&alice.db, &alice.account, DocKind::Doc, "Plan", NOW).unwrap().id;
+
+    std::thread::scope(|scope| {
+        for client in 1..=WRITERS {
+            let (alice, doc) = (&alice, &doc);
+            scope.spawn(move || save_edits(alice, doc, client));
+        }
+    });
+
+    let clients: Vec<u64> = (1..=WRITERS).collect();
+    assert_eq!(missing_edits(&alice, &doc, &clients), Vec::<String>::new());
+}
+
+#[test]
+fn a_change_that_arrives_during_a_save_keeps_both() {
+    let alice = install("alice@example.com");
+    let doc = create(&alice.db, &alice.account, DocKind::Doc, "Plan", NOW).unwrap().id;
+    alice
+        .db
+        .add_shared_doc_participants(&doc, &["bob@example.org".to_string()])
+        .unwrap();
+    let from_bob = Email {
+        sender_email: "bob@example.org".into(),
+        ..person_reply(&alice, "m-1")
+    };
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| save_edits(&alice, &doc, 1));
+        scope.spawn(|| {
+            let bob = Peer::new(2);
+            for save in 0..SAVES {
+                let env = Envelope {
+                    update: bob.insert(0, &edit_marker(2, save)),
+                    ..crafted_envelope(&doc, &["alice@example.com", "bob@example.org"])
+                };
+                let applied = apply_arrival(&alice.db, &alice.account, &from_bob, &env, NOW).unwrap();
+                assert!(matches!(applied, Applied::Changed));
+            }
+        });
+    });
+
+    assert_eq!(missing_edits(&alice, &doc, &[1, 2]), Vec::<String>::new());
+}
+
 #[tokio::test]
 async fn nothing_is_mailed_before_the_user_shares_or_while_nobody_else_is_in_it() {
     let alice = install("alice@example.com");
@@ -288,34 +495,33 @@ async fn nothing_is_mailed_before_the_user_shares_or_while_nobody_else_is_in_it(
     assert!(alice.provider.sent().is_empty());
 }
 
-#[tokio::test]
-async fn a_forged_participant_is_ignored() {
-    let (alice, bob, doc) = shared_pair().await;
-    let eve = install("eve@example.net");
-    let forged = Envelope {
+/// An envelope for `doc_id` that nobody's document produced.
+fn crafted_envelope(doc_id: &str, participants: &[&str]) -> Envelope {
+    Envelope {
         purpose: envelope::Purpose::Update,
-        doc_id: doc.clone(),
+        doc_id: doc_id.into(),
         kind: DocKind::Doc,
         title: "Plan".into(),
-        participants: vec![
-            "alice@example.com".into(),
-            "bob@example.org".into(),
-            "eve@example.net".into(),
-        ],
+        participants: participants.iter().map(|p| p.to_string()).collect(),
         state_vector: crdt::empty_state_vector(),
         update: Peer::new(66).insert(0, "pwned "),
-    };
-    let data = b64().encode(envelope::encode(&forged).unwrap());
-    eve.provider
+    }
+}
+
+/// Mail `env` from `from`'s address to `to` as an ordinary document message.
+async fn mail_envelope_to(from: &Install, to: &str, env: &Envelope) {
+    let data = b64().encode(envelope::encode(env).unwrap());
+    from.provider
         .send_new_email(
-            "eve@example.net",
+            &from.account.email,
             None,
-            &["bob@example.org".into()],
+            &[to.into()],
+            &[],
             &[],
             "x",
             &EmailBody::plain("x"),
             &[EmailAttachment {
-                filename: envelope::file_name(&doc),
+                filename: envelope::file_name(&env.doc_id),
                 mime_type: envelope::ENVELOPE_MIME.into(),
                 data,
                 content_id: None,
@@ -324,10 +530,69 @@ async fn a_forged_participant_is_ignored() {
         )
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_forged_participant_is_ignored() {
+    let (alice, bob, doc) = shared_pair().await;
+    let eve = install("eve@example.net");
+    let forged = crafted_envelope(&doc, &["alice@example.com", "bob@example.org", "eve@example.net"]);
+    mail_envelope_to(&eve, "bob@example.org", &forged).await;
     deliver(&eve, &bob).await;
 
     assert_eq!(stored_text(&bob, &doc), "Hello");
     drop(alice);
+}
+
+#[tokio::test]
+async fn a_new_document_naming_this_account_as_sender_is_ignored_outside_sent() {
+    let bob = install("bob@example.org");
+    let writer = install("bob@example.org");
+    let doc = uuid::Uuid::new_v4().to_string();
+    let env = crafted_envelope(&doc, &["bob@example.org", "eve@example.net"]);
+    mail_envelope_to(&writer, "bob@example.org", &env).await;
+
+    deliver_filed(&writer, &bob, &[], false).await;
+
+    assert!(bob.db.get_shared_doc(&doc).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_known_document_ignores_a_message_naming_this_account_as_sender_outside_sent() {
+    let (alice, bob, doc) = shared_pair().await;
+    let writer = install("bob@example.org");
+    let env = crafted_envelope(&doc, &["alice@example.com", "bob@example.org", "eve@example.net"]);
+    mail_envelope_to(&writer, "bob@example.org", &env).await;
+
+    deliver_filed(&writer, &bob, &[], false).await;
+
+    assert_eq!(stored_text(&bob, &doc), "Hello");
+    let stored = bob.db.get_shared_doc(&doc).unwrap().unwrap();
+    assert_eq!(stored.participants, vec!["alice@example.com", "bob@example.org"]);
+    drop(alice);
+}
+
+#[tokio::test]
+async fn someone_elses_new_participant_holds_the_mail_until_the_user_accepts() {
+    let (alice, bob, doc) = shared_pair().await;
+    type_at_end(&bob, &doc, &open_editor(&bob, &doc, 2), " there");
+    let env = crafted_envelope(&doc, &["alice@example.com", "bob@example.org", "carol@example.net"]);
+    mail_envelope_to(&alice, "bob@example.org", &env).await;
+    deliver(&alice, &bob).await;
+
+    let held = bob.db.get_shared_doc(&doc).unwrap().unwrap();
+    assert_eq!(held.status, DocStatus::Invited);
+    assert!(!flush(&bob.db, &bob.account, &bob.provider, &doc).await.unwrap());
+    assert!(
+        bob.provider.sent().is_empty(),
+        "nothing goes out before the user agrees"
+    );
+
+    accept(&bob.db, &bob.account.id, &doc, NOW).unwrap();
+    assert!(flush(&bob.db, &bob.account, &bob.provider, &doc).await.unwrap());
+    let sent = bob.provider.sent();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].to_emails.contains(&"carol@example.net".to_string()));
 }
 
 #[tokio::test]
@@ -408,16 +673,115 @@ async fn due_documents_are_flushed_after_the_pause_and_failures_retried() {
     let (alice, _bob, doc) = shared_pair().await;
     type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
 
-    assert_eq!(flush_due(&alice.db, NOW + 5, &Unreachable).await, 0, "still typing");
+    let mut retries = FlushRetries::default();
     assert_eq!(
-        flush_due(&alice.db, NOW + planner::FLUSH_DEBOUNCE_SECS, &Unreachable).await,
+        flush_due(&alice.db, NOW + 5, &Unreachable, &mut retries).await,
+        0,
+        "still typing"
+    );
+    assert_eq!(
+        flush_due(
+            &alice.db,
+            NOW + planner::FLUSH_DEBOUNCE_SECS,
+            &Unreachable,
+            &mut retries
+        )
+        .await,
         0,
         "the provider could not be built"
     );
+    assert_eq!(retries[&doc].failures, 1, "that failure counts towards the wait");
     assert!(
         alice.db.get_shared_doc(&doc).unwrap().unwrap().dirty_since.is_some(),
         "kept for the next pass"
     );
+}
+
+/// Hands out a provider that refuses every send until `working` is set, and
+/// counts the attempts.
+#[derive(Default)]
+struct Flaky {
+    working: std::sync::atomic::AtomicBool,
+    attempts: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl OutboxProviders for Flaky {
+    async fn provider_for(&self, account: &Account) -> Result<Box<dyn EmailProvider>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.attempts.fetch_add(1, SeqCst);
+        let provider = FakeEmailProvider::new(&account.email, "");
+        if !self.working.load(SeqCst) {
+            provider.fail_sends(Some("server down"));
+        }
+        Ok(Box::new(provider))
+    }
+}
+
+#[tokio::test]
+async fn a_send_that_keeps_failing_waits_longer_each_time_instead_of_every_tick() {
+    let (alice, _bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    let providers = Flaky::default();
+    let mut retries = FlushRetries::default();
+    let start = NOW + planner::FLUSH_DEBOUNCE_SECS;
+
+    // Ten minutes of the scheduler's 15-second ticks.
+    for tick in 0..40 {
+        flush_due(&alice.db, start + tick * 15, &providers, &mut retries).await;
+    }
+
+    // At +0, +60, +180 and +420 seconds; the next is due at +900.
+    assert_eq!(providers.attempts.load(std::sync::atomic::Ordering::SeqCst), 4);
+    assert!(
+        alice.db.get_shared_doc(&doc).unwrap().unwrap().dirty_since.is_some(),
+        "the changes stay pending"
+    );
+}
+
+#[tokio::test]
+async fn a_document_goes_out_when_its_wait_ends_and_the_next_failure_starts_over() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (alice, _bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    let providers = Flaky::default();
+    let mut retries = FlushRetries::default();
+    let start = NOW + planner::FLUSH_DEBOUNCE_SECS;
+    assert_eq!(flush_due(&alice.db, start, &providers, &mut retries).await, 0);
+
+    providers.working.store(true, SeqCst);
+    assert_eq!(
+        flush_due(&alice.db, start + 15, &providers, &mut retries).await,
+        0,
+        "still waiting, even though the provider is back"
+    );
+    assert_eq!(
+        flush_due(
+            &alice.db,
+            start + planner::FLUSH_RETRY_BASE_SECS,
+            &providers,
+            &mut retries
+        )
+        .await,
+        1
+    );
+
+    assert!(retries.is_empty(), "{retries:?}");
+}
+
+#[tokio::test]
+async fn a_failed_document_mailed_by_hand_stops_waiting() {
+    let (alice, _bob, doc) = shared_pair().await;
+    type_at_end(&alice, &doc, &open_editor(&alice, &doc, 1), "!");
+    let mut retries = FlushRetries::default();
+    let start = NOW + planner::FLUSH_DEBOUNCE_SECS;
+    flush_due(&alice.db, start, &Flaky::default(), &mut retries).await;
+    assert_eq!(retries.len(), 1);
+
+    assert!(flush(&alice.db, &alice.account, &alice.provider, &doc).await.unwrap());
+    flush_due(&alice.db, start + 15, &Flaky::default(), &mut retries).await;
+
+    assert!(retries.is_empty(), "{retries:?}");
 }
 
 #[tokio::test]
@@ -588,6 +952,7 @@ async fn a_document_attached_to_an_email_is_shared_with_its_recipients() {
         &alice.account.id,
         vec!["bob@example.org".into()],
         vec![],
+        vec![],
         "Our proposal",
         &EmailBody::plain("Here it is, edit away."),
         vec![doc_ref_attachment(&doc.id)],
@@ -626,6 +991,7 @@ async fn an_attached_document_of_another_account_stops_the_send() {
         &alice.db,
         &alice.account.id,
         vec!["carl@example.net".into()],
+        vec![],
         vec![],
         "Hi",
         &EmailBody::plain("x"),

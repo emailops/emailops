@@ -9,11 +9,18 @@
 #   draft, so a name there signs the message twice. Omitted: report only.
 # A "[Your name]"-style placeholder at the end fails every case, whatever
 # expect_signed says.
+# expect_language: ISO code the whole draft must be in; a line in another
+#   language fails the run, greetings and closings included.
+# forbidden: text the draft must not contain, in any case.
+# required: text the draft must contain, in any case.
+# past_threads: earlier conversations with the correspondent. The account's
+#   messages in them are the voice samples the prompt shows.
 #
 # Run: make eval-draft-cases ARGS="--repeat 3"
 #      (add --case <id-substring> to run a subset, --model <name> to switch)
 
 - id: reply_signature_en
+  expect_language: en
   kind: reply
   account: { email: ulises@example.com, name: Ulises Ortega }
   signature:
@@ -33,6 +40,7 @@
   expect_signed: false
 
 - id: reply_no_signature_en
+  expect_language: en
   kind: reply
   account: { email: ulises@example.com, name: Ulises Ortega }
   thread:
@@ -49,6 +57,7 @@
         Ana
 
 - id: reply_signature_es
+  expect_language: es
   kind: reply
   account: { email: ulises@example.com, name: Ulises Ortega }
   signature:
@@ -68,6 +77,7 @@
   expect_signed: false
 
 - id: reply_no_signature_es
+  expect_language: es
   kind: reply
   account: { email: ulises@example.com, name: Ulises Ortega }
   thread:
@@ -84,6 +94,7 @@
         Bruno
 
 - id: reply_signature_off_for_replies_en
+  expect_language: en
   kind: reply
   account: { email: ulises@example.com, name: Ulises Ortega }
   signature:
@@ -103,6 +114,7 @@
         Ana
 
 - id: new_signature_en
+  expect_language: en
   kind: new
   account: { email: ulises@example.com, name: Ulises Ortega }
   signature:
@@ -113,6 +125,7 @@
   expect_signed: false
 
 - id: new_no_signature_en
+  expect_language: en
   kind: new
   account: { email: ulises@example.com, name: Ulises Ortega }
   to: [carla@example.com]
@@ -120,8 +133,401 @@
   instructions: Ask Carla whether she had time to review the proposal sent last week, and offer a short call.
 
 - id: new_no_signature_no_name_en
+  expect_language: en
   kind: new
   account: { email: ulises@example.com, name: "" }
   to: [carla@example.com]
   subject: Proposal follow-up
   instructions: Ask Carla whether she had time to review the proposal sent last week, and offer a short call.
+
+# The language of a reply is the language of the message it answers, whatever
+# else the prompt carries.
+- id: lang_thread_switches_to_es
+  kind: reply
+  expect_language: es
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Kickoff meeting
+      body: |
+        Hi Ulises,
+
+        Could we move the kickoff meeting to Thursday?
+
+        Thanks,
+        Ana
+    - from_name: Ulises Ortega
+      from_email: ulises@example.com
+      subject: "Re: Kickoff meeting"
+      body: |
+        Hi Ana,
+
+        Thursday works for me. What time suits you?
+
+        Best regards,
+        Ulises
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: "Re: Kickoff meeting"
+      body: |
+        Mejor te escribo en español, que voy con prisa.
+
+        ¿Te parece bien a las 10:00 en nuestra oficina? Traeré a dos personas del equipo.
+
+        Un saludo,
+        Ana
+
+- id: lang_thread_switches_to_en
+  kind: reply
+  expect_language: en
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Presupuesto de la migración
+      body: |
+        Hola Ulises,
+
+        ¿Tienes ya el presupuesto de la migración?
+
+        Un saludo,
+        Bruno
+    - from_name: Ulises Ortega
+      from_email: ulises@example.com
+      subject: "Re: Presupuesto de la migración"
+      body: |
+        Hola Bruno,
+
+        Lo tengo casi listo, te digo algo esta semana.
+
+        Un saludo,
+        Ulises
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: "Re: Presupuesto de la migración"
+      body: |
+        Hi Ulises,
+
+        I am adding our new CFO, Helen, who does not read Spanish. Could you tell her
+        when the migration budget will be ready?
+
+        Thanks,
+        Bruno
+
+- id: lang_voice_samples_en_reply_es
+  kind: reply
+  expect_language: es
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  past_threads:
+    - - from_name: Bruno Gil
+        from_email: bruno@example.net
+        subject: Staging access
+        body: |
+          Hi Ulises, can you open the staging server for our auditors?
+      - from_name: Ulises Ortega
+        from_email: ulises@example.com
+        subject: "Re: Staging access"
+        body: |
+          Hi Bruno,
+
+          Done, the auditors can log in from today. Let me know if anything is missing.
+
+          Best regards,
+          Ulises
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Fecha de la auditoría
+      body: |
+        Hola Ulises,
+
+        ¿Podrías confirmarme si la auditoría sigue prevista para el martes?
+
+        Un saludo,
+        Bruno
+
+- id: lang_voice_samples_es_reply_en
+  kind: reply
+  expect_language: en
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  past_threads:
+    - - from_name: Ana Pérez
+        from_email: ana@example.org
+        subject: Acceso a staging
+        body: |
+          Hola Ulises, ¿puedes abrir el servidor de staging a los auditores?
+      - from_name: Ulises Ortega
+        from_email: ulises@example.com
+        subject: "Re: Acceso a staging"
+        body: |
+          Hola Ana,
+
+          Hecho, los auditores ya pueden entrar desde hoy. Dime si falta algo.
+
+          Un saludo,
+          Ulises
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Audit date
+      body: |
+        Hi Ulises,
+
+        Could you confirm whether the audit is still planned for Tuesday?
+
+        Thanks,
+        Ana
+
+- id: lang_instructions_es_reply_en
+  kind: reply
+  expect_language: en
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  instructions: Dile que el jueves me va bien y pregúntale si hace falta llevar portátil.
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Workshop on Thursday
+      body: |
+        Hi Ulises,
+
+        Are you able to join the workshop on Thursday?
+
+        Thanks,
+        Ana
+
+- id: lang_instructions_en_reply_es
+  kind: reply
+  expect_language: es
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  instructions: Tell him Friday is fine and ask whether he also needs the annex.
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Presupuesto de la migración
+      body: |
+        Hola Ulises,
+
+        ¿Nos puedes enviar el presupuesto actualizado antes del viernes?
+
+        Un saludo,
+        Bruno
+
+- id: lang_missing_facts_es
+  kind: reply
+  expect_language: es
+  forbidden: ["[placeholder", "[price", "[date", "[amount", "[name"]
+  required: ["["]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Tarifa y disponibilidad
+      body: |
+        Hola Ulises,
+
+        ¿Cuál es tu tarifa por hora y qué día podrías empezar?
+
+        Un saludo,
+        Bruno
+
+- id: lang_instructions_ask_for_a_language
+  kind: reply
+  expect_language: en
+  instructions: Write it in English, Bruno is forwarding this to an English-speaking client.
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Presupuesto de la migración
+      body: |
+        Hola Ulises,
+
+        ¿Nos puedes enviar el presupuesto actualizado antes del viernes?
+
+        Un saludo,
+        Bruno
+
+# A draft cannot attach or send: saying so sends mail with nothing attached.
+- id: quality_no_sent_claim_es
+  kind: reply
+  expect_language: es
+  forbidden: ["te adjunto", "te lo adjunto", "adjunto el", "te envío", "te lo envío", "lo envío", "te paso"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Presupuesto de la migración
+      body: |
+        Hola Ulises,
+
+        ¿Nos puedes enviar el presupuesto actualizado de la migración?
+
+        Un saludo,
+        Bruno
+
+- id: quality_no_sent_claim_en
+  kind: reply
+  expect_language: en
+  forbidden: ["attached", "attaching", "enclosed", "i've sent", "i have sent", "here is the", "here's the"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Migration budget
+      body: |
+        Hi Ulises,
+
+        Could you send me the updated migration budget?
+
+        Thanks,
+        Ana
+
+- id: lang_reply_fr
+  kind: reply
+  expect_language: fr
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Claire Martin
+      from_email: claire@example.org
+      subject: Rendez-vous de mardi
+      body: |
+        Bonjour Ulises,
+
+        Pouvez-vous me confirmer le rendez-vous de mardi à 14 h ?
+
+        Cordialement,
+        Claire
+
+- id: lang_reply_de
+  kind: reply
+  expect_language: de
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Jonas Weber
+      from_email: jonas@example.net
+      subject: Termin am Dienstag
+      body: |
+        Hallo Ulises,
+
+        Können Sie mir den Termin am Dienstag um 14 Uhr bestätigen?
+
+        Viele Grüße
+        Jonas
+
+# The "Sent with EmailOps" footer is stored in every sent message. It belongs
+# to the send, never to what the user wrote.
+- id: footer_voice_sample_html
+  kind: reply
+  expect_language: en
+  forbidden: ["EmailOps", "Sent with", "getemailops"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  past_threads:
+    - - from_name: Ana Pérez
+        from_email: ana@example.org
+        subject: Invoice for May
+        body: Hi Ulises, could you send the May invoice?
+      - from_name: Ulises Ortega
+        from_email: ulises@example.com
+        subject: "Re: Invoice for May"
+        body: >-
+          <p>Hi Ana,</p><p>It is on its way, you will have it tomorrow morning at the latest.</p><p>Best regards,<br>Ulises</p><br><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0"><p style="color:#888;font-size:12px;margin:0">Sent with <a href="https://getemailops.com/?utm_source=email_footer" style="color:#888">EmailOps</a></p>
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Invoice for June
+      body: |
+        Hi Ulises,
+
+        Could you send the June invoice too?
+
+        Thanks,
+        Ana
+
+- id: footer_voice_sample_es_plain
+  kind: reply
+  expect_language: es
+  forbidden: ["EmailOps", "Enviado con", "getemailops"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  past_threads:
+    - - from_name: Bruno Gil
+        from_email: bruno@example.net
+        subject: Factura de mayo
+        body: Hola Ulises, ¿puedes enviarme la factura de mayo?
+      - from_name: Ulises Ortega
+        from_email: ulises@example.com
+        subject: "Re: Factura de mayo"
+        body: |
+          Hola Bruno,
+
+          Te la paso mañana a primera hora, ya la tengo preparada.
+
+          Un saludo,
+          Ulises
+
+          --
+          Enviado con EmailOps
+          https://getemailops.com/?utm_source=email_footer
+  thread:
+    - from_name: Bruno Gil
+      from_email: bruno@example.net
+      subject: Factura de junio
+      body: |
+        Hola Ulises,
+
+        ¿Me pasas también la factura de junio?
+
+        Un saludo,
+        Bruno
+
+- id: footer_own_message_in_thread
+  kind: reply
+  expect_language: en
+  forbidden: ["EmailOps", "Sent with", "getemailops"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Ulises Ortega
+      from_email: ulises@example.com
+      subject: Contract review
+      body: >-
+        <p>Hi Ana,</p><p>Did your lawyers finish reviewing the contract?</p><p>Best regards,<br>Ulises</p><br><br><hr style="border:none;border-top:1px solid #eee;margin:16px 0"><p style="color:#888;font-size:12px;margin:0">Sent with <a href="https://getemailops.com/?utm_source=email_footer" style="color:#888">EmailOps</a></p>
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: "Re: Contract review"
+      body: |
+        Hi Ulises,
+
+        Almost. Could we talk about clause 7 on Monday?
+
+        Thanks,
+        Ana
+
+- id: footer_from_the_other_person
+  kind: reply
+  expect_language: en
+  forbidden: ["EmailOps", "Sent with", "getemailops"]
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  thread:
+    - from_name: Ana Pérez
+      from_email: ana@example.org
+      subject: Contract review
+      body: |
+        Hi Ulises,
+
+        Could we talk about clause 7 on Monday?
+
+        Thanks,
+        Ana
+
+        --
+        Sent with EmailOps
+        https://getemailops.com/?utm_source=email_footer
+
+# Report only: what a new message comes out in when the brief is in another
+# language than the app's.
+- id: new_brief_es_default_language
+  kind: new
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  to: [bruno@example.net]
+  subject: Presupuesto de la migración
+  instructions: Dile a Bruno que el presupuesto llegará el viernes y que incluye la fase de pruebas.

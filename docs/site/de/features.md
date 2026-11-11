@@ -41,6 +41,22 @@ Die Ansicht **Alle Konten** führt jedes aktivierte Postfach in einer Liste zusa
 Ansichten je Konto. Eigene IMAP-Ordner werden ebenfalls synchronisiert, und Sie können sie
 direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-drop verschieben.
 
+## Antworten
+
+<!-- claim:reading-pane-reply -->
+**Antworten** geht an den Absender oder an die Adresse, die die Nachricht in ihrem
+*Reply-To*-Header nennt, wie es Mailinglisten oder die *No-Reply*-Adresse eines Shops tun.
+**Allen antworten** nimmt alle anderen Beteiligten der Unterhaltung hinzu. Den Betreff einer
+Antwort oder Weiterleitung kann man vor dem Senden ändern, und die Antwort bleibt in ihrer
+Unterhaltung. Jedes Verfassen-Fenster hat **Cc** und **Bcc**: Blindkopien erreichen ihre
+Empfänger, ohne dass die anderen sie sehen, und eine Nachricht kann auch nur an Cc oder Bcc
+gehen.
+
+<!-- claim:compose-drafts-keep-files -->
+Was du schreibst, wird beim Tippen als Entwurf gespeichert, Anhänge eingeschlossen: Schließt du
+das Verfassen-Fenster oder die App, bleibt es erhalten, auch bei einer Weiterleitung. Eine
+Nachricht fasst bis zu 32 Dateien mit je höchstens 25 MB.
+
 ## Weiterleiten
 
 <!-- claim:reading-pane-forward -->
@@ -67,6 +83,12 @@ in seinen eigenen Archivordner, der bei seinen übrigen Ordnern erscheint. Archi
 aus dem Posteingang heraus: Suche, intelligente Filter und die KI-Funktionen erreichen sie
 weiterhin.
 
+<!-- claim:feat-list-sent-rows -->
+In jeder Liste nennt die Zeile einer Nachricht, die Sie gesendet haben, die Empfänger („An: Ana,
+Luis +1“) statt Ihres eigenen Namens, und ihr Tooltip listet alle Empfänger auf. Der Name eines
+Empfängers stammt aus der Nachricht selbst oder daraus, wie diese Person unterschreibt, wenn sie
+Ihnen schreibt; sonst zeigt die Zeile die Adresse.
+
 <!-- claim:feat-organize-3 -->
 Setzen Sie das Häkchen am Anfang einer Zeile, um sie auszuwählen. Sobald eine oder mehrere ausgewählt
 sind, wirkt eine Leiste über der Liste auf alle zugleich — archivieren, zurückstellen, löschen,
@@ -91,7 +113,7 @@ immer zurück zur Liste.
 **Alle** und **Ungelesen** über der Liste bestimmen, was sie zeigt. **Ungelesen** behält nur
 Unterhaltungen mit einer ungelesenen Nachricht — in Ansichten mit einzelnen Nachrichten, etwa
 gesendeten E-Mails und Ordnern, nur die ungelesenen Nachrichten — in jeder Ansicht und auch mit
-einem intelligenten Filter; während einer Suche ist es ausgeblendet. Eine Unterhaltung, die Sie
+einem intelligenten Filter und während einer Suche. Eine Unterhaltung, die Sie
 öffnen, bleibt in der Liste, bis diese neu geladen wird, und die Auswahl gilt, bis Sie EmailOps
 beenden.
 
@@ -155,6 +177,12 @@ In der Nur-Text-Fassung einer Nachricht steht vor einer abschließenden Signatur
 Nachricht, lassen KI-Entwürfe Ihren Namen und Ihre Kontaktdaten weg und überlassen das
 Unterschreiben der Signatur.
 
+<!-- claim:feat-signatures-4 -->
+Unter der Signatur legt **„Gesendet mit EmailOps“ am Ende meiner gesendeten Nachrichten
+hinzufügen** fest, ob Ihre gesendeten Nachrichten mit dieser Zeile enden. Die Option ist
+standardmäßig aktiv und gilt für alle Konten; bereits gesendete Nachrichten behalten ihre
+Fußzeile.
+
 ## Intelligente Filter
 
 <!-- claim:feat-smart-filters-1 -->
@@ -167,15 +195,16 @@ das sie als Raster aus Blöcken darstellt.
 Ein Klick auf einen Filter schreibt ihn als sichtbare, bearbeitbare Abfrage ins Suchfeld —
 `tag:priority=urgent`, `from:`, `domain:`, `ext:` — ein zweiter Klick entfernt sie wieder. Mit
 Rechtsklick und **Zur Suche hinzufügen** kombinieren Sie ihn mit der aktuellen Suche. Ein Filter
-wirkt in der Ansicht, in der Sie sich befinden: in Gesendet oder einem Ordner listet er nur deren
-E-Mails, und die Suche bleibt beim Kontowechsel erhalten; findet sie nichts, zeigt die Liste an,
+oder eine Suche wirkt in der Ansicht, in der Sie sich befinden: Gesendet, Spam, Papierkorb und
+Ordner listen nur ihre eigenen E-Mails, und der Eingang erreicht alles außer Spam und Papierkorb. Die Suche bleibt beim Kontowechsel erhalten; findet sie nichts, zeigt die Liste an,
 dass eine Suche aktiv ist, und bietet an, sie zu löschen. Jede Tag-Gruppe zeigt zuerst ihre zehn meistgenutzten Werte,
 mit einer Schaltfläche darunter für den Rest.
 
 ## Kalender {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Monats-, Wochen- und Tagesansichten je Konto für Google Kalender und Outlook. Sie erhalten vor
+Monats-, Wochen- und Tagesansichten für Google Kalender und Outlook, für ein Konto oder für
+**Alle Konten** zusammen, wobei jeder Termin die Farbe seines Kontos trägt. Sie erhalten vor
 jedem Termin eine Erinnerung mit einem Ein-Klick-Button **Teilnehmen** für Meet-, Teams-, Webex-
 und Zoom-Links. Die Kalendersynchronisierung ist für Gmail- und Outlook-Konten standardmäßig
 aktiv und lässt sich je Konto abschalten — ebenso die Vorlaufzeit der Benachrichtigung — unter
@@ -187,6 +216,16 @@ eine Kollegin mit Ihnen geteilt hat, erscheint hier also genauso wie in Google o
 Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Raster blendet
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
 **Einstellungen → Kalender**.
+
+<!-- claim:feat-calendar-4 -->
+IMAP-Konten erhalten einen Kalender, indem sie einen veröffentlichten Kalender-Link (ICS)
+abonnieren, zum Beispiel den Freigabe-Link von Proton Calendar, unter **Kalender-Feeds
+(IMAP-Konten)** in **Einstellungen → Kalender**. Ein Feed ist schreibgeschützt, wird alle paar
+Minuten aktualisiert, und sein Link liegt in Ihrem Schlüsselbund, nicht in der Datenbank.
+
+<!-- claim:feat-calendar-5 -->
+Neben dem Posteingang öffnet sich der Kalender auch als rechts angedocktes Feld, die
+**Agenda**; **Vollständigen Kalender öffnen** wechselt zur vollen Ansicht.
 
 <!-- claim:feat-calendar-3 -->
 Systembenachrichtigungen einer Erinnerung lassen den Meeting-Titel weg, außer Sie aktivieren
@@ -200,6 +239,9 @@ App-Sperre. Die Erinnerung in EmailOps zeigt immer das vollständige Meeting.
 Ein Ort für die Anhänge, die Ihnen wichtig sind — Rechnungen, Verträge, Belege — mit Vorschau
 und Download, statt sich erneut durch Threads zu graben. Öffnen Sie sie über **Anhänge** in der
 Seitenleiste.
+
+<!-- claim:feat-attachments-view-9 -->
+Ein PDF öffnet sich in einem eigenen Tab, wo **Vergrößern** und **Verkleinern** seine Größe ändern.
 
 <!-- claim:feat-attachments-view-2 -->
 Die Ansicht sammelt Anhänge über **Regeln** und ist daher anfangs leer. Klicken Sie auf **Regeln
@@ -291,8 +333,8 @@ den Empfängern der E-Mail.
 ## Suche
 
 <!-- claim:feat-search-1 -->
-Volltextsuche über Betreff, Inhalt, Absender und Anhänge. Mit aktivierter KI kommt die
-semantische Suche hinzu, die nach Bedeutung statt nach exakten Wörtern sucht.
+Volltextsuche über Betreff, Inhalt und Absender. Die Liste reicht bis zum letzten Treffer in den
+heruntergeladenen E-Mails, und vom Detektor markierte E-Mails erscheinen mit ihrer Warnung.
 
 <!-- claim:feat-search-2 -->
 Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
@@ -301,12 +343,22 @@ Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
 |---|---|
 | `from:ana` | Absenderadresse oder -name |
 | `to:ana` | Empfänger |
+| `cc:ana` | jemand in Kopie (Cc) |
 | `subject:rechnung` | Betreff |
 | `before:2026-09-01` / `after:2026-09-01` | Empfangsdatum |
 | `id:<E-Mail-ID>` | eine bestimmte E-Mail |
 | `tag:newsletter` / `tag:intent=request` | ein Tag der Klassifizierung, optional innerhalb einer Facette |
 | `domain:example.com` | die Domain des Absenders |
 | `ext:pdf` | ein Anhang dieses Dateityps |
+| `has:attachment` / `-has:attachment` | E-Mails mit / ohne Anhang |
+
+<!-- claim:feat-search-3 -->
+Im freien Text sucht eine Wortfolge in Anführungszeichen ihre Wörter in dieser Reihenfolge,
+`OR` zwischen zwei Wörtern findet eines von beiden, ein `-` (oder `NOT`) vor einem Wort lässt
+die E-Mails weg, die es enthalten, und Klammern gruppieren: `(rechnung OR quittung) -entwurf`.
+Nebeneinanderstehende Wörter müssen alle vorkommen und werden vor `OR` gruppiert: `rechnung OR
+quittung märz` heißt Rechnung, oder Quittung und März. Operatoren werden großgeschrieben; ein
+kleingeschriebenes „or“ ist ein normales Wort.
 
 ## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 
@@ -375,6 +427,23 @@ davon steht unter [Datenschutz und Sicherheit](../privacy-security/).
 Posteingang in geteilter Ansicht oder in voller Breite, und eine Oberfläche auf Deutsch,
 Englisch, Spanisch und Französisch. Die Ausgabesprache der KI wird separat eingestellt — Sie
 können die Oberfläche in einer Sprache lesen und Antworten in einer anderen entwerfen lassen.
+
+<!-- claim:feat-interface-2 -->
+EmailOps hat ein helles und ein dunkles Farbschema. **Einstellungen → Erscheinungsbild →
+Farbschema** bietet **Hell**, **Dunkel** und **System**, das dem Erscheinungsbild des
+Betriebssystems folgt; die Wahl bleibt über Neustarts erhalten. Im dunklen Farbschema werden auch
+E-Mails dunkel angezeigt, wann immer es möglich ist: eine E-Mail mit eigenem dunklem Design nutzt
+es, eine einfache E-Mail oder ein helles Design wird angepasst, und ein bereits dunkles Design
+bleibt, wie es ist.
+
+<!-- claim:feat-interface-3 -->
+**Einstellungen → Über** zeigt die laufende Version, mit Links zur Website, zum Quellcode auf
+GitHub und zu **Projekt unterstützen ♥**, das die GitHub-Sponsors-Seite des Projekts öffnet.
+
+<!-- claim:feat-interface-4 -->
+Die Werkzeugleiste beim Verfassen hat eine Auswahl für **Schriftart** und eine für
+**Schriftgröße**. Beide folgen dem Cursor und zeigen Schriftart und Größe des Textes, in dem Sie
+gerade schreiben.
 
 ## Tastenkombinationen {#keyboard-shortcuts}
 

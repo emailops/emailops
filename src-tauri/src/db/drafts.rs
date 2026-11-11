@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -10,19 +10,23 @@ use super::Database;
 /// Explicit column list shared by every draft SELECT so ordinal reads in
 /// `row_to_draft` stay in lockstep. `attachments` is filled separately.
 const DRAFT_COLUMNS: &str = "id, email_id, account_id, to_addresses_json, cc_addresses_json, \
-     subject, body, body_html, ai_generated, status, provider_draft_id, created_at, updated_at";
+     subject, body, body_html, ai_generated, status, provider_draft_id, created_at, updated_at, \
+     bcc_addresses_json";
 
 fn row_to_draft(row: &rusqlite::Row<'_>) -> rusqlite::Result<Draft> {
     let to_json: String = row.get(3)?;
     let to_addresses: Vec<String> = serde_json::from_str(&to_json).unwrap_or_default();
     let cc_json: String = row.get(4)?;
     let cc_addresses: Vec<String> = serde_json::from_str(&cc_json).unwrap_or_default();
+    let bcc_json: String = row.get(13)?;
+    let bcc_addresses: Vec<String> = serde_json::from_str(&bcc_json).unwrap_or_default();
     Ok(Draft {
         id: row.get(0)?,
         email_id: row.get(1)?,
         account_id: row.get(2)?,
         to_addresses,
         cc_addresses,
+        bcc_addresses,
         subject: row.get(5)?,
         body: row.get(6)?,
         body_html: row.get(7)?,
@@ -54,6 +58,54 @@ fn attachments_for(conn: &Connection, draft_id: &str) -> rusqlite::Result<Vec<Dr
     Ok(rows)
 }
 
+/// Swap a draft's attachment rows for `attachments` and return the file paths
+/// it no longer references. The row `id` is (re)generated here so callers don't
+/// have to supply one.
+fn swap_attachments(
+    conn: &Connection,
+    draft_id: &str,
+    attachments: &[DraftAttachment],
+) -> rusqlite::Result<Vec<String>> {
+    let dropped = attachments_for(conn, draft_id)?
+        .into_iter()
+        .map(|att| att.file_path)
+        .filter(|path| !attachments.iter().any(|att| att.file_path == *path))
+        .collect();
+    conn.execute("DELETE FROM draft_attachments WHERE draft_id = ?1", params![draft_id])?;
+    for att in attachments {
+        conn.execute(
+            "INSERT INTO draft_attachments (id, draft_id, file_path, filename, mime_type)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                draft_id,
+                att.file_path,
+                att.filename,
+                att.mime_type,
+            ],
+        )?;
+    }
+    Ok(dropped)
+}
+
+/// What [`Database::store_pulled_draft`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredPulledDraft {
+    pub id: String,
+    /// False when the row is dirty: the local draft wins and nothing changed.
+    pub applied: bool,
+    /// Files the draft no longer references.
+    pub dropped_files: Vec<String>,
+}
+
+/// What [`Database::prune_provider_drafts`] removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedDrafts {
+    pub removed: usize,
+    /// Files only the removed drafts referenced.
+    pub dropped_files: Vec<String>,
+}
+
 /// One local draft as the provider sync sees it. Feeds
 /// `sync::draft_plan::plan_draft_sync`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +121,77 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+/// Write a pulled draft's row, unless it is dirty. Returns its local id and
+/// whether it was written.
+fn upsert_pulled_row(
+    conn: &Connection,
+    account_id: &str,
+    draft: &ProviderDraft,
+    record_token: bool,
+) -> Result<(String, bool)> {
+    let now = now_secs();
+    // Keep the provider's own modification time so a pulled draft doesn't
+    // jump to "today" on every sync; fall back to now for providers that
+    // don't report one.
+    let updated_at = draft.updated_at.unwrap_or(now);
+    let to_json = serde_json::to_string(&draft.to_addresses).unwrap_or_else(|_| "[]".to_string());
+    let cc_json = serde_json::to_string(&draft.cc_addresses).unwrap_or_else(|_| "[]".to_string());
+    let bcc_json = serde_json::to_string(&draft.bcc_addresses).unwrap_or_else(|_| "[]".to_string());
+    let change_token = draft.provider_message_id.as_deref().filter(|_| record_token);
+
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM drafts WHERE account_id = ?1 AND provider_draft_id = ?2",
+            params![account_id, draft.provider_draft_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let written = conn.execute(
+        // A reply draft is linked back to the email it answers by the
+        // Message-ID its provider copy carries, so one re-imported from the
+        // provider still belongs to its thread. An existing link is kept.
+        "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
+                             subject, body, body_html, ai_generated, status,
+                             provider_draft_id, provider_message_id, created_at, updated_at,
+                             bcc_addresses_json)
+         VALUES (?1,
+                 (SELECT id FROM emails WHERE account_id = ?2
+                    AND message_id IN (?12, trim(?12, '<>')) LIMIT 1),
+                 ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8, ?9,
+                 COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?11, ?13)
+         ON CONFLICT(id) DO UPDATE SET
+            email_id = COALESCE(drafts.email_id, excluded.email_id),
+            to_addresses_json = excluded.to_addresses_json,
+            cc_addresses_json = excluded.cc_addresses_json,
+            bcc_addresses_json = excluded.bcc_addresses_json,
+            subject = excluded.subject,
+            body = excluded.body,
+            body_html = excluded.body_html,
+            provider_draft_id = excluded.provider_draft_id,
+            provider_message_id = excluded.provider_message_id,
+            updated_at = excluded.updated_at
+         WHERE drafts.dirty = 0",
+        params![
+            id,
+            account_id,
+            to_json,
+            cc_json,
+            draft.subject,
+            draft.body,
+            draft.body_html,
+            draft.provider_draft_id,
+            change_token,
+            now,
+            updated_at,
+            draft.in_reply_to,
+            bcc_json,
+        ],
+    )?;
+    Ok((id, written > 0))
 }
 
 impl Database {
@@ -131,17 +254,19 @@ impl Database {
         let id = req.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let to_json = serde_json::to_string(&req.to_addresses).unwrap_or_else(|_| "[]".to_string());
         let cc_json = serde_json::to_string(&req.cc_addresses).unwrap_or_else(|_| "[]".to_string());
+        let bcc_json = serde_json::to_string(&req.bcc_addresses).unwrap_or_else(|_| "[]".to_string());
 
         conn.execute(
             "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
                                  subject, body, body_html, ai_generated, status,
-                                 provider_draft_id, created_at, updated_at, dirty)
+                                 provider_draft_id, created_at, updated_at, dirty, bcc_addresses_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 'draft', ?9,
-                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?10, ?11)
+                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET
                 email_id = excluded.email_id,
                 to_addresses_json = excluded.to_addresses_json,
                 cc_addresses_json = excluded.cc_addresses_json,
+                bcc_addresses_json = excluded.bcc_addresses_json,
                 subject = excluded.subject,
                 body = excluded.body,
                 body_html = excluded.body_html,
@@ -162,6 +287,7 @@ impl Database {
                 req.provider_draft_id,
                 now,
                 i64::from(mark_dirty),
+                bcc_json,
             ],
         )?;
 
@@ -186,7 +312,7 @@ impl Database {
             .query_row(
                 &format!("SELECT {DRAFT_COLUMNS}, dirty FROM drafts WHERE id = ?1"),
                 params![draft_id],
-                |row| Ok((row_to_draft(row)?, row.get::<_, i64>(13)?)),
+                |row| Ok((row_to_draft(row)?, row.get::<_, i64>(14)?)),
             )
             .optional()?;
         match found {
@@ -232,28 +358,25 @@ impl Database {
         Ok(rows)
     }
 
-    /// Replace the attachment set for a draft (delete-all then insert) in one
-    /// transaction. `attachments` carry pre-resolved filename/mime; the row `id`
-    /// is (re)generated here so callers don't have to.
-    pub fn replace_draft_attachments(&self, draft_id: &str, attachments: &[DraftAttachment]) -> Result<()> {
+    /// Replace the attachment set for a draft in one transaction. `attachments`
+    /// carry pre-resolved filename/mime. Returns the file paths the draft no
+    /// longer references.
+    pub fn replace_draft_attachments(&self, draft_id: &str, attachments: &[DraftAttachment]) -> Result<Vec<String>> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM draft_attachments WHERE draft_id = ?1", params![draft_id])?;
-        for att in attachments {
-            tx.execute(
-                "INSERT INTO draft_attachments (id, draft_id, file_path, filename, mime_type)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    uuid::Uuid::new_v4().to_string(),
-                    draft_id,
-                    att.file_path,
-                    att.filename,
-                    att.mime_type,
-                ],
-            )?;
-        }
+        let dropped = swap_attachments(&tx, draft_id, attachments)?;
         tx.commit()?;
-        Ok(())
+        Ok(dropped)
+    }
+
+    /// Every file path some draft attachment points at.
+    pub fn draft_attachment_paths(&self) -> Result<std::collections::HashSet<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT file_path FROM draft_attachments")?;
+        let paths = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<_, _>>()?;
+        Ok(paths)
     }
 
     pub fn list_draft_attachments(&self, draft_id: &str) -> Result<Vec<DraftAttachment>> {
@@ -261,71 +384,46 @@ impl Database {
         Ok(attachments_for(&conn, draft_id)?)
     }
 
-    /// Upsert a draft pulled from the provider, keyed by `(account_id,
-    /// provider_draft_id)`. Updates an existing local row in place (preserving
-    /// its local id and `created_at`) or inserts a new one. Returns the local id.
+    /// Store a draft pulled from the provider and its attachments, keyed by
+    /// `(account_id, provider_draft_id)`. Updates an existing local row in
+    /// place (preserving its local id and `created_at`) or inserts a new one.
     ///
-    /// A dirty row is left exactly as it is: it holds text the provider has
-    /// not received, and the local draft wins that conflict. The guard lives
-    /// in the statement so a save racing the pull cannot be overwritten either.
+    /// A dirty row is left exactly as it is, attachments included: it holds
+    /// text the provider has not received, and the local draft wins that
+    /// conflict. The guard lives in the statement, and the attachments go in
+    /// the same transaction, so a save racing the pull cannot be overwritten.
+    ///
+    /// `complete` says every file the draft can hold was stored. Otherwise the
+    /// change token is not recorded, so the next pull reads the draft again.
+    pub fn store_pulled_draft(
+        &self,
+        account_id: &str,
+        draft: &ProviderDraft,
+        attachments: &[DraftAttachment],
+        complete: bool,
+    ) -> Result<StoredPulledDraft> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let (id, applied) = upsert_pulled_row(&tx, account_id, draft, complete)?;
+        let dropped_files = if applied {
+            swap_attachments(&tx, &id, attachments)?
+        } else {
+            Vec::new()
+        };
+        tx.commit()?;
+        Ok(StoredPulledDraft {
+            id,
+            applied,
+            dropped_files,
+        })
+    }
+
+    /// [`Self::store_pulled_draft`] for a draft whose attachments do not matter
+    /// to the test.
+    #[cfg(test)]
     pub fn upsert_provider_draft(&self, account_id: &str, draft: &ProviderDraft) -> Result<String> {
         let conn = self.connection();
-        let now = now_secs();
-        // Keep the provider's own modification time so a pulled draft doesn't
-        // jump to "today" on every sync; fall back to now for providers that
-        // don't report one.
-        let updated_at = draft.updated_at.unwrap_or(now);
-        let to_json = serde_json::to_string(&draft.to_addresses).unwrap_or_else(|_| "[]".to_string());
-        let cc_json = serde_json::to_string(&draft.cc_addresses).unwrap_or_else(|_| "[]".to_string());
-
-        let existing: Option<String> = conn
-            .query_row(
-                "SELECT id FROM drafts WHERE account_id = ?1 AND provider_draft_id = ?2",
-                params![account_id, draft.provider_draft_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        let id = existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        conn.execute(
-            // A reply draft is linked back to the email it answers by the
-            // Message-ID its provider copy carries, so one re-imported from the
-            // provider still belongs to its thread. An existing link is kept.
-            "INSERT INTO drafts (id, email_id, account_id, to_addresses_json, cc_addresses_json,
-                                 subject, body, body_html, ai_generated, status,
-                                 provider_draft_id, provider_message_id, created_at, updated_at)
-             VALUES (?1,
-                     (SELECT id FROM emails WHERE account_id = ?2
-                        AND message_id IN (?12, trim(?12, '<>')) LIMIT 1),
-                     ?2, ?3, ?4, ?5, ?6, ?7, 0, 'draft', ?8, ?9,
-                     COALESCE((SELECT created_at FROM drafts WHERE id = ?1), ?10), ?11)
-             ON CONFLICT(id) DO UPDATE SET
-                email_id = COALESCE(drafts.email_id, excluded.email_id),
-                to_addresses_json = excluded.to_addresses_json,
-                cc_addresses_json = excluded.cc_addresses_json,
-                subject = excluded.subject,
-                body = excluded.body,
-                body_html = excluded.body_html,
-                provider_draft_id = excluded.provider_draft_id,
-                provider_message_id = excluded.provider_message_id,
-                updated_at = excluded.updated_at
-             WHERE drafts.dirty = 0",
-            params![
-                id,
-                account_id,
-                to_json,
-                cc_json,
-                draft.subject,
-                draft.body,
-                draft.body_html,
-                draft.provider_draft_id,
-                draft.provider_message_id,
-                now,
-                updated_at,
-                draft.in_reply_to,
-            ],
-        )?;
-        Ok(id)
+        Ok(upsert_pulled_row(&conn, account_id, draft, true)?.0)
     }
 
     /// Change tokens for this account's provider-linked drafts, keyed by
@@ -350,27 +448,69 @@ impl Database {
     /// to prune because their provider copy was sent or deleted elsewhere.
     /// Only clean, provider-linked rows go: a draft that turned dirty since it
     /// was planned holds unpushed text and is kept, and local-only drafts are
-    /// never touched. Returns how many rows were removed.
-    pub fn prune_provider_drafts(&self, account_id: &str, draft_ids: &[String]) -> Result<usize> {
+    /// never touched.
+    pub fn prune_provider_drafts(&self, account_id: &str, draft_ids: &[String]) -> Result<PrunedDrafts> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
         let mut removed = 0usize;
+        let mut dropped_files = Vec::new();
         for draft_id in draft_ids {
-            removed += tx.execute(
+            let attachments = attachments_for(&tx, draft_id)?;
+            let deleted = tx.execute(
                 "DELETE FROM drafts
                  WHERE id = ?1 AND account_id = ?2 AND provider_draft_id IS NOT NULL AND dirty = 0",
                 params![draft_id, account_id],
             )?;
+            if deleted > 0 {
+                removed += deleted;
+                dropped_files.extend(attachments.into_iter().map(|att| att.file_path));
+            }
         }
         tx.commit()?;
-        Ok(removed)
+        Ok(PrunedDrafts { removed, dropped_files })
     }
 
-    pub fn delete_draft(&self, draft_id: &str, account_id: &str) -> Result<()> {
-        let conn = self.connection();
-        conn.execute(
+    /// Delete a draft. Returns the file paths its attachments pointed at.
+    pub fn delete_draft(&self, draft_id: &str, account_id: &str) -> Result<Vec<String>> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let attachments = attachments_for(&tx, draft_id)?;
+        let deleted = tx.execute(
             "DELETE FROM drafts WHERE id = ?1 AND account_id = ?2",
             params![draft_id, account_id],
+        )?;
+        tx.commit()?;
+        Ok(if deleted > 0 {
+            attachments.into_iter().map(|att| att.file_path).collect()
+        } else {
+            Vec::new()
+        })
+    }
+
+    /// Remember a provider draft whose copy could not be removed.
+    pub fn add_draft_tombstone(&self, account_id: &str, provider_draft_id: &str) -> Result<()> {
+        self.connection().execute(
+            "INSERT OR REPLACE INTO draft_tombstones (account_id, provider_draft_id, deleted_at)
+             VALUES (?1, ?2, ?3)",
+            params![account_id, provider_draft_id, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    /// The provider draft ids of this account still waiting to be removed.
+    pub fn draft_tombstones(&self, account_id: &str) -> Result<HashSet<String>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare("SELECT provider_draft_id FROM draft_tombstones WHERE account_id = ?1")?;
+        let ids = stmt
+            .query_map(params![account_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<HashSet<String>>>()?;
+        Ok(ids)
+    }
+
+    pub fn remove_draft_tombstone(&self, account_id: &str, provider_draft_id: &str) -> Result<()> {
+        self.connection().execute(
+            "DELETE FROM draft_tombstones WHERE account_id = ?1 AND provider_draft_id = ?2",
+            params![account_id, provider_draft_id],
         )?;
         Ok(())
     }
@@ -399,6 +539,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: vec!["alina@example.com".to_string()],
             cc_addresses: vec!["cc@example.com".to_string()],
+            bcc_addresses: vec!["bcc@example.com".to_string()],
             subject: "Confirmar reunión".to_string(),
             body: "Hola Alina, confirmo.".to_string(),
             body_html: Some("<p>Hola Alina, confirmo.</p>".to_string()),
@@ -418,6 +559,7 @@ mod tests {
         assert_eq!(got.account_id, "acct-1");
         assert_eq!(got.to_addresses, vec!["alina@example.com".to_string()]);
         assert_eq!(got.cc_addresses, vec!["cc@example.com".to_string()]);
+        assert_eq!(got.bcc_addresses, vec!["bcc@example.com".to_string()]);
         assert_eq!(got.subject, "Confirmar reunión");
         assert_eq!(got.body, "Hola Alina, confirmo.");
         assert_eq!(got.body_html.as_deref(), Some("<p>Hola Alina, confirmo.</p>"));
@@ -446,6 +588,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: vec!["alina@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Edited".to_string(),
             body: "Edited body".to_string(),
             body_html: None,
@@ -510,12 +653,14 @@ mod tests {
             provider_draft_id: id.to_string(),
             to_addresses: vec!["dest@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: subject.to_string(),
             body: "body".to_string(),
             body_html: None,
             updated_at: None,
             provider_message_id: None,
             in_reply_to: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -648,6 +793,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: vec!["dest@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Subject".to_string(),
             body: body.to_string(),
             body_html: None,
@@ -673,6 +819,7 @@ mod tests {
             account_id: "acct-1".to_string(),
             to_addresses: Vec::new(),
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Subject".to_string(),
             body: "v2".to_string(),
             body_html: None,
@@ -752,6 +899,132 @@ mod tests {
         assert!(sync_state(&db, "d-1").dirty);
     }
 
+    fn pulled_attachment(file_path: &str) -> DraftAttachment {
+        DraftAttachment {
+            id: String::new(),
+            draft_id: String::new(),
+            file_path: file_path.to_string(),
+            filename: "report.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+        }
+    }
+
+    #[test]
+    fn store_pulled_draft_swaps_the_attachments_and_names_the_files_it_dropped() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        let pd = provider_draft("p-1", "Pulled");
+        let first = db
+            .store_pulled_draft(
+                "acct-1",
+                &pd,
+                &[pulled_attachment("kept.pdf"), pulled_attachment("old.pdf")],
+                true,
+            )
+            .expect("first");
+        assert!(first.applied);
+
+        let second = db
+            .store_pulled_draft(
+                "acct-1",
+                &pd,
+                &[pulled_attachment("kept.pdf"), pulled_attachment("new.pdf")],
+                true,
+            )
+            .expect("second");
+
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.dropped_files, vec!["old.pdf".to_string()]);
+        let paths: Vec<String> = db
+            .list_draft_attachments(&first.id)
+            .expect("list")
+            .into_iter()
+            .map(|att| att.file_path)
+            .collect();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&"kept.pdf".to_string()) && paths.contains(&"new.pdf".to_string()));
+    }
+
+    #[test]
+    fn store_pulled_draft_leaves_a_dirty_drafts_attachments_alone() {
+        let db = Database::new_for_testing().expect("test db");
+        user_save(&db, "d-1", "written here");
+        let (_, revision) = db.draft_for_push("d-1").expect("ok").expect("present");
+        db.mark_draft_pushed("d-1", "p-1", revision).expect("link");
+        user_save(&db, "d-1", "edited here");
+        db.replace_draft_attachments("d-1", &[pulled_attachment("mine.pdf")])
+            .expect("attach");
+
+        let stored = db
+            .store_pulled_draft(
+                "acct-1",
+                &provider_draft("p-1", "Edited elsewhere"),
+                &[pulled_attachment("theirs.pdf")],
+                true,
+            )
+            .expect("store");
+
+        assert!(!stored.applied, "the local draft wins");
+        assert!(stored.dropped_files.is_empty());
+        let attachments = db.list_draft_attachments("d-1").expect("list");
+        assert_eq!(attachments[0].file_path, "mine.pdf");
+    }
+
+    #[test]
+    fn an_incomplete_pull_records_no_change_token() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        let mut pd = provider_draft("p-1", "Pulled");
+        pd.provider_message_id = Some("msg-1".to_string());
+
+        db.store_pulled_draft("acct-1", &pd, &[], false).expect("store");
+
+        assert!(db.provider_draft_change_tokens("acct-1").expect("tokens").is_empty());
+    }
+
+    #[test]
+    fn deleting_a_draft_names_the_files_it_held() {
+        let db = Database::new_for_testing().expect("test db");
+        save(&db, "draft-1");
+        db.replace_draft_attachments("draft-1", &[pulled_attachment("a.pdf")])
+            .expect("attach");
+
+        assert!(
+            db.delete_draft("draft-1", "someone-else").expect("delete").is_empty(),
+            "another account's delete removes nothing, so it drops nothing"
+        );
+        assert_eq!(
+            db.delete_draft("draft-1", "acct-1").expect("delete"),
+            vec!["a.pdf".to_string()]
+        );
+    }
+
+    #[test]
+    fn prune_names_only_the_files_of_the_drafts_it_removed() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct-1");
+        let gone = db
+            .store_pulled_draft(
+                "acct-1",
+                &provider_draft("p-1", "gone"),
+                &[pulled_attachment("gone.pdf")],
+                true,
+            )
+            .expect("gone");
+        // Turned dirty after the sync planned to prune it: kept, file included.
+        user_save(&db, "dirty-1", "unpushed");
+        db.mark_draft_pushed("dirty-1", "p-2", 0).expect("link");
+        db.replace_draft_attachments("dirty-1", &[pulled_attachment("kept.pdf")])
+            .expect("attach");
+
+        let pruned = db
+            .prune_provider_drafts("acct-1", &[gone.id, "dirty-1".to_string()])
+            .expect("prune");
+
+        assert_eq!(pruned.removed, 1);
+        assert_eq!(pruned.dropped_files, vec!["gone.pdf".to_string()]);
+    }
+
     #[test]
     fn prune_removes_only_the_clean_linked_drafts_it_is_given() {
         let db = Database::new_for_testing().expect("test db");
@@ -771,7 +1044,7 @@ mod tests {
         let removed = db
             .prune_provider_drafts("acct-1", &[gone.clone(), "dirty-1".to_string(), "local-1".to_string()])
             .expect("prune");
-        assert_eq!(removed, 1);
+        assert_eq!(removed.removed, 1);
 
         let ids: Vec<String> = db
             .list_drafts("acct-1")
@@ -796,7 +1069,7 @@ mod tests {
 
         let removed = db.prune_provider_drafts("acct-2", &[id]).expect("prune");
 
-        assert_eq!(removed, 0);
+        assert_eq!(removed.removed, 0);
         assert_eq!(db.list_drafts("acct-1").expect("list").len(), 1);
     }
 

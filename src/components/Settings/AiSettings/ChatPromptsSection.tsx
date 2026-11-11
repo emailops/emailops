@@ -8,8 +8,8 @@ export function ChatPromptsSection() {
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <label className="block text-sm font-medium text-gray-300">{t('settings:chatPrompts.title')}</label>
-        <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+        <label className="block text-sm font-medium text-gray-700">{t('settings:chatPrompts.title')}</label>
+        <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
           <input
             type="checkbox"
             checked={showAdvanced}

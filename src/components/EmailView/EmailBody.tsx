@@ -105,6 +105,7 @@ export function EmailBody({
       {ready ? (
         <EmailHtmlFrame
           html={sanitizedHtml}
+          schemeSource={html}
           allowRemoteContent={effectiveAllowRemote}
           highlightQuery={highlightQuery}
           activeMatchIndex={activeMatchIndex}

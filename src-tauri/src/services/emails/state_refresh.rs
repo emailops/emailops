@@ -77,6 +77,9 @@ pub(super) enum RefreshAction {
 /// - Sent mail keeps its read flag: it is read by definition here, while the
 ///   provider's copy often carries no `\Seen`.
 /// - A provider answer that does not report the star leaves it alone.
+/// - A vanished row with no Message-ID is left alone: IMAP and Graph re-key a
+///   move, and that header is the only thing that finds the message again, so
+///   nothing can tell whether it was moved or deleted.
 pub(super) fn plan_state_refresh(
     stored: &[StoredMessageState],
     remote: &HashMap<String, RemoteMessageState>,
@@ -101,14 +104,20 @@ pub(super) fn plan_state_refresh(
                     }
                 }
             }
-            Some(RemoteMessageState::Missing) if !row.star_push_pending => actions.push(RefreshAction::Vanished {
-                id: row.id.clone(),
-                message_id: row.message_id.clone(),
-            }),
+            Some(RemoteMessageState::Missing) if !row.star_push_pending && has_message_id(row) => {
+                actions.push(RefreshAction::Vanished {
+                    id: row.id.clone(),
+                    message_id: row.message_id.clone(),
+                })
+            }
             Some(RemoteMessageState::Missing) => {}
         }
     }
     actions
+}
+
+fn has_message_id(row: &StoredMessageState) -> bool {
+    row.message_id.as_deref().is_some_and(|id| !id.trim().is_empty())
 }
 
 /// Bring recent stored mail in line with the provider. Non-fatal: every
@@ -394,6 +403,17 @@ mod tests {
     }
 
     #[test]
+    fn a_vanished_message_without_a_message_id_cannot_be_followed() {
+        // Only that header survives a re-keying move, so nothing can tell
+        // this row's move from a delete.
+        for header in [None, Some("  ".to_string())] {
+            let mut row = stored("m-1", true);
+            row.message_id = header;
+            assert!(plan_state_refresh(&[row], &remote(&[("m-1", RemoteMessageState::Missing)])).is_empty());
+        }
+    }
+
+    #[test]
     fn a_row_the_server_said_nothing_about_is_left_alone() {
         // Its folder would not open, or its sub-request was throttled: that is
         // not the same as "deleted".
@@ -476,6 +496,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -615,6 +636,29 @@ mod tests {
 
         assert_eq!(row(&db, "m-1"), None);
         assert_eq!(row(&db, "folder-5"), Some(("folder:Projects".to_string(), true)));
+    }
+
+    #[tokio::test]
+    async fn a_message_moved_elsewhere_without_a_message_id_stays_visible() {
+        let mut message = email("m-1", "inbox", true);
+        message.message_id = None;
+        let (db, provider) = synced(&[message]);
+        provider.relocate_message("m-1", "folder-5", "folder:Projects");
+
+        refresh_stored_mail_state(&db, &account("imap"), &provider, NOW).await;
+
+        assert_eq!(row(&db, "m-1"), Some(("inbox".to_string(), true)));
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_failed_never_deletes_the_message() {
+        let (db, provider) = synced(&[email("m-1", "inbox", true)]);
+        provider.remove_message("m-1");
+        provider.fail_locate("connection lost");
+
+        refresh_stored_mail_state(&db, &account("imap"), &provider, NOW).await;
+
+        assert_eq!(row(&db, "m-1"), Some(("inbox".to_string(), true)));
     }
 
     #[tokio::test]

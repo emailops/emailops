@@ -44,14 +44,14 @@ export function SheetBasicsNotice() {
   return (
     <div
       data-testid="sheet-basics-notice"
-      className="mb-3 flex items-start justify-between gap-3 rounded border border-gray-600 bg-gray-800/60 px-3 py-2 text-xs text-gray-300"
+      className="mb-3 flex items-start justify-between gap-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700"
     >
       <p>{t('documents:sheet.basicsNotice')}</p>
       <button
         type="button"
         data-testid="sheet-basics-notice-close"
         onClick={close}
-        className="shrink-0 rounded px-2 py-0.5 text-gray-200 hover:bg-gray-700"
+        className="shrink-0 rounded px-2 py-0.5 text-gray-800 hover:bg-gray-100"
       >
         {t('documents:sheet.basicsNoticeClose')}
       </button>

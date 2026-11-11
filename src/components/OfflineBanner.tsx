@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { aiRunsRemotely } from '@/components/Settings/AiSettings/serverSettings';
 import * as api from '@/lib/api';
 import { useConnectivityStore } from '@/stores/connectivityStore';
 
@@ -13,15 +14,14 @@ import { useConnectivityStore } from '@/stores/connectivityStore';
  *
  * The AI half of the message is conditional: `llamacpp` and `ollama` run on
  * the user's device and keep working offline, so claiming "AI features are
- * paused" would be wrong. Only remote providers (OpenRouter) are
- * actually blocked by lack of internet.
+ * paused" would be wrong. Only remote providers (OpenRouter, or an
+ * OpenAI-compatible server on another machine) are actually blocked by lack
+ * of internet.
  *
  * Subscribes to `useConnectivityStore` via destructuring so React re-renders
  * on transitions (see CLAUDE.md "Zustand Store Subscriptions" — `getState()`
  * reads in memo deps silently miss updates).
  */
-const LOCAL_AI_PROVIDERS = new Set(['llamacpp', 'ollama']);
-
 export function OfflineBanner() {
   const { t } = useTranslation(['common', 'notifications']);
   const { isOnline, initialized, init } = useConnectivityStore();
@@ -41,9 +41,10 @@ export function OfflineBanner() {
     void (async () => {
       try {
         const provider = await api.getPref('ai_provider');
+        const serverUrl = provider === 'openai_compatible' ? await api.getPref('openai_compatible_base_url') : null;
         if (cancelled) return;
         // Default provider is `llamacpp` — anything missing is local.
-        setAiIsRemote(provider != null && !LOCAL_AI_PROVIDERS.has(provider));
+        setAiIsRemote(aiRunsRemotely(provider, serverUrl));
       } catch {
         if (!cancelled) setAiIsRemote(false);
       }

@@ -29,6 +29,7 @@ function account(id: string, extra: Partial<Account> = {}): Account {
     sortOrder: 0,
     enabled: true,
     syncFromTimestamp: null,
+    color: 'blue',
     ...extra,
   };
 }

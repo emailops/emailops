@@ -50,7 +50,7 @@ export function UsageSummary() {
 
   if (error) {
     return (
-      <div role="alert" className="rounded border border-red-800 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+      <div role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
         {error}
       </div>
     );
@@ -68,22 +68,22 @@ export function UsageSummary() {
   const overBudget = usage.budgetUsd > 0 && usage.totalCostUsd >= usage.budgetUsd;
 
   return (
-    <div className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3 space-y-2">
+    <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 space-y-2">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
           {t('settings:ai.usage.title')}
         </span>
         <button
           type="button"
           onClick={handleReset}
           disabled={isResetting}
-          className="text-xs text-primary-400 hover:text-primary-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="text-xs text-primary-600 hover:text-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isResetting ? t('settings:ai.usage.resetting') : t('settings:ai.usage.reset')}
         </button>
       </div>
 
-      <div className={`text-sm ${overBudget ? 'text-red-400' : 'text-gray-200'}`}>
+      <div className={`text-sm ${overBudget ? 'text-red-600' : 'text-gray-800'}`}>
         {usage.budgetUsd > 0
           ? t('settings:ai.usage.spentOfBudget', { spent: money(usage.totalCostUsd), budget: money(usage.budgetUsd) })
           : t('settings:ai.usage.spent', { spent: money(usage.totalCostUsd) })}
@@ -98,7 +98,7 @@ export function UsageSummary() {
         {since && <> · {t('settings:ai.usage.since', { date: since })}</>}
       </p>
 
-      {overBudget && <p className="text-xs text-red-400">{t('settings:ai.usage.exceeded')}</p>}
+      {overBudget && <p className="text-xs text-red-600">{t('settings:ai.usage.exceeded')}</p>}
     </div>
   );
 }

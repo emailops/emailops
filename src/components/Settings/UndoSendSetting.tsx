@@ -43,7 +43,7 @@ export function UndoSendSetting() {
 
   return (
     <section data-testid="undo-send-setting">
-      <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.undoSend')}</h3>
+      <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('settings:appearance.undoSend')}</h3>
       <p className="text-xs text-gray-500 mb-2">{t('settings:appearance.undoSendHelp')}</p>
       {value !== null && (
         <Select
@@ -53,7 +53,7 @@ export function UndoSendSetting() {
           onChange={(v) => void change(v)}
         />
       )}
-      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </section>
   );
 }

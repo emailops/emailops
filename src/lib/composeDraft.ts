@@ -14,6 +14,7 @@ export interface ComposeDraftState {
   accountId: string;
   toAddresses: string[];
   ccAddresses: string[];
+  bccAddresses: string[];
   subject: string;
   /** Plain-text body (derived from the rich HTML). */
   plainBody: string;
@@ -37,7 +38,34 @@ export interface ComposeDraftState {
  */
 export function shouldAutosaveDraft(s: ComposeDraftState): boolean {
   if (s.isSending || s.sent) return false;
-  return s.toAddresses.length > 0 || s.subject.trim().length > 0 || s.plainBody.trim().length > 0;
+  const recipients = s.toAddresses.length + s.ccAddresses.length + s.bccAddresses.length;
+  return recipients > 0 || s.subject.trim().length > 0 || s.plainBody.trim().length > 0;
+}
+
+/** What the Send button and the send handler both look at. */
+export interface SendReadiness {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  /** New messages ask for a subject; a reply carries the thread's. */
+  requireSubject: boolean;
+  /** The body as plain text (see `prepareOutgoingHtml`). */
+  plainBody: string;
+  inlineImages: number;
+  attachments: number;
+}
+
+/**
+ * Whether there is a message to send: a recipient (To, Cc or Bcc), a subject where one is
+ * required, and something in it — text, an inline image or an attachment (a
+ * file with no text is an ordinary email). The button is enabled exactly
+ * when this holds, so a click never does nothing.
+ */
+export function canSend(s: SendReadiness): boolean {
+  if (s.to.length + s.cc.length + s.bcc.length === 0) return false;
+  if (s.requireSubject && !s.subject.trim()) return false;
+  return s.plainBody.trim().length > 0 || s.inlineImages > 0 || s.attachments > 0;
 }
 
 /** Build the backend save request from the composer snapshot. */
@@ -48,6 +76,7 @@ export function buildSaveDraftRequest(s: ComposeDraftState): SaveDraftRequest {
     accountId: s.accountId,
     toAddresses: s.toAddresses,
     ccAddresses: s.ccAddresses,
+    bccAddresses: s.bccAddresses,
     subject: s.subject,
     body: s.plainBody,
     bodyHtml: s.bodyHtml.trim() ? s.bodyHtml : null,
@@ -88,6 +117,8 @@ export interface DraftAutosaver {
   save: (state: ComposeDraftState) => Promise<void>;
   /** The id of the draft row this composer is backing, or undefined if none saved yet. */
   currentId: () => string | undefined;
+  /** Back an existing draft from now on: one the chat saved for this reply. */
+  adopt: (id: string) => void;
   /** Await any in-flight/queued save and return the final draft id. */
   flush: () => Promise<string | undefined>;
 }
@@ -131,7 +162,11 @@ export function createDraftAutosaver(
     return currentId;
   };
 
-  return { save, currentId: () => currentId, flush };
+  const adopt = (id: string) => {
+    currentId = id;
+  };
+
+  return { save, currentId: () => currentId, adopt, flush };
 }
 
 /** Debounced front for a draft saver: one save per quiet period, and the

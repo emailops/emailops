@@ -19,7 +19,7 @@ export function InlineError({ message, children, className }: InlineErrorProps) 
   if (!message) return null;
   return (
     <div
-      className={`rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-300 ${className ?? ''}`}
+      className={`rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 ${className ?? ''}`}
       role="alert"
     >
       <div className="flex items-start justify-between gap-3">

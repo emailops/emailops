@@ -19,6 +19,17 @@ pub async fn get_junk_verdicts(
     state.db.get_junk_verdicts_batch(&email_ids)
 }
 
+/// Whether the message carries text addressed to the AI assistant. Answered
+/// with junk detection off too.
+#[tauri::command]
+pub async fn has_ai_control_markup(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+) -> Result<bool, AppError> {
+    junk::has_ai_control_markup(&state.db, &account_id, &email_id)
+}
+
 /// Record the user's correction.
 ///
 /// `is_junk = false` is permanent: it survives re-scoring, model-version bumps

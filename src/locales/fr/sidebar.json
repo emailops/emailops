@@ -51,7 +51,13 @@
     "button": "Donner un avis",
     "general": "Retour général",
     "bug": "Signaler un bug",
-    "idea": "Idée"
+    "idea": "Idée",
+    "star": "Mettre une étoile sur GitHub",
+    "starDialog": {
+      "title": "Soutenez EmailOps avec une étoile sur GitHub",
+      "body": "Voulez-vous visiter {{url}} ?",
+      "visit": "Visiter GitHub"
+    }
   },
   "accountActions": {
     "sync": "Synchroniser",

@@ -36,7 +36,7 @@ export function AutoAdvanceSetting() {
 
   return (
     <section data-testid="auto-advance-setting">
-      <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:appearance.afterLeave')}</h3>
+      <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('settings:appearance.afterLeave')}</h3>
       <p className="text-xs text-gray-500 mb-2">{t('settings:appearance.afterLeaveHelp')}</p>
       <Select
         ariaLabel={t('settings:appearance.afterLeave')}
@@ -44,7 +44,7 @@ export function AutoAdvanceSetting() {
         options={options}
         onChange={(v) => void change(v)}
       />
-      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </section>
   );
 }

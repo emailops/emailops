@@ -378,9 +378,8 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
         Ok(ctx) => ctx,
         Err(e) => {
             let msg = format!("Context creation failed: {}", e);
-            while let Ok(req) = rx.recv() {
-                let _ = req.reply.send(Err(msg.clone()));
-            }
+            crate::services::logger::log("error", "ai", format!("llamacpp: {msg}"));
+            refuse_requests(rx, &msg);
             return;
         }
     };
@@ -443,6 +442,24 @@ fn actor_loop(model: &LlamaModel, rx: &Receiver<GenRequest>, n_ctx_override: u32
             aux_prefix.clear();
         }
         let _ = reply.send(result);
+    }
+}
+
+/// Give the request waiting on this actor, and any queued behind it, the
+/// reason there is no context. The caller then lets the thread stop:
+/// `is_alive` turns false and the next call builds a fresh actor, so a context
+/// that failed for a passing reason (memory still being released) recovers
+/// without restarting the app.
+///
+/// The blocking first `recv` is what makes the caller that spawned this actor
+/// hear the reason: its request can still be on the way.
+fn refuse_requests(rx: &Receiver<GenRequest>, msg: &str) {
+    let Ok(first) = rx.recv() else {
+        return;
+    };
+    let _ = first.reply.send(Err(msg.to_string()));
+    while let Ok(req) = rx.try_recv() {
+        let _ = req.reply.send(Err(msg.to_string()));
     }
 }
 
@@ -1030,6 +1047,30 @@ mod tests {
         });
         assert!(handle.is_alive());
         drop(stop_tx);
+    }
+
+    /// A context that could not be created tells the caller why, then the
+    /// thread stops. Staying alive to refuse requests kept the handle looking
+    /// healthy, so every later call failed until the app restarted.
+    #[tokio::test]
+    async fn a_context_failure_answers_the_caller_and_stops_the_thread() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = InferenceActorHandle {
+            tx,
+            thread: Arc::new(Mutex::new(Some(std::thread::spawn(move || {
+                refuse_requests(&rx, "out of memory");
+            })))),
+            n_ctx: Arc::new(AtomicU32::new(0)),
+        };
+
+        let reply = Box::pin(handle.generate("p".into(), 0.0, 8, false, None, None, None, None, None)).await;
+
+        assert_eq!(reply.err().as_deref(), Some("out of memory"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while handle.is_alive() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!handle.is_alive(), "the runtime would keep handing out this actor");
     }
 
     /// A panic inside one request becomes that request's error; the thread,

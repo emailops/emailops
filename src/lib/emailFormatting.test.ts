@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { Email } from '@/types';
 import {
   getSafeExternalUrl,
+  isOwnMessage,
+  parseAddressEntry,
   parseMailtoUrl,
+  rowParty,
   sanitizeCssValue,
   sanitizeEmailHtml,
   sanitizeEmailHtmlFull,
@@ -25,8 +29,215 @@ describe('senderName', () => {
 });
 
 // ---------------------------------------------------------------------------
+// isOwnMessage / parseAddressEntry / rowParty
+// ---------------------------------------------------------------------------
+
+const OWNER = 'me@mine.example';
+
+function message(overrides: Partial<Email> = {}): Email {
+  return {
+    id: 'e1',
+    accountId: 'acc',
+    threadId: 't1',
+    messageId: null,
+    subject: 'Subject',
+    sender: 'Me Myself',
+    senderEmail: OWNER,
+    recipients: [],
+    cc: [],
+    body: '',
+    snippet: '',
+    timestamp: 1000,
+    isRead: true,
+    triageStatus: null,
+    category: 'primary',
+    mailbox: 'sent',
+    isSent: true,
+    isStarred: false,
+    ...overrides,
+  };
+}
+
+describe('isOwnMessage', () => {
+  it.each([
+    ['the provider marked it sent', { mailbox: 'archive', isSent: true, senderEmail: 'alias@mine.example' }, true],
+    ['it sits in Sent', { mailbox: 'sent', isSent: false, senderEmail: 'alias@mine.example' }, true],
+    ['the sender is the account', { mailbox: 'trash', isSent: false }, true],
+    [
+      'the sender is the account, in another case',
+      { mailbox: 'folder:Work', isSent: false, senderEmail: ' Me@Mine.Example ' },
+      true,
+    ],
+    ['someone else wrote it', { mailbox: 'archive', isSent: false, senderEmail: 'ana@example.com' }, false],
+    // A From header is trivially forged; in Inbox and Spam only the
+    // provider's own flag says the user sent it.
+    ['an Inbox message forges the account address', { mailbox: 'inbox', isSent: false }, false],
+    ['a Spam message forges the account address', { mailbox: 'spam', isSent: false }, false],
+    ['a note to self in the Gmail Inbox carries the sent flag', { mailbox: 'inbox', isSent: true }, true],
+  ] as const)('%s → %s', (_case, overrides, expected) => {
+    expect(isOwnMessage(message(overrides), OWNER)).toBe(expected);
+  });
+
+  it('does not match the address against a missing owner', () => {
+    expect(isOwnMessage(message({ mailbox: 'trash', isSent: false, senderEmail: '' }), '')).toBe(false);
+    expect(isOwnMessage(message({ mailbox: 'trash', isSent: false }), undefined)).toBe(false);
+  });
+});
+
+describe('parseAddressEntry', () => {
+  it.each([
+    ['a bare address', 'ana@example.com', { name: '', address: 'ana@example.com' }],
+    ['name and address', 'Ana Ruiz <ana@example.com>', { name: 'Ana Ruiz', address: 'ana@example.com' }],
+    ['a quoted name with a comma', '"Ruiz, Ana" <ana@example.com>', { name: 'Ruiz, Ana', address: 'ana@example.com' }],
+    [
+      'escaped quotes',
+      '"Ana \\"Nani\\" Ruiz" <ana@example.com>',
+      { name: 'Ana "Nani" Ruiz', address: 'ana@example.com' },
+    ],
+    ['angle brackets in the name', 'Ops <team> <ops@example.com>', { name: 'Ops <team>', address: 'ops@example.com' }],
+    ['surrounding spaces', '  luis@example.org  ', { name: '', address: 'luis@example.org' }],
+    // A name that is itself an address says nothing the address does not.
+    ['an address used as the name', '"ana@example.com" <ana@example.com>', { name: '', address: 'ana@example.com' }],
+  ])('parses %s', (_case, entry, expected) => {
+    expect(parseAddressEntry(entry)).toEqual(expected);
+  });
+
+  it.each([
+    ['an empty entry', ''],
+    ['an undisclosed-recipients group', 'undisclosed-recipients:;'],
+    ['a name with no address', 'Ana Ruiz'],
+  ])('rejects %s', (_case, entry) => {
+    expect(parseAddressEntry(entry)).toBeNull();
+  });
+});
+
+describe('rowParty', () => {
+  const noNames = () => undefined;
+
+  it('leaves a received message in "from" mode', () => {
+    const received = message({ mailbox: 'inbox', isSent: false, senderEmail: 'ana@example.com' });
+    expect(rowParty(received, { ownerEmail: OWNER, nameOf: noNames, maxNames: 2 })).toEqual({ mode: 'from' });
+  });
+
+  // The Sent view lists an Inbox copy whose sender is the account (an IMAP
+  // reply-all to yourself has no sent flag); its query already decided it is
+  // the user's, so the row must not fall back to the user's own name there.
+  it('names the recipients of every row listed in the Sent view', () => {
+    const inboxCopy = message({ mailbox: 'inbox', isSent: false, recipients: ['ana@example.com'] });
+    expect(rowParty(inboxCopy, { ownerEmail: OWNER, nameOf: noNames, maxNames: 2 }).mode).toBe('from');
+    expect(rowParty(inboxCopy, { ownerEmail: OWNER, nameOf: noNames, maxNames: 2, inSentView: true }).mode).toBe('to');
+  });
+
+  it('names the recipients of an own message, To before Cc', () => {
+    const party = rowParty(message({ recipients: ['Ana <ana@example.com>'], cc: ['luis@example.org'] }), {
+      ownerEmail: OWNER,
+      nameOf: noNames,
+      maxNames: 2,
+    });
+    expect(party).toEqual({
+      mode: 'to',
+      shown: [
+        { address: 'ana@example.com', name: 'Ana', source: 'header' },
+        { address: 'luis@example.org', name: '', source: 'address' },
+      ],
+      more: 0,
+      to: [{ address: 'ana@example.com', name: 'Ana', source: 'header' }],
+      cc: [{ address: 'luis@example.org', name: '', source: 'address' }],
+      primary: { address: 'ana@example.com', name: 'Ana', source: 'header' },
+    });
+  });
+
+  it('takes a name from how the address writes to the account when the header has none', () => {
+    const nameOf = (address: string) => (address === 'luis@example.org' ? 'Luis Gil' : undefined);
+    const party = rowParty(message({ recipients: ['Luis@Example.org'] }), { ownerEmail: OWNER, nameOf, maxNames: 2 });
+    expect(party.mode === 'to' && party.shown).toEqual([
+      { address: 'Luis@Example.org', name: 'Luis Gil', source: 'contacts' },
+    ]);
+  });
+
+  it('prefers the header name over the contacts name', () => {
+    const party = rowParty(message({ recipients: ['Ana <ana@example.com>'] }), {
+      ownerEmail: OWNER,
+      nameOf: () => 'Ana From Contacts',
+      maxNames: 2,
+    });
+    expect(party.mode === 'to' && party.shown[0]).toEqual({
+      address: 'ana@example.com',
+      name: 'Ana',
+      source: 'header',
+    });
+  });
+
+  it('drops repeated addresses case-insensitively, keeping the first', () => {
+    const party = rowParty(
+      message({ recipients: ['Ana <ana@example.com>'], cc: ['ANA@example.com', 'luis@example.org'] }),
+      {
+        ownerEmail: OWNER,
+        nameOf: noNames,
+        maxNames: 5,
+      },
+    );
+    expect(party.mode === 'to' && party.shown.map((e) => e.address)).toEqual(['ana@example.com', 'luis@example.org']);
+    expect(party.mode === 'to' && party.cc.map((e) => e.address)).toEqual(['luis@example.org']);
+  });
+
+  it('moves the owner to the end and marks it as self', () => {
+    const party = rowParty(message({ recipients: ['Me <ME@mine.example>', 'ana@example.com'] }), {
+      ownerEmail: OWNER,
+      nameOf: noNames,
+      maxNames: 5,
+    });
+    expect(party.mode === 'to' && party.shown).toEqual([
+      { address: 'ana@example.com', name: '', source: 'address' },
+      { address: 'ME@mine.example', name: '', source: 'self' },
+    ]);
+    expect(party.mode === 'to' && party.primary?.address).toBe('ana@example.com');
+  });
+
+  it('shows at most maxNames entries and counts the rest', () => {
+    const party = rowParty(message({ recipients: ['a@example.com', 'b@example.com'], cc: ['c@example.com'] }), {
+      ownerEmail: OWNER,
+      nameOf: noNames,
+      maxNames: 1,
+    });
+    expect(party.mode === 'to' && party.shown.map((e) => e.address)).toEqual(['a@example.com']);
+    expect(party.mode === 'to' && party.more).toBe(2);
+  });
+
+  it('makes the owner the primary entry of a note to self', () => {
+    const party = rowParty(message({ mailbox: 'inbox', recipients: [OWNER] }), {
+      ownerEmail: OWNER,
+      nameOf: noNames,
+      maxNames: 2,
+    });
+    expect(party.mode === 'to' && party.primary).toEqual({ address: OWNER, name: '', source: 'self' });
+  });
+
+  it('has no primary entry when every recipient was hidden', () => {
+    const party = rowParty(message({ recipients: ['undisclosed-recipients:;'] }), {
+      ownerEmail: OWNER,
+      nameOf: noNames,
+      maxNames: 2,
+    });
+    expect(party).toEqual({ mode: 'to', shown: [], more: 0, to: [], cc: [], primary: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // sanitizeEmailHtmlFull — remote-content gating
 // ---------------------------------------------------------------------------
+
+describe('sanitizeEmailHtmlFull link targets', () => {
+  it.each([
+    ['an image-map area', '<map name="m"><area href="data:text/html,x"></map>', 'area'],
+    ['an anchor', '<a href="data:text/html,x">y</a>', 'a'],
+  ])('drops a data: target on %s', (_name, input, selector) => {
+    const { html: clean } = sanitizeEmailHtmlFull(input, false);
+
+    const parsed = new DOMParser().parseFromString(clean, 'text/html');
+    expect(parsed.querySelector(selector)?.hasAttribute('href')).toBe(false);
+  });
+});
 
 describe('sanitizeEmailHtmlFull remote-content gating', () => {
   // Regression: the blocking hook only inspected IMG and SOURCE, so a sender
@@ -52,6 +263,31 @@ describe('sanitizeEmailHtmlFull remote-content gating', () => {
 
     expect(clean).not.toContain('tracker.example');
     expect(hasBlockedImages).toBe(true);
+  });
+
+  // The browser resolves every one of these to a remote host.
+  it.each([
+    ['protocol-relative', '//tracker.example/p.png'],
+    ['leading whitespace', '  https://tracker.example/p.png'],
+    ['upper-case scheme', 'HTTPS://tracker.example/p.png'],
+    ['backslashes', '\\\\tracker.example/p.png'],
+    ['a slash and a backslash', '/\\tracker.example/p.png'],
+    ['a scheme without slashes', 'https:tracker.example/p.png'],
+  ])('strips a src and a poster written with %s', (_form, url) => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull(
+      `<img src="${url}"><video poster="${url}"></video>`,
+      false,
+    );
+
+    expect(clean).not.toContain('tracker.example');
+    expect(hasBlockedImages).toBe(true);
+  });
+
+  it('keeps a path on the same origin: it names no remote host', () => {
+    const { html: clean, hasBlockedImages } = sanitizeEmailHtmlFull('<img src="/images/logo.png">', false);
+
+    expect(clean).toContain('/images/logo.png');
+    expect(hasBlockedImages).toBe(false);
   });
 
   it('keeps remote media when the user has allowed remote content', () => {

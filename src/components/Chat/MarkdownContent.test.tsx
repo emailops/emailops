@@ -139,6 +139,32 @@ describe('MarkdownContent — URI scheme rendering', () => {
   });
 });
 
+describe('MarkdownContent — images', () => {
+  // The bubble shows model output, which can echo text from received mail.
+  // An `<img>` fetches its URL on render, so an image in the reply must never
+  // reach the network: it renders as its alt text instead.
+  it.each([
+    ['a remote https image', '![logo](https://example.com/pixel.png?d=abc)'],
+    ['a remote http image', '![logo](http://example.com/pixel.png)'],
+    ['a data: image', '![logo](data:image/png;base64,iVBORw0KGgo=)'],
+  ])('renders %s as its alt text, without an <img>', (_name, content) => {
+    const html = renderToStaticMarkup(<MarkdownContent content={content} sources={[]} accountId="acc-1" />);
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('example.com');
+    expect(html).toContain('logo');
+  });
+
+  it('renders nothing for an image without alt text', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent content="before ![](https://example.com/p.png) after" sources={[]} accountId="acc-1" />,
+    );
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('example.com');
+    expect(html).toContain('before');
+    expect(html).toContain('after');
+  });
+});
+
 describe('MarkdownContent — hallucination warning de-dup', () => {
   let container: HTMLDivElement;
   let root: Root;

@@ -59,9 +59,9 @@ viene incluido dentro de la app en macOS, así que no hay nada que descargar par
 
 <!-- claim:start-3-inbox-1 -->
 Elige cómo se distribuye el buzón — **dividido** (lista a la izquierda, mensaje a la derecha)
-o **ancho completo** (un panel cada vez). Puedes cambiarlo cuando quieras en
-**Ajustes → Apariencia**, junto con el idioma de la interfaz (español, inglés, francés,
-alemán).
+o **ancho completo** (un panel cada vez). El mismo paso ofrece el tema: claro, oscuro o el que
+use el sistema. Puedes cambiar ambos cuando quieras en **Ajustes → Apariencia**, junto con el
+idioma de la interfaz (español, inglés, francés, alemán).
 
 ## 4. Conectar una cuenta
 

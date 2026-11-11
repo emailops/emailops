@@ -245,8 +245,9 @@ Betriebssystems:
 - **OAuth-Tokens und Passwörter** — der Schlüsselbund Ihres Systems, nie eine Klartextdatei. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-Um ein Datenverzeichnis zu verschieben oder zu teilen (für Tests oder ein zweites Profil),
-setzen Sie vor dem Start die Umgebungsvariable `EMAILOPS_DATA_DIR`. Die genauen Pfade je
+Um die Daten auf einem anderen Laufwerk aufzubewahren, wählen Sie **Einstellungen → Datenschutz & Sicherheit →
+Speicherort der Daten → Ändern…**. Für Tests oder ein zweites Profil setzen Sie stattdessen vor
+dem Start die Umgebungsvariable `EMAILOPS_DATA_DIR`. Die genauen Pfade je
 Plattform und was wo geschrieben wird, stehen unter
 [Datenschutz und Sicherheit](../privacy-security/#where-your-data-is-stored).
 
@@ -255,7 +256,9 @@ Plattform und was wo geschrieben wird, stehen unter
 <!-- claim:inst-uninstalling-1 -->
 Beim Entfernen der App bleiben Ihre E-Mail-Datenbank und die heruntergeladenen Modelle
 absichtlich erhalten, damit eine Neuinstallation dort weitermacht, wo Sie aufgehört haben.
-Löschen Sie zusätzlich das Datenverzeichnis, wenn Sie ganz von vorn anfangen wollen.
+Löschen Sie zusätzlich das Datenverzeichnis, wenn Sie ganz von vorn anfangen wollen; das löscht
+auch die von Ihnen erstellten Skills, ebenso wie jede Option des Deinstallationsprogramms, die
+App-Daten entfernt.
 
 <!-- claim:inst-uninstalling-2 -->
 In keinem Fall wird etwas bei Ihrem E-Mail-Anbieter gelöscht — das Deinstallieren von EmailOps

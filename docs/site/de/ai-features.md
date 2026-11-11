@@ -4,6 +4,7 @@ description: 'Mit dem Postfach chatten, Antworten erzeugen, E-Mails klassifizier
 weight: 40
 nav:
   choosing-a-backend: settings/ai
+  openai-compatible-server: settings/ai
   the-model-catalog: settings/ai
   performance-knobs: settings/ai
   chat-with-your-mailbox: view/chat
@@ -40,6 +41,62 @@ keine E-Mail jemals Ihre Maschine.
   unterstützt ein monatliches Budgetlimit und sendet E-Mail-Inhalte an einen Dritten — daher
   bleibt sie aus, bis Sie sie aktivieren. Ihr Bereich zeigt die Ausgaben des laufenden
   Zeitraums gegenüber diesem Limit, mit **Neuen Zeitraum starten** zum Zurücksetzen. <!-- claim:ai-choosing-backend-4 -->
+- **OpenAI-kompatibel** — ein Server, den Sie bereits betreiben und der die OpenAI-API spricht:
+  LM Studio, vLLM, `llama-server` von llama.cpp, LiteLLM oder ein Proxy. Der Chat geht an diesen
+  Server und, sofern Sie nichts anderes wählen, auch der E-Mail-Index; siehe
+  [ein OpenAI-kompatibler Server](#openai-compatible-server). <!-- claim:ai-choosing-backend-5 -->
+
+### Ein OpenAI-kompatibler Server {#openai-compatible-server}
+
+<!-- claim:ai-openai-compatible-1 -->
+Geben Sie die **Server-URL** ein — zum Beispiel `http://localhost:1234/v1` für LM Studio oder
+`http://localhost:8080/v1` für `llama-server` — und einen API-Schlüssel nur, wenn der Server einen
+verlangt. **Modelle laden** listet die Modelle auf, die der Server bereitstellt; Sie können auch
+eine Modell-ID eingeben. **Testen** sendet eine kurze Anfrage an den eingegebenen Server, bevor
+etwas gespeichert wird. Der Schlüssel liegt im Schlüsselbund des Systems, getrennt vom
+OpenRouter-Schlüssel, und **Gespeicherten Schlüssel entfernen** löscht ihn.
+
+<!-- claim:ai-openai-compatible-2 -->
+Unverschlüsseltes `http://` wird nur für diesen Computer akzeptiert (`localhost`, `127.0.0.1`,
+`::1`). Ein Server auf einem anderen Rechner braucht `https://`, auch im Heim- oder Büronetz, und
+eine URL mit Benutzername oder Passwort wird abgelehnt. Um einen Rechner in Ihrem Netz ohne https
+zu erreichen, leiten Sie seinen Port über einen SSH-Tunnel weiter
+(`ssh -L 8080:localhost:8080 <host>`) oder verbinden sich über Tailscale, sodass er unter
+`localhost` erscheint, und verwenden die URL `http://localhost`.
+
+<!-- claim:ai-openai-compatible-3 -->
+Wenn Sie einen Server speichern, der nicht auf diesem Computer läuft, bestätigen Sie zuerst, dass
+der Text Ihrer E-Mails, Ihre Chat-Fragen und Ihre Entwürfe an ihn gesendet werden und dass
+EmailOps nicht steuern kann, was dieser Server aufbewahrt oder ob er damit trainiert. Die Frage
+kommt erneut, sobald die URL auf einen anderen Host wechselt.
+
+<!-- claim:ai-openai-compatible-4 -->
+**E-Mail-Index (Embeddings)** legt fest, wo die semantische Suche die Embeddings Ihrer Post
+berechnet: **Dieser Server** (Standard, damit Ihre Post an nur einen Ort geht), das
+**App-Modell (auf diesem Computer)** (nur angeboten, wo das In-App-Backend laufen kann) oder
+**OpenRouter**, womit das monatliche Budget und **Nur ohne Datenspeicherung** dafür
+zurückkommen. Ein Embedding-Modell auf dem Server wird beim Speichern geprüft, und eines, das
+keine passenden Vektoren für den Index liefert, wird abgelehnt. Eine Änderung baut den Index nach
+Rückfrage neu auf.
+
+<!-- claim:ai-openai-compatible-5 -->
+**Kontextgröße (Tokens)** sagt EmailOps, wie viel das Modell auf einmal lesen kann. Lassen Sie
+0 stehen, um den Wert zu nutzen, den der Server meldet: vLLM, LM Studio und `llama-server` geben
+an, mit wie viel Kontext sie das Modell geladen haben. Eine hier gesetzte Größe wird auf die
+gemeldete begrenzt; meldet der Server nichts, nutzt der Chat die hier gesetzte Größe oder nimmt
+8192 an. Antworten warten bis zu fünf
+Minuten auf ihr erstes Wort, während ein lokaler Server einen langen Prompt liest, und
+Überlegungen, die ein Modell in den Text schreibt, werden aus der Antwort entfernt. EmailOps bittet
+den Server, bei seinen kurzen internen Aufrufen das Nachdenken eines Reasoning-Modells zu
+überspringen; vLLM und `llama-server` halten sich daran, LM Studio nicht. Schalten Sie dort bei
+einem Reasoning-Modell das Nachdenken in den Modelleinstellungen aus.
+
+<!-- claim:ai-openai-compatible-6 -->
+Testen und Speichern zeigen, welche Kontextgröße der Chat verwendet und woher sie kommt, und
+warnen, wenn sie unter 16384 Tokens liegt, wo der Chat eingeschränkt arbeitet. LM Studio lädt ein
+Modell bei Bedarf mit der für dieses Modell gespeicherten Kontextlänge; erhöhen Sie sie also dort,
+nicht nur hier. Eine Anfrage, die trotzdem länger ist, als der Server annimmt, schlägt mit einer
+Meldung fehl, die das sagt.
 
 ### Der Modellkatalog {#the-model-catalog}
 
@@ -112,6 +169,18 @@ entfernbaren Chip als Kontext an: Fragen zu dieser E-Mail beantwortet es aus dem
 eine Frage zum übrigen Postfach (*„Was ist heute gekommen?“*) durchsucht weiterhin das
 Postfach. Dieser Kontext gilt für genau eine Frage und wird nie in der Unterhaltung
 gespeichert — Sie können sich also innerhalb eines Chats zwischen E-Mails bewegen.
+
+<!-- claim:ai-chat-mailbox-16 -->
+Ist ein PDF in einem Tab geöffnet oder unter **Anhänge** ausgewählt, bietet der Chip dieses
+Dokument an, und der Chat antwortet aus seinem Text. Eine neue Unterhaltung schlägt dann
+**Dieses Dokument zusammenfassen**, **Kernpunkte, Daten und Beträge** und **Frage zu diesem
+Dokument** vor. Ein PDF, das zu lang für das Kontextfenster des Modells ist, wird in Teilen
+gelesen, und die Antwort stützt sich auf Notizen zu jedem Teil.
+
+<!-- claim:ai-chat-mailbox-17 -->
+Eine leere Unterhaltung zeigt **Vorgeschlagene Anfragen** aus Ihrem Postfach, etwa die
+Zusammenfassung von heute oder einen Thread, der noch auf Ihre Antwort wartet, und
+**Etwas anderes …**, um Ihre eigene zu schreiben.
 
 <!-- claim:ai-chat-mailbox-3 -->
 Der Chat durchsucht immer ein Konto, und eine Auswahl benennt welches — so stammt eine
@@ -247,7 +316,9 @@ trifft — beschreiben Sie, woran Sie sich erinnern, und EmailOps findet es. Das
 nach einem Wechsel des Embedding-Modells von Grund auf neu.
 
 <!-- claim:ai-semantic-search-2 -->
-Mit den beiden lokalen Backends erfolgt das Einbetten auf Ihrem Rechner. Mit OpenRouter
+Mit den beiden lokalen Backends erfolgt das Einbetten auf Ihrem Rechner. Mit einem
+OpenAI-kompatiblen Server erfolgt es dort, wo seine Einstellung **E-Mail-Index (Embeddings)**
+es festlegt. Mit OpenRouter
 geschieht es nur, wenn Sie in dessen Bereich ein **Embedding-Modell** wählen: Der Text jeder
 indizierten E-Mail sowie jeder Suche und Chat-Frage wird dann an OpenRouter gesendet und zählt
 zum Monatsbudget. Ohne Modell ist die semantische Suche aus und es wird nur nach Stichwörtern
@@ -312,17 +383,17 @@ gekürzt; **mehr** zeigt den Rest.
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
-*Experimentell.* Ein Skill ist eine gespeicherte Vorgehensweise, der der Chat bei einer Art von
+Ein Skill ist eine gespeicherte Vorgehensweise, der der Chat bei einer Art von
 Anfrage folgt – wie Ihre Wochenzusammenfassung aussehen soll, wie einem Lieferanten zu antworten
 ist. Jeder Skill ist ein Ordner im Datenordner der App, `skills/<name>/SKILL.md`: ein kurzer Kopf
 mit `name` (dem Ordnernamen) und einer `description`, was er tut und wann er gilt, danach die
-Anweisungen in Markdown. Im Prompt des Chats stehen nur Name und Beschreibung; die Anweisungen
-werden in den Runden gelesen, die den Skill nutzen. Nichts in einem Skill-Ordner wird je
+Anweisungen in Markdown. Nichts von einem Skill erreicht den Prompt des Chats, bevor Sie ihn
+aufrufen. Nichts in einem Skill-Ordner wird je
 ausgeführt.
 
 <!-- claim:ai-skills-2 -->
-Skills sind standardmäßig aus. Schalten Sie sie unter **Einstellungen → KI-Skills** mit
-**Skills aktivieren** ein; danach erscheint **Skills** in der Seitenleiste.
+Skills sind standardmäßig an. Schalten Sie sie unter **Einstellungen → KI-Skills** mit
+**Skills aktivieren** aus; danach verschwindet **Skills** aus der Seitenleiste.
 
 <!-- claim:ai-skills-3 -->
 Die Ansicht **Skills** listet jeden Skill mit eigenem Schalter und öffnet die `SKILL.md` des
@@ -332,11 +403,32 @@ Editor seit dem Öffnen geändert hat; wer `name` in der Datei ändert, benennt 
 **Löschen** verschiebt ihn nach `skills/.deleted`, von wo er sich von Hand wiederherstellen lässt.
 
 <!-- claim:ai-skills-4 -->
-Der Chat wendet einen Skill auf drei Arten an: Er wählt einen, dessen Beschreibung zu Ihrer Frage
-passt, der Assistent lädt einen beim Antworten, oder Sie beginnen die Nachricht mit `/` und dem
-Namen des Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Wer `/` tippt, sieht
-seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine Runde folgte, und wer ihn
-gewählt hat.
+Ein Skill läuft nur, wenn Sie ihn anfordern: Beginnen Sie die Nachricht mit `/` und dem Namen des
+Skills (`/weekly-report letzte Woche`; `/a /b` wendet beide an). Der Chat wählt nie von sich aus
+einen. Wer `/` tippt, sieht seine aktiven Skills. Die Reasoning-Spur nennt den Skill, dem eine
+Runde folgte.
+
+<!-- claim:ai-skills-5 -->
+EmailOps enthält außerdem einige geprüfte Skills. **Einstellungen → KI-Skills** listet sie mit Namen,
+Beschreibung und Schalter auf, auch wenn Skills ausgeschaltet sind; schalten Sie einen ein, bietet die
+App an, Skills einzuschalten. In der Ansicht **Skills** zeigt die Auswahl eines Skills seinen vollen
+Text schreibgeschützt an, sodass Sie ihn vor der Nutzung lesen können. Sie bleiben aus, bis Sie sie
+einschalten, und ein eingeschalteter funktioniert wie jeder andere Skill. Sie sind Teil der App: Nichts
+wird heruntergeladen oder dem Ordner `skills` hinzugefügt, und ihr Text kann sich mit einem Update
+ändern. Die Ansicht **Skills** verlinkt außerdem die Anleitung, um einen Skill zum öffentlichen
+Repository beizutragen.
+
+<!-- claim:ai-skills-6 -->
+**Kopie bearbeiten** macht aus einem enthaltenen Skill einen eigenen unter `skills/<name>/`, mit
+unverändertem Schalter, und wird abgelehnt, wenn es bereits einen Skill mit diesem Namen gibt. Heißt
+einer Ihrer Skills wie ein enthaltener, verwendet der Chat Ihren, und der enthaltene bleibt inaktiv.
+Updates ändern Ihre Skills nie, und sie ziehen mit dem Datenordner um. Wer den Datenordner löscht,
+löscht auch sie.
+
+<!-- claim:ai-skills-7 -->
+Weitere Skills und die Möglichkeit, eigene zu teilen, finden Sie im
+[EmailOps-Skills-Repository](https://github.com/emailops/emailops-skills). Es enthält auch Skills
+für Hermes, Claude Code und andere Agenten, die über `emailops-cli` auf Ihre E-Mails zugreifen.
 
 ## Alles abschalten {#turning-it-all-off}
 

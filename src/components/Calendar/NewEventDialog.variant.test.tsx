@@ -1,10 +1,7 @@
-// The "New event" dialog is a light surface (white panel, gray-300 inputs), but
-// the shared <Select> defaults to variant="dark" — the app's dark chrome. Every
-// Select in this dialog must opt into the light variant, otherwise the start /
-// end / repeats controls render as dark #333 pills on white — which is what
-// shipped, spotted while setting up the OAuth demo recording. Both the native
-// (macOS/Windows) and owned-popup (Linux) branches are affected, since both
-// apply VARIANT_CLASSES[variant].trigger to the trigger element.
+// The "New event" dialog's dropdowns once rendered as dark #333 pills on its
+// white panel, because the shared <Select> defaulted to a dark-chrome palette.
+// There is one palette now; this keeps the dialog's start / end / repeats
+// controls on it in the owned-popup (Linux) branch.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -49,8 +46,22 @@ function renderDialog() {
   act(() => {
     root.render(
       <NewEventDialog
-        accountId="acct-1"
-        isGmail
+        choices={[
+          {
+            account: {
+              id: 'acct-1',
+              provider: 'gmail',
+              email: 'a@mail.example',
+              name: '',
+              createdAt: 0,
+              sortOrder: 0,
+              enabled: true,
+              syncFromTimestamp: null,
+              color: 'blue',
+            },
+            plan: { kind: 'dialog' },
+          },
+        ]}
         initialStart={start}
         initialEnd={start + 3600}
         onClose={() => {}}
@@ -62,7 +73,7 @@ function renderDialog() {
 }
 
 describe('NewEventDialog select styling', () => {
-  it('renders every dropdown on the light variant, not the dark chrome one', () => {
+  it('renders every dropdown on the inbox palette', () => {
     renderDialog();
 
     const triggers = Array.from(container.querySelectorAll('[aria-haspopup="listbox"]'));
@@ -71,8 +82,8 @@ describe('NewEventDialog select styling', () => {
 
     for (const trigger of triggers) {
       const label = trigger.getAttribute('aria-label');
-      expect(trigger.className, `${label} should use the light trigger`).toContain('bg-white');
-      expect(trigger.className, `${label} should not use the dark chrome trigger`).not.toContain('bg-[#333]');
+      expect(trigger.className, `${label} should use the inbox trigger`).toContain('bg-white');
+      expect(trigger.className, `${label} should not use a dark trigger`).not.toContain('bg-[#333]');
     }
   });
 });

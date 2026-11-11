@@ -62,36 +62,36 @@ export function HistoryPanel({
 
   return (
     <aside
-      className="w-72 flex-shrink-0 border-l border-gray-700 flex flex-col min-h-0"
+      className="w-72 flex-shrink-0 border-l border-gray-200 flex flex-col min-h-0"
       data-testid="shared-doc-history"
     >
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700">
-        <h3 className="flex-1 text-sm font-semibold text-gray-200">{t('documents:history.title')}</h3>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200">
+        <h3 className="flex-1 text-sm font-semibold text-gray-800">{t('documents:history.title')}</h3>
         <button
           type="button"
           onClick={onClose}
           title={t('documents:history.close')}
           aria-label={t('documents:history.close')}
-          className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700"
+          className="p-1 rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
-      {error && <p className="m-3 p-2 rounded bg-red-900/30 border border-red-800 text-red-300 text-xs">{error}</p>}
+      {error && <p className="m-3 p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs">{error}</p>}
       {conflicts.length > 0 && (
-        <section className="border-b border-gray-700 px-4 py-2">
+        <section className="border-b border-gray-200 px-4 py-2">
           <h4 className="mb-1 text-[11px] font-semibold uppercase text-gray-500">{t('documents:conflicts.title')}</h4>
           <ul className="flex flex-col gap-1">
             {conflicts.map((c) => (
-              <li key={c.id} data-testid="shared-doc-conflict" className="text-xs text-gray-300">
+              <li key={c.id} data-testid="shared-doc-conflict" className="text-xs text-gray-700">
                 {t('documents:conflicts.item', {
                   cell: `${columnLabel(c.col)}${c.row + 1}`,
                   lost: c.lost,
                   kept: c.kept,
                 })}
-                <span className={`ml-1 ${c.resolved ? 'text-gray-500' : 'text-amber-300'}`}>
+                <span className={`ml-1 ${c.resolved ? 'text-gray-500' : 'text-amber-700'}`}>
                   {c.resolved ? t('documents:conflicts.resolved') : t('documents:conflicts.pending')}
                 </span>
               </li>
@@ -102,15 +102,15 @@ export function HistoryPanel({
       <ul className="flex-1 overflow-y-auto py-1">
         {versions?.length === 0 && <li className="px-4 py-3 text-xs text-gray-500">{t('documents:history.empty')}</li>}
         {versions?.map((v) => (
-          <li key={v.id} className={selectedId === v.id ? 'bg-gray-700/60' : 'hover:bg-gray-800'}>
+          <li key={v.id} className={selectedId === v.id ? 'bg-primary-50' : 'hover:bg-gray-50'}>
             <button
               type="button"
               data-testid={`shared-doc-version-${v.id}`}
               onClick={() => onSelect(selectedId === v.id ? null : v)}
               className="w-full text-left px-4 py-2"
             >
-              <span className="block text-sm text-gray-200">{fmt.dateTime(v.createdAt)}</span>
-              <span className="block text-xs text-gray-400 truncate">
+              <span className="block text-sm text-gray-800">{fmt.dateTime(v.createdAt)}</span>
+              <span className="block text-xs text-gray-500 truncate">
                 {v.author === me ? t('documents:history.you') : v.author}
               </span>
               <span className="block text-[11px] text-gray-500">

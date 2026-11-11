@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DataLocationLine } from '@/components/DataLocation/DataLocationLine';
 import * as api from '@/lib/api';
 import { useAiStore } from '@/stores/aiStore';
 
@@ -52,7 +53,7 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-gray-400">{t('auth:onboarding.aiChoice.intro')}</p>
+      <p className="text-sm text-gray-500">{t('auth:onboarding.aiChoice.intro')}</p>
 
       <div className="grid grid-cols-2 gap-3">
         <ChoiceCard
@@ -72,7 +73,7 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
                   : t('auth:onboarding.aiChoice.detecting')
           }
         >
-          <ul className="text-xs text-gray-400 space-y-1.5 mt-2">
+          <ul className="text-xs text-gray-500 space-y-1.5 mt-2">
             <li>{t('auth:onboarding.aiChoice.useAiBullet1')}</li>
             <li>{t('auth:onboarding.aiChoice.useAiBullet2')}</li>
             <li>{t('auth:onboarding.aiChoice.useAiBullet3')}</li>
@@ -89,7 +90,7 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
             capable === false ? t('auth:onboarding.aiChoice.plainRecommended') : t('auth:onboarding.aiChoice.plainNoAi')
           }
         >
-          <ul className="text-xs text-gray-400 space-y-1.5 mt-2">
+          <ul className="text-xs text-gray-500 space-y-1.5 mt-2">
             <li>{t('auth:onboarding.aiChoice.plainBullet1')}</li>
             <li>{t('auth:onboarding.aiChoice.plainBullet2')}</li>
             <li>{t('auth:onboarding.aiChoice.plainBullet3')}</li>
@@ -102,11 +103,12 @@ export function StepAiChoice({ onNext }: { onNext: () => void }) {
 
       <p className="text-xs text-gray-500">{t('auth:onboarding.aiChoice.reversible')}</p>
 
-      <div className="flex justify-end">
+      <div className="flex items-end justify-between gap-4">
+        <DataLocationLine />
         <button
           onClick={() => void handleContinue()}
           disabled={!choice || submitting}
-          className="px-5 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="shrink-0 px-5 py-2 bg-primary-600 text-white rounded text-sm hover:bg-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? t('auth:onboarding.aiChoice.saving') : t('auth:onboarding.aiChoice.continue')}
         </button>
@@ -137,14 +139,14 @@ function ChoiceCard({
       disabled={disabled}
       className={`text-left p-4 rounded-lg border-2 transition-colors ${
         disabled
-          ? 'border-gray-800 bg-[#232326] opacity-50 cursor-not-allowed'
+          ? 'border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed'
           : selected
-            ? 'border-primary-500 bg-primary-900/15'
-            : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
+            ? 'border-primary-500 bg-primary-50'
+            : 'border-gray-200 bg-white hover:border-gray-300'
       }`}
     >
-      <div className="text-sm font-semibold text-gray-100">{title}</div>
-      <div className={`text-xs mt-0.5 ${selected ? 'text-primary-300' : 'text-gray-500'}`}>{subtitle}</div>
+      <div className="text-sm font-semibold text-gray-900">{title}</div>
+      <div className={`text-xs mt-0.5 ${selected ? 'text-primary-600' : 'text-gray-500'}`}>{subtitle}</div>
       {children}
     </button>
   );

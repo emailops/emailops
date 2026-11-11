@@ -35,7 +35,7 @@ function ToastCard({ toast }: { toast: Toast }) {
   }, [toast.id, toast.sticky, toast.durationMs, dismissToast]);
 
   return (
-    <div className="flex items-start gap-3 pl-4 pr-2 py-2.5 bg-gray-900 text-white rounded-lg shadow-lg max-w-md">
+    <div className="flex items-start gap-3 pl-4 pr-2 py-2.5 bg-white text-gray-900 border border-gray-200 rounded-lg shadow-lg max-w-md">
       {/* Wraps rather than truncates: a toast can carry the fix the user needs. */}
       <span className="text-sm break-words min-w-0">{toast.message}</span>
       {toast.actionLabel && (
@@ -45,7 +45,7 @@ function ToastCard({ toast }: { toast: Toast }) {
             toast.onAction?.();
             dismissToast(toast.id);
           }}
-          className="flex-shrink-0 text-sm font-medium text-primary-300 hover:text-primary-200 transition-colors"
+          className="flex-shrink-0 text-sm font-medium text-primary-600 hover:text-primary-700 transition-colors"
         >
           {toast.actionLabel}
         </button>
@@ -53,7 +53,7 @@ function ToastCard({ toast }: { toast: Toast }) {
       <button
         type="button"
         onClick={() => dismissToast(toast.id)}
-        className="flex-shrink-0 p-1 text-white/50 hover:text-white transition-colors"
+        className="flex-shrink-0 p-1 text-gray-400 hover:text-gray-600 transition-colors"
         aria-label={t('common:actions.close')}
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

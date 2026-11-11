@@ -1,9 +1,9 @@
 // Custom dropdown replacing native <select> on Linux only. WebKitGTK there
 // renders a native <select>'s option popup via the GTK theme, not page CSS,
-// so a native select shows a light popup even inside this app's dark
-// surfaces — owning the popup markup lets it actually be styled. macOS and
-// Windows don't have that bug, so they keep the real native <select> (OS
-// popup + keyboard/a11y behavior for free) — see NEEDS_OWNED_POPUP below.
+// so a native select's popup ignores the app's dark theme — owning the popup
+// markup lets it actually be styled. macOS and Windows don't have that bug,
+// so they keep the real native <select> (OS popup + keyboard/a11y behavior
+// for free) — see NEEDS_OWNED_POPUP below.
 
 import { useEffect, useRef, useState } from 'react';
 import { currentPlatform } from '@/lib/api';
@@ -26,10 +26,11 @@ interface SelectProps<T extends string> {
   className?: string;
   /** Which edge the popup panel hangs from. Default 'left'. */
   align?: 'left' | 'right';
-  /** Surface this sits on: 'dark' (default) matches the app's dark chrome
-   *  (Settings, Lenses, Calendar, LogPanel); 'light' matches the compose
-   *  surfaces (white/gray-50 backgrounds). */
-  variant?: 'dark' | 'light';
+  /** `data-testid` for the control: the native <select>, or the owned trigger
+   *  (whose popup options are `button[role="option"]`). */
+  testId?: string;
+  /** Tooltip for the control. */
+  title?: string;
 }
 
 const TRIGGER_SIZE_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
@@ -38,24 +39,13 @@ const TRIGGER_SIZE_CLASSES: Record<'xs' | 'sm' | 'md', string> = {
   md: 'px-3 py-2.5 text-sm',
 };
 
-const VARIANT_CLASSES = {
-  dark: {
-    trigger: 'bg-[#333] text-gray-300 border border-gray-600 focus:border-primary-500',
-    placeholder: 'text-gray-500',
-    popup: 'bg-[#333] border border-gray-600',
-    optionHover: 'hover:bg-[#444]',
-    optionText: 'text-gray-300',
-    optionSelectedText: 'text-primary-400',
-  },
-  light: {
-    trigger:
-      'bg-white text-gray-900 border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100',
-    placeholder: 'text-gray-400',
-    popup: 'bg-white border border-gray-200',
-    optionHover: 'hover:bg-gray-50',
-    optionText: 'text-gray-700',
-    optionSelectedText: 'text-primary-600',
-  },
+const COLORS = {
+  trigger: 'bg-white text-gray-900 border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-100',
+  placeholder: 'text-gray-400',
+  popup: 'bg-white border border-gray-200',
+  optionHover: 'hover:bg-gray-50',
+  optionText: 'text-gray-700',
+  optionSelectedText: 'text-primary-600',
 } as const;
 
 // The host platform never changes mid-session, so this is computed once at
@@ -75,10 +65,9 @@ export function Select<T extends string>({
   fullWidth = false,
   className = '',
   align = 'left',
-  variant = 'dark',
+  testId,
+  title,
 }: SelectProps<T>) {
-  const colors = VARIANT_CLASSES[variant];
-
   // Hooks below must run unconditionally on every render (NEEDS_OWNED_POPUP
   // is a module-level constant, never changes for a mounted instance, but
   // the lint rule can't know that) — the native-vs-owned branch happens only
@@ -121,10 +110,12 @@ export function Select<T extends string>({
     return (
       <select
         aria-label={ariaLabel}
+        data-testid={testId}
+        title={title}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value as T)}
-        className={`rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${colors.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
+        className={`rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${COLORS.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
       >
         {placeholder !== undefined && (
           <option value="" disabled hidden>
@@ -155,13 +146,17 @@ export function Select<T extends string>({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-testid={testId}
+        title={title}
         disabled={disabled}
         onClick={() => {
           if (!disabled) setOpen((v) => !v);
         }}
-        className={`flex items-center justify-between gap-1.5 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${colors.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
+        className={`flex items-center justify-between gap-1.5 rounded outline-none disabled:opacity-60 disabled:cursor-not-allowed ${COLORS.trigger} ${TRIGGER_SIZE_CLASSES[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
       >
-        <span className={selected ? '' : colors.placeholder}>{selected ? selected.label : (placeholder ?? '')}</span>
+        <span className={`truncate ${selected ? '' : COLORS.placeholder}`}>
+          {selected ? selected.label : (placeholder ?? '')}
+        </span>
         <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path
             fillRule="evenodd"
@@ -177,7 +172,7 @@ export function Select<T extends string>({
           aria-label={ariaLabel}
           className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${
             openDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-          } z-20 max-h-64 overflow-y-auto rounded shadow-lg py-1 ${colors.popup} ${fullWidth ? 'w-full' : 'min-w-[8rem]'}`}
+          } z-20 max-h-64 overflow-y-auto rounded shadow-lg py-1 ${COLORS.popup} ${fullWidth ? 'w-full' : 'min-w-[8rem] w-max max-w-[20rem]'}`}
         >
           {options.map((opt) => (
             <button
@@ -187,8 +182,8 @@ export function Select<T extends string>({
               aria-selected={opt.value === value}
               disabled={opt.disabled}
               onClick={() => selectOption(opt)}
-              className={`block w-full text-left px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent ${colors.optionHover} ${
-                opt.value === value ? colors.optionSelectedText : colors.optionText
+              className={`block w-full text-left px-3 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent ${COLORS.optionHover} ${
+                opt.value === value ? COLORS.optionSelectedText : COLORS.optionText
               }`}
             >
               {opt.label}

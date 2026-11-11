@@ -1,5 +1,5 @@
-// Lenses left the experimental stage: their Settings tab no longer carries
-// the Experimental badge that Tasks and Memory still show.
+// Lenses and Skills left the experimental stage: their Settings tabs no longer
+// carry the Experimental badge that Tasks and Memory still show.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -68,6 +68,10 @@ function tabButton(id: string): HTMLButtonElement {
 describe('SettingsDialog experimental badges', () => {
   it('shows no Experimental badge on the Lenses tab', () => {
     expect(tabButton('lenses').textContent).not.toContain('settings:dialog.experimental');
+  });
+
+  it('shows no Experimental badge on the Skills tab', () => {
+    expect(tabButton('skills').textContent).not.toContain('settings:dialog.experimental');
   });
 
   it('keeps the badge on Tasks, which is still experimental', () => {

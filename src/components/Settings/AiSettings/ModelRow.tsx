@@ -32,7 +32,7 @@ export function ModelRow({
   return (
     <div
       className={`p-3 rounded border transition-colors ${
-        isSelected ? 'border-primary-600 bg-primary-900/20' : 'border-gray-700 bg-[#2a2a2b]'
+        isSelected ? 'border-primary-600 bg-primary-50' : 'border-gray-200 bg-gray-50'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -42,7 +42,7 @@ export function ModelRow({
             <button onClick={onSelect} className="mt-0.5 flex-shrink-0" title={t('settings:ai.useThisModelTitle')}>
               <div
                 className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                  isSelected ? 'border-primary-500' : 'border-gray-500'
+                  isSelected ? 'border-primary-500' : 'border-gray-400'
                 }`}
               >
                 {isSelected && <div className="w-2 h-2 rounded-full bg-primary-500" />}
@@ -51,14 +51,14 @@ export function ModelRow({
           )}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-sm font-medium text-gray-200">{model.displayName}</span>
+              <span className="text-sm font-medium text-gray-800">{model.displayName}</span>
               {model.recommended && (
-                <span className="text-xs px-1.5 py-0.5 bg-primary-900/50 text-primary-400 rounded border border-primary-800">
+                <span className="text-xs px-1.5 py-0.5 bg-primary-50 text-primary-600 rounded border border-primary-200">
                   Recommended
                 </span>
               )}
               {model.isLocal && (
-                <span className="text-xs px-1.5 py-0.5 bg-green-900/40 text-green-400 rounded border border-green-800">
+                <span className="text-xs px-1.5 py-0.5 bg-green-50 text-green-600 rounded border border-green-200">
                   Downloaded
                 </span>
               )}
@@ -75,7 +75,7 @@ export function ModelRow({
           {model.isLocal ? (
             <button
               onClick={onDelete}
-              className="px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded transition-colors"
+              className="px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
               title={t('settings:ai.deleteModelFileTitle')}
             >
               Delete
@@ -83,7 +83,7 @@ export function ModelRow({
           ) : isDownloading || isVerifying ? (
             <button
               onClick={onCancel}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
             >
               Cancel
             </button>
@@ -101,7 +101,7 @@ export function ModelRow({
       {/* Progress bar */}
       {(isDownloading || isVerifying) && (
         <div className="mt-2">
-          <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
             <span>
               {isVerifying
                 ? 'Verifying…'
@@ -109,7 +109,7 @@ export function ModelRow({
             </span>
             {isDownloading && <span>{pct}%</span>}
           </div>
-          <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${isVerifying ? 'bg-yellow-500' : 'bg-primary-500'}`}
               style={{ width: isVerifying ? '100%' : `${pct}%` }}

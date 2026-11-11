@@ -18,6 +18,8 @@ pub struct OutgoingMessage {
     pub to: Vec<String>,
     #[serde(default)]
     pub cc: Vec<String>,
+    #[serde(default)]
+    pub bcc: Vec<String>,
     /// For a reply an empty subject means the parent's ("Re: …"); queueing
     /// fills it in so the stored message is complete.
     #[serde(default)]

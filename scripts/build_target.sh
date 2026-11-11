@@ -16,13 +16,18 @@
 #          No-op without the volume (CI, other machines). Runs from the
 #          lefthook post-checkout hook, so new worktrees are linked when
 #          created. Never deletes a real target/ directory — it asks for a
-#          clean first, since the output cannot be moved for free.
+#          clean first, since the output cannot be moved for free. Keeps a
+#          link to another checkout's existing build dir: a worktree shares
+#          the main checkout's warm target on purpose when a fresh one would
+#          not fit on the disk.
 #   clean  Free this checkout's build output. `cargo clean` on a symlinked
 #          target removes only the link and leaves every byte on the volume,
-#          so a linked target is emptied in place instead.
+#          so a linked target is emptied in place instead. Refuses when the
+#          link points at another checkout's build dir, which it shares.
 set -euo pipefail
 
-VOLUME="/Volumes/Build"
+# BUILD_VOLUME lets scripts/tests/test_build_target.py point at a temp dir.
+VOLUME="${BUILD_VOLUME:-/Volumes/Build}"
 ROOT="$(git rev-parse --show-toplevel)"
 LINK="$ROOT/src-tauri/target"
 DEST="$VOLUME/emailops/$(basename "$ROOT")/target"
@@ -30,9 +35,20 @@ DEST="$VOLUME/emailops/$(basename "$ROOT")/target"
 case "${1:-}" in
   link)
     [ -d "$VOLUME" ] || exit 0
-    if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$DEST" ]; then
-      mkdir -p "$DEST"
-      exit 0
+    if [ -L "$LINK" ]; then
+      current="$(readlink "$LINK")"
+      if [ "$current" = "$DEST" ]; then
+        mkdir -p "$DEST"
+        exit 0
+      fi
+      case "$current" in
+        "$VOLUME"/emailops/*/target)
+          if [ -d "$current" ]; then
+            echo "[build-target] keeping src-tauri/target -> $current"
+            exit 0
+          fi
+          ;;
+      esac
     fi
     if [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
       echo "[build-target] $LINK is a real directory; run 'make clean && make link-target'" >&2
@@ -46,10 +62,11 @@ case "${1:-}" in
   clean)
     if [ -L "$LINK" ]; then
       target="$(readlink "$LINK")"
-      case "$target" in
-        "$VOLUME"/emailops/*/target) ;;
-        *) echo "[build-target] refusing to empty unexpected link target: $target" >&2; exit 1 ;;
-      esac
+      if [ "$target" != "$DEST" ]; then
+        echo "[build-target] refusing to empty $target: it is not this checkout's build dir ($DEST)." >&2
+        echo "  Another checkout shares it; clean from that checkout instead." >&2
+        exit 1
+      fi
       rm -rf "$target"
       mkdir -p "$target"
       echo "[build-target] emptied $target"

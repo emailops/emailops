@@ -18,7 +18,7 @@ const skillsStore = vi.hoisted(() => ({
   enabled: true,
   isLoading: false,
   refresh: () => Promise.resolve(),
-  setEnabled: () => Promise.resolve(),
+  setEnabled: (_enabled: boolean) => Promise.resolve(),
 }));
 vi.mock('@/stores/featureToggleStore', () => ({
   useSkillsEnabledStore: () => skillsStore,
@@ -26,9 +26,11 @@ vi.mock('@/stores/featureToggleStore', () => ({
 
 const listSkills = vi.fn<() => Promise<SkillsOverview>>();
 const openSkillsFolder = vi.fn(() => Promise.resolve());
+const setBundledSkillEnabled = vi.fn<(name: string, enabled: boolean) => Promise<void>>();
 vi.mock('@/lib/api', () => ({
   listSkills: () => listSkills(),
   openSkillsFolder: () => openSkillsFolder(),
+  setBundledSkillEnabled: (n: string, e: boolean) => setBundledSkillEnabled(n, e),
 }));
 
 const errorText = vi.fn((e: unknown) =>
@@ -57,6 +59,92 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  skillsStore.enabled = true;
+});
+
+const q = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+async function click(el: HTMLElement | null) {
+  await act(async () => {
+    el?.click();
+  });
+}
+
+function withBundled(enabled: boolean, bundledOn = false): SkillsOverview {
+  return {
+    enabled,
+    dir: '/data/skills',
+    skills: [],
+    bundled: [{ name: 'inbox-triage', description: 'Triage the inbox.', enabled: bundledOn, shadowed: false }],
+    errors: [],
+  };
+}
+
+describe('SkillsSettings: bundled skills', () => {
+  beforeEach(() => {
+    setBundledSkillEnabled.mockResolvedValue();
+  });
+
+  it('shows them with the feature off', async () => {
+    skillsStore.enabled = false;
+    listSkills.mockResolvedValue(withBundled(false));
+    await render();
+    expect(container.textContent).toContain('/inbox-triage');
+    expect(container.textContent).toContain('Triage the inbox.');
+    expect(q('bundled-toggle-inbox-triage')?.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('switches one straight on while the feature is on', async () => {
+    listSkills.mockResolvedValue(withBundled(true));
+    await render();
+    await click(q('bundled-toggle-inbox-triage'));
+    expect(setBundledSkillEnabled).toHaveBeenCalledWith('inbox-triage', true);
+    expect(q('skills-offer')).toBeNull();
+  });
+
+  it('with the feature off, offers to turn it on before switching anything', async () => {
+    skillsStore.enabled = false;
+    listSkills.mockResolvedValue(withBundled(false));
+    await render();
+    await click(q('bundled-toggle-inbox-triage'));
+    expect(q('skills-offer')).not.toBeNull();
+    expect(setBundledSkillEnabled).not.toHaveBeenCalled();
+  });
+
+  it('accepting the offer turns the feature and the skill on', async () => {
+    const setEnabled = vi.spyOn(skillsStore, 'setEnabled');
+    skillsStore.enabled = false;
+    listSkills.mockResolvedValue(withBundled(false));
+    await render();
+    await click(q('bundled-toggle-inbox-triage'));
+    await click(q('skills-offer-yes'));
+    expect(setEnabled).toHaveBeenCalledWith(true);
+    expect(setBundledSkillEnabled).toHaveBeenCalledWith('inbox-triage', true);
+    expect(q('skills-offer')).toBeNull();
+    setEnabled.mockRestore();
+  });
+
+  it('declining the offer changes nothing', async () => {
+    const setEnabled = vi.spyOn(skillsStore, 'setEnabled');
+    skillsStore.enabled = false;
+    listSkills.mockResolvedValue(withBundled(false));
+    await render();
+    await click(q('bundled-toggle-inbox-triage'));
+    await click(q('skills-offer-no'));
+    expect(setEnabled).not.toHaveBeenCalled();
+    expect(setBundledSkillEnabled).not.toHaveBeenCalled();
+    expect(q('skills-offer')).toBeNull();
+    setEnabled.mockRestore();
+  });
+
+  it('switching one off never asks', async () => {
+    skillsStore.enabled = false;
+    listSkills.mockResolvedValue(withBundled(false, true));
+    await render();
+    await click(q('bundled-toggle-inbox-triage'));
+    expect(q('skills-offer')).toBeNull();
+    expect(setBundledSkillEnabled).toHaveBeenCalledWith('inbox-triage', false);
+  });
 });
 
 describe('SkillsSettings', () => {
@@ -72,6 +160,7 @@ describe('SkillsSettings', () => {
           enabled: true,
         },
       ],
+      bundled: [],
       errors: [],
     });
     await render();
@@ -85,6 +174,7 @@ describe('SkillsSettings', () => {
       enabled: true,
       dir: '/data/skills',
       skills: [],
+      bundled: [],
       errors: [
         {
           path: '/data/skills/Bad/SKILL.md',
@@ -102,13 +192,13 @@ describe('SkillsSettings', () => {
   });
 
   it('says how to add one when the folder is empty', async () => {
-    listSkills.mockResolvedValue({ enabled: true, dir: '/data/skills', skills: [], errors: [] });
+    listSkills.mockResolvedValue({ enabled: true, dir: '/data/skills', skills: [], bundled: [], errors: [] });
     await render();
     expect(container.textContent).toContain('settings:skills.empty');
   });
 
   it('opens the skills folder and re-reads it on demand', async () => {
-    listSkills.mockResolvedValue({ enabled: true, dir: '/data/skills', skills: [], errors: [] });
+    listSkills.mockResolvedValue({ enabled: true, dir: '/data/skills', skills: [], bundled: [], errors: [] });
     await render();
     const open = container.querySelector('[data-testid="skills-open-folder"]') as HTMLButtonElement;
     await act(async () => open.click());

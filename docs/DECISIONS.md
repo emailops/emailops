@@ -3703,3 +3703,797 @@ glibc floor would cost users and gain nothing.
 repeat the earlier "GLIBC_2.38 not found" regression on 22.04 for no gain. Relying on the
 newer WebKitGTK alone is not enough either: nobody has confirmed that 2.52 fixes the Skia
 bug. Shipping Flatpak or RPM packages is a larger, separate piece of work.
+
+## 2026-10-17 — Dark theme by palette remap, with the dark-by-design chrome pinned
+
+**Decision:** The dark theme is one class on `<html>` (`html.dark`, set from the `ui_theme`
+SQLite preference before React mounts — light, dark, or system). Under it `src/index.css`
+remaps the Tailwind gray scale, turns `bg-white` into a dark surface and gives the pale
+accent tints (`bg-red-50`, `text-primary-700`…) dark counterparts; components keep their
+light-theme classes. Surfaces that are dark in both themes (sidebar, settings, modals,
+Lenses, EO Docs, onboarding, dashboard, log panel, toasts) carry `theme-pinned`, which
+restores the original scale. Email bodies stay on the light scheme inside their iframe.
+`src/lib/darkPalette.test.ts` fails when a component uses a pale accent class with no override.
+**Context:** The components hold ~4,500 colour utilities in 170 files, split between a dark
+chrome and a light content area. Tailwind v4 compiles each utility to `var(--color-…)`, so
+one remap reaches every variant (hover, focus, group) with no `dark:` twin per class; the
+brand palette moved from `tailwind.config.js` to `@theme` for the same reason (a JS colour
+is inlined as a literal). Issue #180 asks for light, dark and system modes that persist and
+for email HTML to render independently of the app theme.
+**Rejected:** A `dark:` class beside every utility — a 170-file diff, repeated for every new
+component, with nothing to catch an omission. Semantic tokens (`bg-surface`, `text-muted`) —
+the better end state, but the same sweep; it can be done incrementally on top of this.
+Rendering email bodies dark — email HTML is designed for its own background, and the
+reading pane already pins the light scheme to keep newsletters' dark-mode rules from
+breaking them.
+
+## 2026-10-17 — Email bodies follow the dark theme whenever they can
+
+**Decision:** On the dark theme a message body is shown dark when it can be (`src/lib/emailScheme.ts`,
+pure): a message that ships `@media (prefers-color-scheme: dark)` rules gets them applied
+unconditionally; a plain message or a light design (median luminance of its declared backgrounds
+≥ 0.5) is adapted with a hue-preserving luminance inversion on the body, undone on images, the
+way Dark Reader does; a design that is already dark is left on a dark canvas. On the light theme
+nothing changes. This supersedes the "email bodies stay light" part of the previous entry.
+**Context:** The developer wants a dark reading pane with dark messages wherever possible, not a
+white card in a dark app. The frame already parses the message's stylesheets through the CSSOM,
+so forcing its dark rules is the same mechanism that used to drop them; inversion is the only
+general way to make a design that knows nothing about dark mode readable without re-authoring it.
+**Rejected:** Keeping bodies light always — safe, but it is the one bright surface in an otherwise
+dark app. Only `color-scheme: dark` without inversion — a message with `color: #333` and no
+background becomes dark text on a dark canvas. Inverting everything — a design that is already
+dark would turn light, and a message with its own dark styles renders them better than any
+transformation. A per-message "show original colours" switch — a reasonable follow-up if the
+adaptation misfires on real newsletters; not needed to ship.
+
+## 2026-10-19 — Dark theme is uniform navy; on the light theme the sidebar, log panel and dialogs stay dark
+
+**Decision:** Every screen is written in the inbox's light idiom, so Lenses, EO Docs, Skills, the
+dashboard, onboarding, the lock screen and toasts are white on the light theme and navy on the
+dark theme like the inbox. The sidebar, the log panel (bottom output bar and log) and the
+dialogs (the `Modal` shell,
+settings, account and IMAP dialogs, the AI-work dialog) carry `theme-chrome`: the dark palette
+applies inside them on either theme, so they stay dark on the light theme, as they always were,
+and match the rest on the dark theme. `theme-pinned` is gone. `src/lib/darkPalette.test.ts`
+fails on `theme-pinned`, an arbitrary hex colour class or a `neutral`/`zinc`/`slate`/`stone`
+class in a component, and on a dark override that does not also cover `.theme-chrome`. This
+supersedes the "dark-by-design chrome pinned" part of the first 2026-10-17 entry.
+**Context:** With the chrome pinned, the dark theme showed two backgrounds side by side: the
+pinned screens on neutral near-black (`#1e1e1e`) and the remapped content on navy. The developer
+wants one surface on the dark theme, and on the light theme wants the menu and the dialogs to
+keep their dark look; then asked for the bottom output bar and the log to stay dark too.
+**Rejected:** Retuning the remap to neutral gray to match the pinned chrome — Lenses and EO Docs
+would stay dark on the light theme. Making the sidebar and dialogs white on the light theme too —
+the developer wants them dark there. Restoring their exact original classes (charcoal `#252526`
+dialogs) and adding per-colour dark overrides — two class sets to keep in step across ~70 files,
+for a tone difference the developer chose not to keep: the dialogs are now navy-dark on the light
+theme.
+
+## 2026-10-20 — IMAP accounts get a read-only calendar from subscribed ICS feeds; Proton creates in Proton
+
+**Decision:** An IMAP account can subscribe to published iCalendar feeds (Settings → Calendar
+→ Calendar feeds). Each feed is a read-only calendar of that account (`access_role = reader`),
+expanded locally (RRULE / EXDATE / RECURRENCE-ID via the `rrule` crate) inside the usual sync
+window; the feed URL lives in the secrets vault because a Proton share link embeds the
+calendar's decryption key. The calendar's default surface is a day agenda in the right dock,
+shared with the chat (one at a time, same width pref), with a calendar button right below the
+chat button on the collapsed rail; the full grid is reached from the panel. On a Proton feed,
+double-clicking an empty slot opens Proton Calendar's create-event deep link for that day
+(`calendar.proton.me/week/Y/M/D?action=create`) instead of the in-app dialog.
+**Context:** Proton Calendar has no CalDAV and no public API (Bridge only exposes IMAP/SMTP);
+the only supported route out is the "share via link" ICS feed, read-only by design. Proton
+Meet has no API either, so creating a Meet meeting from EmailOps was dropped from the task.
+The capability check became account-aware (`CalendarKind`: Google / Outlook / IcsFeeds) so
+the scheduler, chat tools, commands and CLI all agree on which accounts have a calendar.
+**Rejected:** Detecting "Proton accounts" (Bridge host / address domain) and special-casing
+them — the ICS mechanism is provider-neutral and the only Proton-specific affordance is keyed
+on the feed's host. Writing the feed URL to SQLite — it is a credential. Hand-rolled RRULE
+expansion — DST and monthly BYDAY rules are where home-grown code goes wrong. Keeping the
+2026-07-23 stance ("no open-provider-to-create link") for feeds — a feed has no write API, so
+the hand-over is the only way to create from the calendar; the in-app dialog remains the path
+for every writable calendar.
+
+
+## 2026-10-23 — AI base URLs: no LAN over plain http, no credentials in the URL
+
+**Decision:** Every AI base URL (Ollama's `OLLAMA_HOST`, and the OpenAI-compatible server
+that follows) goes through one `normalize_ai_base_url`: trim, strip trailing slashes,
+refuse an empty value, then `validate_ai_base_url`. Plain `http://` stays limited to
+loopback (`localhost`, `127.0.0.0/8`, `::1`); LAN addresses, private ranges, `*.local`
+and bare hostnames need `https://`. A URL with a user name or password is refused and
+the error does not echo it. The refusal tells the user how to reach a LAN machine
+anyway: https, or an SSH tunnel / Tailscale so the server appears on localhost. A shared
+test table of refused URLs runs through every caller's entry point.
+**Context:** The OpenAI-compatible provider request (issue #138) proposed allowing http
+to private ranges so LM Studio or llama-server on another machine works out of the box.
+Prompts carry email content, and DASA 1.1.1 (transport) is part of the CASA AL1 evidence;
+a home or office LAN is not a trusted transport. Credentials in a URL end up in
+preferences and logs (DASA 1.10.2).
+**Rejected:** http to RFC 1918 ranges and `*.local` (cleartext mail on shared networks,
+and a DNS name is not proof of locality); a per-user "allow insecure LAN" toggle (one
+click from cleartext, and it weakens a recorded CASA control); stripping credentials
+from the URL silently (the user would think the key is in use).
+
+## 2026-10-23 — OpenAI-compatible provider: one destination by default, disclosure for remote hosts
+
+**Decision:** The fourth AI provider, an OpenAI-compatible server at a base URL the user
+enters (LM Studio, vLLM, `llama-server`, LiteLLM, a proxy), runs chat and, by default, the
+email index on that same server, so mail goes to one destination; the in-app embedding model
+(only where the embedded runtime runs) and OpenRouter stay as explicit alternatives. A server
+on this machine needs no extra step. Saving a server on another host requires an explicit
+confirmation that email content goes there and that EmailOps cannot control what it keeps or
+trains on; the confirmed host is stored, and a URL on any other host asks again. The backend
+enforces it (`services::ai_server::plan_server_settings`), not only the dialog. The client
+follows no redirects, sends the stored key only to the saved server's origin, keeps the key in
+the secrets vault apart from the OpenRouter key, and shows a failed request as its status plus
+a trimmed message, never the raw body. The monthly budget meters OpenRouter traffic only.
+**Context:** Issue #138 and its review. OpenRouter requests always carry
+`data_collection = "deny"` (recorded for Google's Gmail data policy); an arbitrary server gives
+no equivalent guarantee, and a proxy may forward mail elsewhere. CASA AL1 / DASA 1.1.1
+(transport), 1.8.1 (no internals in errors) and 1.10.2 (sensitive data) apply.
+**Rejected:** In-app embeddings as the default for this provider (two destinations for mail,
+and unavailable on Intel Macs); following redirects that stay on https (the check on the base
+URL would no longer describe where mail goes); a disclosure shown once per install rather than
+per host (moving the URL to another provider would inherit consent given for a different one);
+showing the server's error body in the UI (servers return HTML pages and stack traces there).
+
+## 2026-10-24 — OpenAI-compatible server: the loaded context window caps the setting
+
+**Decision:** Chat with an OpenAI-compatible server sizes prompts to the smaller of the
+context window set in Settings and the one the server reports it has the model loaded with,
+read on every turn from `/models` (`context_length`, vLLM's `max_model_len`), LM Studio's
+`/api/v0/models` (`loaded_context_length` of a loaded model) or `llama-server`'s `/props`
+(`n_ctx`). With neither, it assumes 8192. Test and Save in Settings show the window chat will
+use and where it comes from, and warn below 16384 tokens (the auxiliary planner's floor). A
+request the server still refuses for its length is a typed error
+(`AppError::AiContextExceeded`) telling the user to raise the context on the server.
+**Context:** The OpenAI protocol has no field to set the context window; whoever loads the
+model decides it. LM Studio loads a model on demand with the context length saved for it,
+which was seen to differ from the one it last ran with (64000 against 32768), so a size typed
+in Settings alone overflowed or under-used the server.
+**Rejected:** Loading or reloading the model from EmailOps with a vendor API (`lms load`,
+LM Studio's load endpoint): it ties a generic provider to one server and changes the user's
+server without asking. Refusing to save below 16384 tokens: chat still works there, cut down.
+Remembering the reported window for the process (as for OpenRouter's catalogue): a reload
+on the server changes it.
+
+## 2026-10-26 — Calendar offers "All accounts"; every account has a colour
+
+**Decision:** The Calendar screen and the docked agenda offer "All accounts" once two
+accounts have a calendar enabled, and follow the sidebar into it. It shows every calendar
+account's events on one grid, each in its account's colour, with the legend grouped by
+account. Every account has a stored colour (`accounts.color`, V040). It is assigned from
+a palette when the account is added (the least-used colour first), can be changed in the
+account's settings, and marks the account in the sidebar and the unified inbox rows too.
+Supersedes "Calendar is per-account only" (2026-07-22).
+**Context:** The concerns that deferred a combined view were handled as follows.
+Overlapping events: a meeting in two accounts shows once per account, since rows carry no
+iCalUID to match them. Per-account colours: the stored account colour. Duplicated
+notifications: reminders come from the backend for every account whatever the view
+shows, so a combined view adds none. The "All accounts" view is frontend-only: it fans
+out the per-account commands, so the backend keeps no cross-account calendar read path.
+A new event in "All accounts" asks which account it goes to. A Proton account (a
+read-only feed) is a hand-over to Proton Calendar.
+**Rejected:** Deduplicating a meeting shared between accounts (needs the iCalUID stored
+and a migration, for a rare case). An `AccountScope::AllEnabled` calendar command (the
+fan-out already gives per-account error and re-auth handling). Hash-derived account
+colours (they collided and could not be changed).
+
+## 2026-10-27 — The data folder can be moved from the app; a pointer beside the default finds it
+
+**Decision:** Users choose where EmailOps keeps its data folder from Settings → Privacy &
+Security → Data location, and from one line at the foot of the first onboarding step (no extra
+wizard screen). Choosing a folder copies the whole data folder there (the database as an SQLite
+online-backup snapshot), verifies the copy, writes a pointer file and restarts; the old folder
+is kept for the user to delete. The pointer lives *beside* the platform default folder
+(`com.emailops.app.data-location.json`), not inside it. Resolution order for the app and the
+CLI: `--data-dir` → `EMAILOPS_DATA_DIR` → pointer → default. A chosen folder that is missing at
+launch stops the app with a dialog naming it; it is never created on the fly.
+**Context:** A user wanted mail and AI models on an external disk; the only way was the
+`EMAILOPS_DATA_DIR` environment variable. The location has to be known before the database is
+opened, so it cannot be a preference. Most users never need it, hence no onboarding screen.
+**Rejected:** Pointer inside the default folder — deleting "the old copy" as instructed would
+delete the pointer too and open an empty mailbox. Repointing without copying — leaves the user
+to move a live SQLite database by hand. Deleting the old copy automatically — the copy is the
+only rollback if the new disk misbehaves. Creating a missing chosen folder — on an unplugged
+disk that writes an empty database under the mount point.
+
+## 2026-10-27 — Mailbox text reaches the chat model fenced as data; chat bubbles show no images
+
+**Decision:** Every chat tool result (except our own refusal notes), the Sources block,
+the open email, the thread of a thread-bound chat and the research prompts' emails and
+notes reach the model inside `<UNTRUSTED_EMAIL>` … `</UNTRUSTED_EMAIL>`, and the prompts
+say the text inside is data, never instructions. `remember` and `create_task` run only
+when the user's own message asks for them (or confirms an offer), the same gate
+`generate_email_draft` already had. Any copy of the delimiter inside email text is broken with a zero-width
+space before it is fenced, in the chat and in the classification, task and memory
+prompts. Turn markers of the common chat templates are broken the same way in all text
+sent to Ollama and OpenAI-compatible/OpenRouter servers, which render the template
+themselves. Chat markdown renders an image as its alt text and never loads it. Around
+that, the app CSP sets `object-src 'none'` (both attachment viewers draw PDFs in an
+iframe), the email frame drops `allow-popups`, and one-click unsubscribe reaches only
+public addresses (literal IPs checked, names resolved through a resolver that drops
+non-public addresses, redirects checked the same way).
+**Context:** The chat model reads text that other people wrote and can call tools, and
+whatever its reply contains is rendered in the bubble. The extraction prompts already
+fenced the email, but the chat path, the one with tools, did not, and nothing stopped a
+field from closing the fence. An `<img>` in the bubble fetches its URL on render, with
+no click. The embedded runtime already broke control tokens from the model's own
+vocabulary. The remote backends have no vocabulary to read, so they use a fixed list.
+**Rejected:** Allowing images from `data:` / `asset:` only — no chat answer needs an
+image, and alt text is simpler to reason about. Tightening the app CSP `img-src` instead
+— the email viewer relies on it, and gating per surface is clearer. Fencing only the
+tools that return email bodies — every tool result carries mailbox text in some form,
+and per-tool lists drift. Removing `remember` / `create_task` from turns that carry email
+text — almost every turn does, so it would remove them altogether.
+
+## 2026-10-27 — A message carrying text for the AI assistant gets a warning, junk detection or not
+
+**Decision:** Opening a message whose subject or body carries a chat-template turn marker
+or the `<UNTRUSTED_EMAIL>` tag shows a red banner ("This message contains instructions
+aimed at your AI assistant"). The backend checks the body when the message opens
+(`junk::has_ai_control_markup`), with no stored state and no setting, so the warning
+reaches every install. The same check, plus a Markdown image on a remote host, is also
+junk evidence on the phishing axis (`ai_control_markup` at 0.70, enough to flag alone;
+`markdown_remote_image` at 0.35, never alone), for installs that opted into the detector.
+**Context:** Junk detection is off by default and its phishing axis has a second opt-in,
+because impersonation evidence is weak. These markers are the opposite: no message
+written for a person carries them, so hiding them behind both switches would hide them
+from nearly everyone. A newsletter about language models can still quote one; compliant
+bulk-mail markers damp it below the badge, and the open-time banner is a warning, not a
+verdict that fades or hides the row.
+**Rejected:** Phrase lists ("ignore previous instructions") — keyword rules, and the
+assistant prompts already treat mail as data. A model classifier — a model call per
+message, and the classifier reads the same text the attack is written for. Scoring the
+markers on the phishing axis only — invisible with the defaults.
+
+## 2026-10-28 — PDF attachments render with pdf.js, not the WebView's built-in viewer
+
+**Decision:** Both attachment viewers (`AttachmentViewer`, `AttachmentTabView`) draw PDFs
+with `pdfjs-dist` onto canvases (`PdfViewer`), with the app's own zoom toolbar (50–300 %,
+fit width by default, Cmd/Ctrl `=`/`-`/`0`). They use the `legacy` build, which pdf.js
+supports on Safari 18+ and Chrome 125+. The modern build lists no Safari, and macOS and
+Linux run WebKit. With no PDF left in an iframe, every framed attachment gets an empty
+`sandbox`, including one declared `application/pdf`.
+**Context:** Users needed zoom to read small print. The built-in viewer is a different
+engine per platform (PDFKit on macOS, WebKitGTK on Linux, Chromium on Windows), the page
+cannot control its zoom, and it was the one reason a framed attachment went unsandboxed.
+pdf.js runs no document script without its viewer's scripting sandbox, which is not
+loaded.
+**Rejected:** Scaling the native iframe with CSS `transform` — no dependency, but the
+plugin output blurs when stretched and scrolling breaks. A URL `#zoom=` fragment — only
+Chromium's viewer reads it.
+
+## 2026-10-28 — The chat reads an open PDF through local text extraction, without OCR
+
+**Decision:** While a PDF attachment is open in the viewer, the chat panel offers it as
+the turn's context in place of the thread it came from. The backend extracts its text
+locally with the `pdf-extract` crate and puts it in the turn's final user message as an
+untrusted "OPEN DOCUMENT" block, cut by the context budget like an open thread. A PDF
+with no text layer (a scan) is offered all the same, and the model is told it cannot
+read it, so it says so instead of guessing.
+**Context:** The chat could see the email but not the PDF the user was reading. The
+text has to stay out of the system prompt so the KV-prefix cache keeps working.
+Extraction is CPU work on a file someone else sent, so it runs off the async runtime,
+and a parser panic is treated as an unreadable file.
+**Rejected:** `pdfium-render` — better extraction, but the native pdfium library would
+have to ship on macOS, Windows and Linux. Raw `lopdf` — `pdf-extract` already wraps it
+for text. OCR for scans — another model and pipeline for an edge case. Sending the
+bytes the viewer already loaded from the frontend — the CLI and evals could not drive
+the same path.
+
+## 2026-10-28 — A PDF too long for the prompt is read in parts, not cut to its start
+
+**Decision:** When the open PDF's text is longer than the slot the context budget leaves
+it, the chat reads the whole document before answering. It splits the text into parts
+that fill what the window leaves once the part's own prompt and the reply are taken
+out: the prompt is measured as built, and tokens come from the turn's chars-per-token
+estimate and the chat's reply reserve, so no size is set by hand and a longer prompt
+or a bigger window resizes the parts on its own. It runs one completion per part on the
+auxiliary prefix slot, and keeps from each part what bears on the question. The turn
+then answers from those part notes, which share the slot. The bubble shows "Reading the
+whole document…". It falls back to the start of the text only when the turn is
+cancelled or every part fails.
+**Context:** Cutting the text to fit kept the first pages, so a summary or a question
+about a late clause missed most of a contract. Reading per part costs one call each
+(two for a 27k-character contract at 8k: about 11 s on the demo). Doing the calls
+on the auxiliary slot, as research mode does, keeps the chat's KV anchor intact.
+**Rejected:** Indexing the parts with embeddings and sending only the closest ones —
+it misses a summary, which needs every part. Asking the user to confirm first, as
+research mode does — one PDF has a known, bounded cost. A fixed cap on part size (12k characters) against the model losing the middle of a
+long part — unmeasured, and it ignored the window; the late-clause eval passes with
+window-sized parts. Condensing the notes in rounds
+when they outgrow the slot — each note is already capped to its share. Revisit it if
+documents of hundreds of pages turn up.
+
+## 2026-10-30 — The chat reads PDF text with pdf_oxide, not pdf-extract
+
+**Decision:** `services::pdf_text` extracts the text of an open PDF with `pdf_oxide`
+(pure Rust, MIT/Apache, default features off, `legacy-crypto` on so RC4-encrypted PDFs
+still open) in place of `pdf-extract`.
+**Context:** Reports printed from Chrome embed a TrueType subset (`Type0` /
+`Identity-H`) whose ToUnicode map can lack a glyph. `pdf-extract` emitted NUL for it, so
+words lost letters ("Hemates") and split at glyph boundaries, and the model skipped rows
+it could not recognise. `pdf_oxide` falls back to the embedded font and keeps the
+words whole. It adds about 20 crates to the lockfile.
+**Rejected:** Pdfium (`pdfium-render`) — it needs a native library bundled and signed
+for every platform and slice, which the release pipeline would have to carry. Poppler
+`pdftotext` — a system install the app cannot count on. Replacing NUL with U+FFFD —
+keeps the turn alive but still shows the model a broken word.
+
+## 2026-10-30 — Reviewed skills ship inside the app and are used in place
+
+**Decision:** A gallery of reviewed skills is bundled with the app, not fetched: the text
+is copied from `app-skills/` of `emailops-skills` into `src-tauri/bundled-skills/` with its
+source commit recorded, and embedded in the binary. There is no install step: each bundled
+skill is used directly through its own switch (`skills_bundled_on`, an allow list, off by
+default). Only **Edit a copy** writes to `skills/`, and the copy keeps the switch as it
+was. A skill of the user's with the same name wins, even switched off or broken. A bundled
+skill changes with app releases, and any change is called out in the release notes.
+**Context:** Installing a skill meant copying a folder by hand or pasting text into New.
+Skills are read from disk and `skills_disabled` is a deny list, so bundled skills needed
+their own preference. Adding them in `catalog_for` keeps one seam for `/name`.
+**Rejected:**
+- *An online gallery*: a network call in a privacy-first client, for a handful of skills.
+- *Seeding `skills/` at start-up or on update*: it would write into the user's folder and
+  either overwrite their edits or freeze old text forever.
+- *Importing a folder*: out of scope; the folder can already be opened and edited.
+- *A copy that starts on, like New*: copying a switched-off skill to read or edit it would
+  change the prompt with no switch touched.
+
+## 2026-10-30 — Skills run only when the user types /name
+
+**Decision:** A skill reaches a turn only through `/name`. The chat never picks one: the
+skills index in the system prompt, the planner's skill rule and its `skill` field are gone,
+so with skills on the chat and planner prompts are byte-identical to an install without
+them. `load_skill` stays for reference files only, never returns a skill's instructions,
+and is hidden unless an enabled skill has such a file. The rest of a `/name` turn is
+unchanged (shortcuts, routing, planner, RAG, tool loop), except that the planner's form
+verdict becomes a defer, because stopping at a form dropped the skill the user had just asked
+for. A help verdict stands: it keeps the skill, and turning it into a defer gave a worse answer.
+This reverses the 27/09 rejection of "slash commands only" and the planner selection of 29/09.
+**Context:** Bundling `inbox-triage` showed that the direct shortcuts run before the planner,
+so the phrases a skill is written for ("what needs my attention", "¿qué tengo pendiente?")
+skip selection, for user and bundled skills alike, and the skill silently does not apply.
+Fixing that meant a planner call on shortcut turns, and it risked starter buttons firing
+skills. The developer chose predictability and less prompt over the chat choosing alone: the
+feature is experimental and off by default, and `/` lists the enabled skills. The price is
+that the user has to remember a skill exists.
+**Rejected:**
+- *Running the planner before the shortcuts when a skill is on*: about 3 s more on those
+  turns, plus the starter-button risk, to keep a selection that still misses silently.
+- *Dropping `load_skill` altogether*: reference files are too long to send on every use.
+- *Skipping the planner and RAG on a `/name` turn*: a skill that only sets a format still
+  needs the mail. Unmeasured; worth trying only with an eval showing replies do not get worse.
+- *A per-skill "automatic" flag*: a switch for a path that is being removed.
+
+## 2026-10-30 — Community skills live in their own repo and are checked for what they can do
+
+**Decision:** Skills are collected in a public repo, `emailops/emailops-skills`:
+`app-skills/` for the chat, `agent-skills/` for Hermes and Claude Code through
+`emailops-cli`. Hermes installs agent skills one at a time; in Claude Code they stay one
+plugin, `emailops`. A skill is text a person can read in full. `make check` refuses
+header keys beyond `name` and `description`, shell snippets, hidden text, external links,
+anything in the plugin but its manifest and skills, and `emailops-cli` with `--send` or
+commands that change mail or settings. CI judges a pull request with the target branch's
+checks, and a person makes every merge.
+**Context:** A skill is a set of instructions an AI follows with access to someone's mail.
+"Nothing in a skill folder is ever run" holds in the app, but Hermes and Claude Code can
+run shell from a skill's text, and a Claude Code plugin can ship hooks, servers and
+binaries. Eight of nine planted samples passed the first checker, and the ninth failed by
+accident. A hostile skill written in plain words still passes any checker, so the checks
+narrow what a reviewer must read; they do not replace the reviewer.
+**Rejected:**
+- *One Claude Code plugin per skill*: a bad skill would reach only those who picked it, but
+  the commands become `/triage-inbox:triage-inbox`. The developer preferred the one
+  plugin and its `/emailops:` commands.
+- *`hermes skills tap add` as the Hermes install*: it looks only in `skills/` at the
+  repo's root, with no option for another path.
+- *Trusting the checks in the pull request itself*: a pull request can edit `scripts/`.
+
+## 2026-10-30 — Skills are on by default and no longer experimental
+
+**Decision:** `skills_enabled` defaults to on and Skills lose the Experimental badge. The
+switch stays in Settings → AI Skills, and a stored `false` is honoured, so whoever turned
+skills off keeps them off. Skills included with the app keep their own switches, off by
+default.
+**Context:** Skills run only through `/name`, so the chat and planner prompts of an install
+with skills on match one without them. The default changes what a user can see, the
+**Skills** sidebar entry and the `/` list of enabled skills, and not what a turn sends; the
+one addition is `load_skill`, for an enabled skill that has reference files. A folder a user
+already placed in `skills/` becomes usable through `/name` without a further step.
+**Rejected:**
+- *Switching the included skills on too*: a user should be able to read one before it can
+  run, and the request was about the feature.
+- *Removing the switch*: it is the way to drop the sidebar entry, and removing it would
+  overrule anyone who turned skills off.
+
+## 2026-10-30 — The startup backup runs once a day and keeps three copies
+
+**Decision:** The startup backup copies the database in one read snapshot, at most once
+every 24 hours, keeps three copies, and is skipped with a warning in Logs when the copy
+would leave less than 2 GiB free.
+**Context:** The paced copy (5 pages every 250 ms) restarted whenever another connection
+committed, so on a real mailbox it never finished and no copy existed. Once it finishes,
+a copy per launch of a multi-GB database would rotate good copies out within a few
+restarts, and seven of them could fill the disk the live database writes to.
+**Rejected:**
+- *`VACUUM INTO`*: it needs its own code path, while the Online Backup API is already used
+  and one step gives the same single snapshot.
+- *Keeping seven copies*: on an 11 GB mailbox that is 77 GB of disk.
+- *Showing the last backup in Settings*: a new surface; the Logs panel is enough for now.
+
+## 2026-10-30 — IMAP lists a mailbox to its end and also syncs on a timer
+
+**Decision:** The IMAP inbox listing has no page cap: a page token runs out only at the
+last UID. IMAP accounts also sync every five minutes, and once per failed attempt to reach
+IDLE. A failed download is given up on only after three retries and seven days from its
+first failure.
+**Context:** The sync reads "no more pages" as "everything was listed", so the ten-page cap
+left mail stranded between stored rows. IDLE watches INBOX alone, a signal that lands during
+another sync is dropped, and a server without IDLE never raises one. Retries run on
+consecutive syncs, so a count alone was spent in minutes by a short outage.
+**Rejected:** *Reporting the cap through a new return value*: it changes the listing contract
+of every provider for a limit only IMAP had, and later slices are already bounded per batch.
+
+## 2026-10-30 — Someone else's new participant holds a shared document until the user accepts
+
+**Decision:** When a message from another participant adds addresses to an active
+document, the document goes back to an invitation. Changes keep merging, and nothing is
+mailed until the user accepts with the new list on screen. The user's own Sent copies do
+not hold it: that install already agreed.
+**Context:** Consent to automatic mail is given for named recipients (2026-10-04), so a
+list that grows on its own would mail the document to people the user never agreed to.
+**Rejected:** *Holding only the new addresses as pending*: it needs a schema change and
+new UI, while the invitation state already stops the mail and shows the list.
+
+## 2026-10-31 — The AI budget covers every paid model call
+
+**Decision:** Every OpenRouter completion, tool call and embedding of the app goes through a
+metered helper in `AiService`, so it is refused once the budget is spent and recorded when it
+costs anything. The Settings connection test is recorded and never refused. A classification
+batch stops at the first refusal, and a research run stops reading at the first refused batch
+and answers from what it found.
+**Context:** Only the chat loop and Lens were metered. Classification, research, the query
+planner, query rewrite, rerank, form filling, document reading and the guide index called the
+provider directly, so they spent past the budget without showing in the usage record.
+**Rejected:**
+- *Refusing inside each provider*: the provider has no database and cannot record usage.
+- *Letting a classification batch run on*: every remaining email would fail the same way.
+  Rule-only emails behind the first refusal wait for budget too, which is the known cost.
+
+## 2026-10-31 — A sync only deletes, skips or moves past what it has checked
+
+**Decision:** A soft delete needs a lookup that finished: any IMAP step of `locate_message`
+that fails is an error, and a vanished row with no Message-ID is left alone. A failed OAuth
+refresh asks the user to sign in only when the provider refused the grant. A folder pass keeps
+its position for a failed download for up to 24 hours, then moves on. An inbox backfill keeps
+its ceiling until a run lists the window to its end. Gmail mail that gains `INBOX` while hidden
+or not stored is brought in by the change-log pass, within the account's categories and date.
+**Context:** Each of these read a failure to find out as an answer: a dropped connection as a
+deleted message, an outage page as an expired session, a failed download as a finished page.
+IMAP lists by UID, so the oldest stored row says nothing about how far a walk got.
+**Rejected:** *Holding a folder position with no limit*: one message nothing can download would
+stop the history below it for good. *The seven-day window of the failed-download list*: a folder
+would wait a week for such a message. *Filing failed folder downloads on that list*: it has no
+mailbox column, and the provider's own parse cannot always say which folder a message is in.
+*Deleting a vanished row with no Message-ID*: it hid live mail that was only moved.
+
+## 2026-10-31 — A pulled draft holds its attachments, and a missing file holds the draft back
+
+**Decision:** A draft pulled from Gmail or Outlook stores its attachments as files under
+`attachments/<account>/drafts/`. While one of them is not on disk, because the download
+failed or the provider has no bytes to give (Outlook item and reference attachments), the
+draft is not pushed, sent or queued: edits stay local until the file arrives or the user
+removes the attachment. Outlook draft updates now always replace attachments by list, delete
+and add, which widens the 2026-09-30 entry, where that happened only past one request.
+**Context:** A draft is pushed back with exactly the files stored locally, so a draft pulled
+without them lost them at the provider on the first edit. Graph's update does not document
+`attachments` among its properties, and the payload omitted the key for an empty list, so a
+removal never reached Outlook and the next pull brought the attachment back.
+**Rejected:**
+- *Not storing a draft until all its files are here*: a draft holding something the app
+  cannot store would never appear, and the older local row could still be edited and pushed.
+- *Pushing without the missing file*: that is the loss being fixed.
+- *A `pending` column*: a row whose file is not there says the same with no migration, and
+  reading it already fails on every push and send path.
+- *Clearing the stored change tokens in a migration*: an account preference does it without
+  tying the release to a schema version.
+**Limit:** inline images come back as ordinary attachments, because a draft row keeps no
+content id: their bytes survive, but an Outlook `cid:` reference in the body stops resolving
+after an edit, and a Gmail draft shows the image in the body and as an attachment. Each push
+drops the change token, so the next pull downloads the draft's files again to compare them.
+
+## 2026-11-02 — Mail stored without its inline images is repaired when it is opened
+
+**Decision:** Opening a Gmail or Outlook message whose stored body still has `cid:` images
+fetches it again and keeps the result if it resolves more of them. A message the provider has
+answered for is not asked for again in that run; a failed fetch is retried on the next open.
+**Context:** Bodies stored before inline images were fetched by attachment id kept their
+references, and no sync rewrites a stored body, so that mail showed empty boxes for good. A
+reply can also quote an image it does not carry, and such a body never resolves.
+**Rejected:**
+- *A background pass over every such message*: it spends provider quota and disk on mail that
+  may never be opened again.
+- *Reusing `redownload_email`*: it rewrites the row, the search index and the attachments, for
+  what is one body.
+- *A column for "already tried"*: a schema change and a release coupling, to save one request
+  per run.
+
+## 2026-11-02 — Every search and filter goes through one paged list
+
+**Decision:** The sidebar filters, the search box, the search panel and the CLI all call
+`list_threads`: one row per conversation, in `thread_ts, timestamp, id` order, read from a
+cursor to the end with no cap and no Load more button. A filter and its text are one query.
+A background refresh merges its first rows into the list instead of replacing it, and a
+failed page offers Retry. This supersedes the "one-filter queries take the smart filter's
+path" part of "Smart filters write their query into the search box".
+**Context:** A search stopped at 100 conversations per account and said there was nothing
+more, a filter paged by row number and lost rows, and what a list hid depended on how the
+query was written. Plain mailboxes keep their row numbers: paging them differently is out
+of this work, and their "only unread" skip is a known risk.
+**Rejected:**
+- *Returning every match at once*: every query would load the tags and verdicts of all its
+  rows, and refreshes would still be partial, so the gap under the head would remain.
+- *Extending `get_filtered_emails` or `search_emails_inner`*: the Tag Board and the chat keep
+  their queries fixed.
+- *Removing the cap and keeping row numbers*: 20 of 135 conversations went missing in a
+  synthetic walk where rows left the set.
+
+## 2026-11-02 — Search and filters show flagged mail, with its warning
+
+**Decision:** Mail the junk detector flagged appears in every search and filter, and a row
+never paints without its warning: the list and the search panel wait for the verdicts before
+they publish rows. This supersedes "Typed search words still find junk; a smart filter's
+tokens do not", and the "always exclude junk" part of "Smart filters write their query into
+the search box". The Tag Board and the chat's retrieval still leave flagged mail out. The
+`hide` preference applies to plain mailboxes only: searching is asking for it.
+**Context:** A legitimate message flagged by mistake showed in Inbox, appeared when typing a
+word and vanished from `from:`, `tag:` and `after:`, with nothing saying so.
+**Rejected:**
+- *Hiding it behind a "show flagged" control*: a count, a state and four languages, when the
+  person searching should see what they asked for.
+- *Sending verdicts inside each page*: one more field in the contract, and it leaves plain
+  mailboxes and `id:` rows uncovered.
+
+## 2026-11-02 — A query searches what its view lists
+
+**Decision:** Sent, Archive, folders, Spam and Trash search their own mail, and Sent uses the
+same three signals as its list. The inbox reaches everything except Spam and Trash. Starred
+and Snoozed search like the inbox. This supersedes the "never Spam or Trash" part of "Smart
+filters write their query into the search box". A row leaves a list with a query only when
+it stops belonging to it, so archiving from a search in the inbox keeps the row.
+**Context:** Searching from Spam or Trash found nothing of theirs, and Sent listed one set of
+mail and searched another.
+**Rejected:**
+- *A "Search in Spam and Trash" action*: an extra step for what opening the view already says.
+
+## 2026-11-02 — IMAP runs on a fork of `imap` 2.4.1 that survives lines its parser rejects
+
+**Decision:** The app depends on `emailops/rust-imap`, pinned to a commit of its
+`emailops/2.4-panic-free` branch: tag `v2.4.1` plus our fixes. There, a completion for
+another command is an error, not a panic. An untagged line the parser rejects stays in the
+raw response and the rest of the response is read, so a typed command reports it only once
+the session is back in step. A rejected line that announces a literal, or that is no
+response at all, stops the session: what follows can be message text, so later commands fail
+without writing. In the app, a panic in a blocking IMAP task reaches the error without its
+text, and a rejected line is logged with letters and digits masked.
+**Context:** Issue #243: an account whose sync panicked on every pass and never imported a
+message. `imap` 2.4.1 aborts the read on a line it cannot parse and leaves the tagged
+completion on the stream, so the next command hits an `assert_eq!` on the tag. The first
+step of a sync swallows a failed `CAPABILITY` and carries on, which is exactly that sequence.
+Upstream only replaced the assert on the 3.0 alpha line, and its `main` still aborts on such
+a line. The fork does not cover `imap-proto` 0.10.2, which still panics on a few lines
+(`INTERNALDATE NIL`), hence the containment in the app. The masked log showed the line that
+server sends: a `CAPABILITY` reply ending in a space, which the parser rejects whole. So
+`advertises` reads that reply raw, like `SEARCH`, or MOVE and UIDPLUS would never be used there.
+**Rejected:**
+- *Vendoring the crate into this repo*: a fork keeps upstream's history and stays usable by
+  anyone hitting the same bug.
+- *`async-imap`*: a sync-to-async rewrite that still drops the session on a line it cannot
+  parse.
+- *Dropping a rejected line and answering without it*: `* SEARCH 1 2 3 ` with a trailing space
+  would read as "no mail", which is how a sync silently stops fetching. Typed commands stay
+  strict, and the raw readers in `sync/imap_search.rs` already pick out what they need.
+- *Having the app drop the session after each swallowed failure*: the session stops itself in
+  the library, so a caller that carries on cannot read message text as commands.
+
+## 2026-11-03 — A blocked connectivity probe falls back to the account mail hosts
+
+**Decision:** The connectivity probe keeps its HEAD request to `https://1.1.1.1/`. When that
+fails, the round opens a TCP connection, with no payload, to the hosts of the enabled accounts
+(the stored IMAP host, the Gmail and Graph API hosts), at most once a minute. Any success
+counts as online, and the app reports offline only after two consecutive rounds with no route.
+**Context:** On a network that blocks `1.1.1.1:443` the probe failed on every tick, so the app
+stayed offline for good and never synced, although the mail servers were reachable. The
+offline flag gates the sync loops, so a successful sync could never prove the network works.
+A false online costs one failed sync, a false offline leaves the user with no mail.
+**Rejected:**
+- *Probing another public endpoint (Baidu, QQ)*: a new third party, against Privacy First.
+- *Retrying the same probe*: the block is permanent.
+- *A setting to turn the probe off*: the affected user cannot discover it.
+- *Removing the gate*: the banner loses its signal and every offline tick becomes a sync error.
+
+## 2026-11-04 — A draft revision the provider refuses as malformed is not sent again
+
+**Decision:** When the provider answers a draft push with a malformed-request error (Gmail's
+400, typed as `InvalidInput`), the sync does not push that revision of the draft again; the
+user's next edit makes it eligible. The refusal is kept in memory only, so a restart costs one
+more attempt per such draft. Every Gmail 400 now reaches callers as `invalid_input`, not `sync`.
+**Context:** A refused draft stayed dirty and was pushed on every 60 s sync. In the 30 days to
+04/11/2026 Gmail counted 1,436 `drafts.create` calls, 96 % of them 400s, in bursts on four days.
+A 400 for the same content fails the same way every time.
+**Rejected:**
+- *Backoff for every push failure*: it still sends requests that cannot succeed, and it delays
+  the retry of transient failures.
+- *Persisting the refusal in the database*: a migration to save one attempt after a restart.
+
+## 2026-11-04 — Agent guardrails are enforced by tracked settings and hooks, not prose
+
+**Decision:** The repo's never-do rules for agents are enforced mechanically. A tracked
+`.claude/settings.json` denies `git add -A`/`--all`/`.`, a bare `cargo clean` and reads of the
+`.env`, `.env.local` and `.env.signing` files, and asks before `git reset --hard`, `rm -rf` and
+any other `cargo clean`. Deny and ask rules win over any allow rule in a developer's
+`settings.local.json`. The pre-commit hook runs `scripts/privacy_scan.py`, which blocks staged
+mail stores, app data dirs, and added lines containing an entry of the clone-local
+`.git/info/private-strings`.
+**Context:** CLAUDE.md said "never a bare `cargo clean`", while the local allowlist
+pre-approved `git:*` and `cargo clean`. Nothing ran before a commit to catch a mail store or a
+real address; the privacy-reviewer subagent runs only when an agent remembers to call it. In the
+same change, `ensure_demo_db.sh` started deciding on a content stamp instead of mtimes (the
+2026-10-01 demo DB schema entry described the mtime check), and vitest joined the `push` gate
+set.
+**Rejected:**
+- *Keeping the rules as prose only*: the allowlist contradicted them, and agents follow allow
+  rules, not prose.
+- *An allowlist of synthetic email domains in the privacy scan*: tracked files already use more
+  than 100 distinct test domains (`acme.com`, `x.com`, generic `gmail.com` addresses), so it
+  would block ordinary test edits. A denylist of the developer's real strings is exact.
+- *User-level `~/.claude/settings.json` only*: it would not reach other contributors' sessions
+  or a fresh clone.
+
+## 2026-11-05 — CLAUDE.md files hold rules; procedures and history live in docs/
+
+**Decision:** The three CLAUDE.md files keep only the rules an agent must follow while editing,
+each with the test or tool that enforces it. Release procedure and packaging gotchas live in
+`docs/RELEASE.md`; the incident history behind the frontend rules lives in
+`docs/FRONTEND-LESSONS.md`. A rule that clippy or biome already enforces gets one line, and a
+rule shared by backend and frontend is written once, in the root file.
+**Context:** The root CLAUDE.md loads in every session and the sub-area files in most of them;
+together they were about 67 KB, with about ten rules repeated across files and two that
+contradicted each other (a regression test "when practical" against "no exceptions").
+**Rejected:**
+- *Deleting the history*: it explains why the email-frame and CSP rules exist, and a reader
+  changing that code needs it.
+- *Moving the CLI validation loop to the skills only*: it is used outside `fix-ai-bug` and
+  `build-ai-feature`.
+
+## 2026-11-05 — AI regression cases graduate to the public eval suite by default
+
+**Decision:** When `fix-ai-bug` turns a repro green and the repro is worth keeping, it becomes a
+case in the public `src-tauri/evals/` suite, keyed to the synthetic demo persona, without asking.
+A repro that depends on real-mailbox content is re-themed onto demo data. `private-evals/` is
+used only when the behaviour cannot be reproduced on the demo DB, and only after asking.
+**Context:** The developer redirected a private graduation to the public suite on 17/09/2026:
+public cases run in `make cli-eval` and `make verify` on every change, while a private case runs
+on one machine and carries real mailbox content. The skill still defaulted to `private-evals/`.
+**Rejected:**
+- *Asking "public or private?" each time*: the answer is almost always public.
+
+## 2026-11-08 — List rows of the user's own messages name the recipients
+
+**Decision:** Every mail list row (Inbox, Sent, Starred, Archive, Trash, Spam, custom folders,
+Snoozed, search, smart filters) decides per row whether the user sent the message, with one rule,
+`isOwnMessage`: the owner is the address of the row's account, not the active account; in Inbox and
+Spam only the provider's `is_sent` flag counts; elsewhere `is_sent`, the Sent mailbox or a sender
+equal to the owner. Every row of the Sent view counts as own, since its query already lists Inbox
+copies whose sender is the account (a reply-all to yourself over IMAP has no sent flag). An own row reads "To: Ana, Luis +1" (To then Cc, deduplicated, the user last
+as "you" in the reader's language), and its avatar, drag image and row-menu filter items follow the
+first recipient who is not the user. A recipient's name comes from the stored header, else the
+latest real name that address uses as a sender in the same account (Spam excluded), else the
+address. The tag board's "Me" label shares the same rule.
+**Context:** Issue #256: Sent repeated the user's own name on every row, and mixed lists gave no
+sign that a message was the user's. Outlook and IMAP store recipient addresses without names, so a
+header-only label would show bare addresses on those providers.
+**Rejected:**
+- *A computed label on the backend `Email`*: it touches the tuned list queries and `EMAIL_COLUMNS`
+  that thread and message reads share.
+- *Reusing `get_contacts` / `list_contacts` for names*: byte-wise `MAX(sender)`, a 500-row cap,
+  case-sensitive grouping and Spam included, or three full scans.
+- *Trusting a From equal to the user in Inbox and Spam*: a forged sender would read "To: you".
+- *Changing sync to store Outlook recipient names*: a separate change.
+
+## 2026-11-09 — On IMAP, deleting a conversation moves each message to Trash once
+
+**Decision:** When a Delete takes a conversation on an IMAP account, rows of that conversation
+that share a Message-ID are treated as copies of one message: one of them is moved to Trash (the
+received copy when there is a choice) and the others are only deleted locally, after it. When a copy
+is already in Trash, none is moved again. Gmail and Outlook keep moving every row.
+**Context:** Issue #277: a message sent to yourself is listed in Inbox and Sent as two UIDs. Proton
+Mail Bridge keeps them as one message, and moving the second UID to a Trash that already holds the
+message makes Bridge delete it for good. IMAP gives no portable way to tell one message under two
+UIDs from two real copies, so the rule holds for every IMAP server: on one that stores two copies,
+the Sent copy stays in Sent on the server while EmailOps no longer lists it.
+**Rejected:**
+- *Searching the server's Trash for the Message-ID before each move*: two more round trips per
+  message, and the same outcome on servers that store two copies.
+- *Detecting Proton Mail Bridge and applying the rule only there*: no stable signal for it in the
+  IMAP session, and other label-based servers can behave the same way.
+- *The same rule for Gmail and Outlook*: a second move there is harmless, and on Outlook the Sent
+  Items copy is a real second item the user expects to go.
+
+## 2026-11-10 — The "Sent with EmailOps" footer is on by default and can be turned off
+
+**Decision:** One global switch in Settings → Signatures (`compose.append_footer`) decides
+whether messages the user sends end with the "Sent with EmailOps" line. Unset means on; only
+`"false"` turns it off. The send service reads it when a message is delivered, so a message
+waiting in the outbox follows the switch as it stands when it leaves, and the local Sent copy
+matches what went out. Messages that never carried the footer (drafts pushed to the provider,
+unsubscribe requests, shared-document notices) are unaffected.
+**Context:** The developer wanted a way to stop adding the line; the published privacy page
+said it was always there. Keeping it on by default leaves every existing install unchanged.
+**Rejected:**
+- *Off by default*: changes what every user sends without them asking for it.
+- *A per-account switch*: the footer's language is already global (the UI language), and no one
+  asked to vary it by account.
+- *Reading the switch when the message is queued*: turning it off during the undo window would
+  not apply to that message.
+
+## 2026-11-10 — Search text is a boolean query with uppercase operators
+
+**Decision:** The free text of a list search is read as a boolean query: quoted phrases match
+exactly, `AND` / `OR` / `NOT` count only in capitals, `-word` is `NOT word`, brackets group,
+and `NOT` binds tighter than words side by side (an implicit `AND`), which bind tighter than
+`OR`. A malformed query never fails: a stray operator or bracket is dropped. The field
+operators (`from:`, `to:`, `cc:`, `subject:`, `has:attachment`…) stay outside the boolean
+query and narrow its result.
+**Context:** Issue #268. FTS5 already has this grammar and precedence; its `NOT` is binary,
+so a negation with nothing to subtract from (`-draft`, `a OR -b`) runs as a condition with one
+MATCH per part instead of one MATCH.
+**Rejected:**
+- *Lowercase operators*: "terms and conditions" and Spanish "o" would turn into operators.
+- *Boolean groups over field operators (`from:a OR from:b`)*: each field has its own SQL and
+  index path; a general expression compiler is a larger change than the request needed.
+- *Relevance ordering and searching Trash from the list*: the list stays in conversation order
+  and searches what its view lists.
+
+## 2026-11-11 — Blind copies travel in the envelope; only Gmail and drafts keep the header
+
+**Decision:** Bcc addresses always go in the delivery envelope. A message sent over SMTP (IMAP
+accounts) carries no `Bcc` header, so its Sent copy on the server does not list them. Gmail's
+`raw` message and every provider draft keep the header: Gmail delivers from the headers and
+removes `Bcc` itself, and a draft must come back from the provider with its blind copies, or the
+read-back after each push would drop them. Outlook gets `bccRecipients`. A reply goes to the
+`Reply-To` captured at sync when the message names a valid one, else to `From`.
+**Context:** Issue #270 asked for Bcc in every composer, Cc- or Bcc-only messages, editable
+reply and forward subjects, and replies that honour `Reply-To`.
+**Rejected:**
+- *Building the SMTP message twice, with and without the header, to keep Bcc in the IMAP Sent
+  copy*: each build mints its own Message-ID, so the Sent copy would no longer match the local
+  row stored at send time.
+- *Reply All from the selected message only, keeping its To and Cc roles and excluding only the
+  sending identity* (asked in the issue's comment): it changes who Reply All reaches in every
+  thread; left out of this change.
+
+## 2026-11-11 — A composer stores each attached file for its draft as it arrives
+
+**Decision:** A file attached in any composer (new message, tab, reply, forward) is written at
+once under `attachments/<account>/drafts/` through the `store_draft_file` command, and the
+draft names it from its next save. The draft owns it from then on: the file goes when the draft
+is sent, deleted or drops it. A draft holding files is always sent through the outbox queue,
+which reads them from the draft, so the composer never sends a copy of its own. A webview save
+may name such a stored file; any other path must already be on the draft. Files no draft took
+(the composer closed before saving, or the app quit) are removed at startup once a day old. A
+forward is kept as a draft of the sending account, outside its thread. A message takes at most
+32 files of 25 MB each, and the composer reads at most 50 MB at once.
+**Context:** Issue #274: the autosaved draft kept the text and lost the files, and forwards were
+not saved at all.
+**Rejected:**
+- *Sending the new files' bytes with every draft save*: a large file would cross IPC on each
+  autosave until a save took it, and matching saved rows back to the composer's files needs a
+  key the composer does not have.
+- *Keeping the bytes in the composer and saving them only on close*: a crash or a force quit
+  still loses them.
+- *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
+  local and provider copies, keeping the original when the From account changes, an "open as
+  independent copy" action): each is a change of its own; left out.

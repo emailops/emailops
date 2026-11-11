@@ -106,14 +106,14 @@ export function BackgroundActivityStatus() {
     <span
       data-testid="background-activity"
       title={lines.join('\n')}
-      className="flex min-w-0 items-center gap-1.5 text-[11px] text-sky-300"
+      className="flex min-w-0 items-center gap-1.5 text-[11px] text-sky-700"
     >
       <svg className="h-3 w-3 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
       </svg>
       <span className="truncate">{lines[0]}</span>
-      {lines.length > 1 && <span className="shrink-0 text-gray-400">+{lines.length - 1}</span>}
+      {lines.length > 1 && <span className="shrink-0 text-gray-500">+{lines.length - 1}</span>}
     </span>
   );
 }

@@ -158,7 +158,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
   if (loading && !config && !error) {
     return (
       <SettingsPanel>
-        <p className="text-gray-400">{t('settings:classification.loading')}</p>
+        <p className="text-gray-500">{t('settings:classification.loading')}</p>
       </SettingsPanel>
     );
   }
@@ -166,7 +166,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
   if (!config && error) {
     return (
       <SettingsPanel>
-        <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>
         <button onClick={loadConfig} className="px-4 py-2 bg-primary-600 text-white rounded text-sm">
           {t('common:actions.retry')}
         </button>
@@ -179,13 +179,13 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
   return (
     <SettingsPanel>
       {/* Tabs */}
-      <div className="flex gap-1 mb-4 border-b border-gray-700">
+      <div className="flex gap-1 mb-4 border-b border-gray-200">
         <button
           onClick={() => setTab('settings')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === 'settings'
-              ? 'border-primary-500 text-primary-400'
-              : 'border-transparent text-gray-400 hover:text-gray-300'
+              ? 'border-primary-500 text-primary-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
         >
           {t('settings:classification.tabSettings')}
@@ -194,19 +194,17 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
           onClick={() => setTab('rules')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             tab === 'rules'
-              ? 'border-primary-500 text-primary-400'
-              : 'border-transparent text-gray-400 hover:text-gray-300'
+              ? 'border-primary-500 text-primary-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
           }`}
         >
           {t('settings:classification.tabRules')}
         </button>
       </div>
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>
-      )}
+      {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>}
       {success && (
-        <div className="mb-4 p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">{success}</div>
       )}
 
       {tab === 'settings' && (
@@ -214,7 +212,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
           {/* Enable/Disable */}
           <div className="flex items-center justify-between">
             <div>
-              <label className="block text-sm font-medium text-gray-300">
+              <label className="block text-sm font-medium text-gray-700">
                 {t('settings:classification.autoClassify')}
               </label>
               <p className="text-xs text-gray-500 mt-0.5">{t('settings:classification.autoClassifyDesc')}</p>
@@ -223,7 +221,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
               type="button"
               onClick={() => setConfig({ ...config, enabled: !config.enabled })}
               className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
-                config.enabled ? 'bg-primary-600' : 'bg-gray-600'
+                config.enabled ? 'bg-primary-600' : 'bg-gray-300'
               }`}
             >
               <span
@@ -236,7 +234,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
 
           {/* Categories */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
               {t('settings:classification.classifyIn')}
             </label>
             <p className="text-xs text-gray-500 mb-2">{t('settings:classification.classifyInHelp')}</p>
@@ -253,13 +251,13 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
                     }}
                     className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
                       checked
-                        ? 'bg-primary-700/40 border-primary-500 text-primary-300'
-                        : 'bg-[#333] border-gray-600 text-gray-400 hover:border-gray-500'
+                        ? 'bg-primary-50 border-primary-500 text-primary-700'
+                        : 'bg-white border-gray-300 text-gray-500 hover:border-gray-400'
                     }`}
                   >
                     <span
                       className={`w-3 h-3 rounded-sm border flex items-center justify-center flex-shrink-0 ${
-                        checked ? 'bg-primary-500 border-primary-500' : 'border-gray-500'
+                        checked ? 'bg-primary-500 border-primary-500' : 'border-gray-400'
                       }`}
                     >
                       {checked && (
@@ -281,10 +279,10 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
           {/* Intents */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm font-medium text-gray-300">{t('settings:classification.intents')}</label>
+              <label className="block text-sm font-medium text-gray-700">{t('settings:classification.intents')}</label>
               <button
                 onClick={() => setIntentsText(DEFAULT_INTENTS.join('\n'))}
-                className="text-xs text-primary-400 hover:text-primary-300"
+                className="text-xs text-primary-600 hover:text-primary-700"
               >
                 {t('common:actions.reset')}
               </button>
@@ -293,17 +291,17 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
               value={intentsText}
               onChange={(e) => setIntentsText(e.target.value)}
               rows={4}
-              className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+              className="w-full bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
             />
           </div>
 
           {/* Topics */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm font-medium text-gray-300">{t('settings:classification.topics')}</label>
+              <label className="block text-sm font-medium text-gray-700">{t('settings:classification.topics')}</label>
               <button
                 onClick={() => setTopicsText(DEFAULT_TOPICS.join('\n'))}
-                className="text-xs text-primary-400 hover:text-primary-300"
+                className="text-xs text-primary-600 hover:text-primary-700"
               >
                 {t('common:actions.reset')}
               </button>
@@ -312,7 +310,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
               value={topicsText}
               onChange={(e) => setTopicsText(e.target.value)}
               rows={4}
-              className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+              className="w-full bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
             />
           </div>
 
@@ -330,7 +328,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
             <button
               onClick={handleClassifyPrevious}
               disabled={classifying || !activeAccountId}
-              className="px-3 py-2 bg-gray-700 text-gray-200 rounded text-sm hover:bg-gray-600 disabled:opacity-50"
+              className="px-3 py-2 bg-gray-100 text-gray-800 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
             >
               {classifying
                 ? t('settings:classification.classifyStarting')
@@ -339,7 +337,7 @@ export function ClassificationSettings({ activeAccountId, prefill }: Classificat
             <button
               onClick={handleReclassifyAll}
               disabled={classifying || !activeAccountId}
-              className="px-3 py-2 bg-gray-700 text-gray-200 rounded text-sm hover:bg-gray-600 disabled:opacity-50"
+              className="px-3 py-2 bg-gray-100 text-gray-800 rounded text-sm hover:bg-gray-200 disabled:opacity-50"
             >
               {t('settings:classification.reclassifyAll')}
             </button>

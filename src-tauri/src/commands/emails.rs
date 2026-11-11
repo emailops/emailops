@@ -170,6 +170,17 @@ pub async fn get_thread(
     services::emails::get_thread(&state.db, &account_id, &thread_id)
 }
 
+/// Email id → the `Reply-To` addresses a reply to that message of the thread
+/// goes to instead of its sender. Messages without one are left out.
+#[tauri::command]
+pub async fn get_thread_reply_to(
+    state: State<'_, AppState>,
+    account_id: String,
+    thread_id: String,
+) -> Result<std::collections::HashMap<String, Vec<String>>, AppError> {
+    services::emails::thread_reply_to(&state.db, &account_id, &thread_id)
+}
+
 /// Every message of a thread with what it adds to it, oldest first — the
 /// body of a forward of the whole conversation.
 #[tauri::command]
@@ -188,7 +199,7 @@ pub async fn get_email_body(
     email_id: String,
 ) -> Result<String, AppError> {
     services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
-    state.db.get_email_body(&email_id)
+    services::emails::body_with_inline_images(&state.db, &email_id).await
 }
 
 #[tauri::command]
@@ -295,6 +306,8 @@ pub async fn send_reply(
     from_account_id: Option<String>,
     to_emails: Option<Vec<String>>,
     cc_emails: Option<Vec<String>>,
+    bcc_emails: Option<Vec<String>>,
+    subject: Option<String>,
     attachments: Option<Vec<crate::sync::provider::EmailAttachment>>,
 ) -> Result<(), AppError> {
     let email_body = build_email_body(body, body_html, inline_images)?;
@@ -305,9 +318,10 @@ pub async fn send_reply(
         from_account_id.as_deref(),
         to_emails,
         cc_emails,
-        // The composer replies to the parent's subject; only a saved draft
-        // carries an edited one of its own.
-        None,
+        bcc_emails.unwrap_or_default(),
+        // `None` replies to the parent's subject; the composer sends the
+        // subject the user may have edited.
+        subject.as_deref(),
         attachments.unwrap_or_default(),
         app.clone(),
     )
@@ -327,6 +341,7 @@ pub async fn send_new_email(
     account_id: String,
     to_emails: Vec<String>,
     cc_emails: Option<Vec<String>>,
+    bcc_emails: Option<Vec<String>>,
     subject: String,
     body: String,
     body_html: Option<String>,
@@ -339,6 +354,7 @@ pub async fn send_new_email(
         &account_id,
         to_emails,
         cc_emails.unwrap_or_default(),
+        bcc_emails.unwrap_or_default(),
         &subject,
         &email_body,
         attachments.unwrap_or_default(),

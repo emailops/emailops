@@ -9,7 +9,11 @@ export interface Account {
   sortOrder: number;
   enabled: boolean;
   syncFromTimestamp: number | null;
+  /** Identifies the account wherever accounts are mixed (sidebar, unified inbox, calendar). */
+  color: AccountColor;
 }
+
+export type AccountColor = 'blue' | 'emerald' | 'amber' | 'purple' | 'rose' | 'cyan' | 'indigo' | 'orange';
 
 export interface AccountSettings {
   gmailCategories: string[];
@@ -114,11 +118,25 @@ export interface Calendar {
   accessRole: string;
   isVisible: boolean;
   sortOrder: number;
+  /** Host of the ICS feed behind this calendar (IMAP accounts), or null for a
+   *  provider-API calendar. Never the URL: that is a credential. */
+  feedHost: string | null;
   createdAt: number;
   updatedAt: number;
 }
 
-/** A calendar event synced from Gmail / Outlook. Mirrors the Rust
+/** A subscribed read-only ICS feed on an IMAP account (Proton Calendar
+ *  "share via link", or any published iCalendar URL). Mirrors the Rust
+ *  `CalendarFeed` struct; the URL itself stays in the secrets vault. */
+export interface CalendarFeed {
+  id: string;
+  accountId: string;
+  label: string;
+  host: string;
+  createdAt: number;
+}
+
+/** A calendar event synced from Gmail / Outlook or expanded from an ICS feed. Mirrors the Rust
  *  `CalendarEvent` struct in `src-tauri/src/models/mod.rs` (camelCase serde).
  *  `description` may contain raw provider HTML (Graph) — treat as UNTRUSTED
  *  and render as plain text only, never via dangerouslySetInnerHTML. */
@@ -187,6 +205,8 @@ export interface Draft {
   accountId: string;
   toAddresses: string[];
   ccAddresses: string[];
+  /** Empty for drafts saved before blind copies were kept. */
+  bccAddresses: string[];
   subject: string;
   body: string;
   bodyHtml: string | null;
@@ -307,6 +327,14 @@ export interface ActiveFilter {
   value: string;
 }
 
+/** Where a page of a list with a query continues. Opaque to the UI: it comes
+ *  from one page and goes back with the next. */
+export interface ThreadCursor {
+  threadTs: number;
+  timestamp: number;
+  id: string;
+}
+
 export interface FilteredEmailsResult {
   emails: Email[];
   totalCount: number;
@@ -364,7 +392,7 @@ export interface Attachment {
 }
 
 export interface AiConfig {
-  provider: 'ollama' | 'openrouter' | 'llamacpp';
+  provider: 'ollama' | 'openrouter' | 'llamacpp' | 'openai_compatible';
   model: string;
   embeddingModel: string;
   /** The OpenRouter embedding model that passed the dimension check, if any. */
@@ -378,6 +406,14 @@ export interface AiConfig {
   hasApiKey: boolean;
   thinkingEnabled: boolean;
   zeroDataRetention: boolean;
+  /** The OpenAI-compatible server's saved settings. */
+  server: {
+    baseUrl: string | null;
+    hasApiKey: boolean;
+    embeddingSource: 'server' | 'inapp' | 'openrouter';
+    contextWindow: number;
+    disclosedHost: string | null;
+  };
 }
 
 /** A kind of AI background work that uses the configured provider
@@ -405,6 +441,9 @@ export interface AiWorkItem {
 export interface AiProviderActivity {
   /** The provider in use (the saved one). */
   provider: string;
+  /** Where embedding work sends mail: `provider`, or the OpenAI-compatible
+   *  server's embedding source. */
+  embeddingProvider: string;
   items: AiWorkItem[];
 }
 
@@ -533,12 +572,8 @@ export interface EmailWindow {
    *  only, so it lands in one board block. Off, a thread matches every tag any
    *  of its messages carries (the inbox filter rule). */
   latestTagOnly?: boolean;
-  /** Only mail stored in this mailbox (`sent`, `archive`, `folder:<path>`):
-   *  a filter applied from a view lists that view's mail. Absent = every
-   *  live mailbox. */
-  mailbox?: string;
-  /** Only conversations with an unread message (the list's Unread toggle). */
-  unreadOnly?: boolean;
+  /** Count by the list's rules, for the sidebar: folders in, flagged mail in. */
+  matchList?: boolean;
 }
 
 export interface ClassificationConfig {
@@ -599,6 +634,18 @@ export interface ChatMessageSource {
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 
+/** A suggested request for an empty conversation (`get_chat_starters`). The
+ * frontend words it from `kind` + the parameters in the UI language. */
+export interface ChatStarter {
+  kind: 'today' | 'reply' | 'sender' | 'thread' | 'thisWeek' | 'draft';
+  /** `send` sends it on click; `prefill` puts a sentence stem in the input. */
+  action: 'send' | 'prefill';
+  senderName?: string;
+  subject?: string;
+  /** The thread a `reply` starter is about; the turn is grounded in it. */
+  threadId?: string;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -646,6 +693,7 @@ export interface ChatSourcesEvent {
  *  "Processing…" status the bubble shows before any answer tokens arrive.
  *  Mirrors the Rust `ChatPhase` enum (camelCase serde). */
 export type ChatPhase =
+  | 'queued'
   | 'routing'
   | 'retrieving'
   | 'searchingContacts'
@@ -654,6 +702,7 @@ export type ChatPhase =
   | 'generatingDraft'
   | 'runningTools'
   | 'researching'
+  | 'readingDocument'
   | 'generating';
 
 /** Progress of a research-mode turn, fired on `chat-research-progress`.
@@ -873,6 +922,8 @@ export interface ChatTrace {
   /** What was cut from the prompt to fit the context window; absent when
    *  nothing was. */
   budget?: BudgetTrace | null;
+  /** The answer stopped at the model's token limit, so it ends mid-way. */
+  answerTruncated?: boolean;
 }
 
 /** Mirrors `BudgetCut`: one thing cut from a chat prompt, in the order applied. */

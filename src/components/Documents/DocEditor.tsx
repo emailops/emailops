@@ -1,10 +1,12 @@
 import Collaboration from '@tiptap/extension-collaboration';
 import { type Editor, EditorContent, useEditor } from '@tiptap/react';
 import { redo, undo } from '@tiptap/y-tiptap';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type * as Y from 'yjs';
 import { DOC_FIELD, docSchemaExtensions } from '@/lib/docSchema';
+import { getSafeExternalUrl } from '@/lib/emailFormatting';
+import { ExternalLinkDialog } from '../shared/ExternalLinkDialog';
 
 export { DOC_FIELD };
 
@@ -33,7 +35,7 @@ function ToolbarButton({ label, text, active, disabled = false, onClick }: Toolb
       disabled={disabled}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      className={`px-2 py-1 rounded text-xs disabled:opacity-40 ${active ? 'bg-gray-600 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+      className={`px-2 py-1 rounded text-xs disabled:opacity-40 ${active ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'}`}
     >
       {text}
     </button>
@@ -49,6 +51,7 @@ function ToolbarButton({ label, text, active, disabled = false, onClick }: Toolb
  */
 export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
   const { t } = useTranslation(['documents']);
+  const [linkUrl, setLinkUrl] = useState<string | null>(null);
   const editor = useEditor(
     {
       editable,
@@ -57,6 +60,16 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
       extensions: [...docSchemaExtensions, Collaboration.configure({ document: doc, field: DOC_FIELD })],
       editorProps: {
         handleDOMEvents: {
+          // Marks come from whoever wrote the document, so a link never
+          // navigates by itself. The caret has already moved on mouse down.
+          click: (_view, event) => {
+            const link = (event.target as Element).closest('a');
+            if (!link) return false;
+            event.preventDefault();
+            const url = getSafeExternalUrl(link.getAttribute('href') ?? '');
+            if (url) setLinkUrl(url);
+            return true;
+          },
           beforeinput: (view, event) => {
             const type = (event as InputEvent).inputType;
             if (type !== 'historyUndo' && type !== 'historyRedo') return false;
@@ -67,7 +80,7 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
           },
         },
         attributes: {
-          class: 'eo-doc max-w-none min-h-[60vh] text-sm text-gray-200 focus:outline-none px-6 py-4',
+          class: 'eo-doc max-w-none min-h-[60vh] text-sm text-gray-800 focus:outline-none px-6 py-4',
           'data-testid': 'shared-doc-editor',
         },
       },
@@ -90,7 +103,7 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {editable && (
-        <div className="flex gap-1 px-4 py-2 border-b border-gray-700">
+        <div className="flex gap-1 px-4 py-2 border-b border-gray-200">
           <ToolbarButton
             label={t('documents:toolbar.undo')}
             text="↶"
@@ -105,7 +118,7 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
             disabled={!editor.can().redo()}
             onClick={run((e) => e.chain().focus().redo().run())}
           />
-          <span className="mx-1 w-px bg-gray-700" />
+          <span className="mx-1 w-px bg-gray-200" />
           <ToolbarButton
             label={t('documents:toolbar.bold')}
             text="B"
@@ -147,6 +160,7 @@ export function DocEditor({ doc, editable, onEditor }: DocEditorProps) {
       <div className="flex-1 overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
+      {linkUrl && <ExternalLinkDialog url={linkUrl} onClose={() => setLinkUrl(null)} />}
     </div>
   );
 }

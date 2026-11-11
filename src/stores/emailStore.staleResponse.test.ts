@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Email } from '@/types';
 
 vi.mock('@/lib/api', () => ({
+  getJunkVerdicts: vi.fn(async () => ({})),
   getThread: vi.fn(),
   getEmailBody: vi.fn(async () => 'body'),
   getEmails: vi.fn(),
@@ -139,7 +140,7 @@ describe('openTab with an out-of-order thread response', () => {
     vi.mocked(api.getThread).mockReturnValueOnce(slow.promise).mockResolvedValueOnce([a, a2]);
 
     const first = useEmailStore.getState().openTab(a);
-    useEmailStore.getState().closeTab('thread-a');
+    useEmailStore.getState().closeTab(useEmailStore.getState().tabs[0].id);
     await useEmailStore.getState().openTab(a);
     slow.reject(new Error('boom'));
     await first;
@@ -175,7 +176,7 @@ describe('loadMoreEmails after a failure', () => {
   beforeEach(() => {
     useEmailStore.getState().reset();
     vi.clearAllMocks();
-    useEmailStore.setState({ emails: [a], hasMore: true, totalCount: 500 });
+    useEmailStore.setState({ emails: [a], paging: { status: 'idle', cursor: null, offset: 1 }, totalCount: 500 });
   });
 
   it('does not retry on its own until the list is fetched again', async () => {
@@ -185,7 +186,7 @@ describe('loadMoreEmails after a failure', () => {
     await useEmailStore.getState().loadMoreEmails('acc', null, [], undefined);
 
     expect(api.getEmails).toHaveBeenCalledTimes(1);
-    expect(useEmailStore.getState().error).not.toBeNull();
+    expect(useEmailStore.getState().paging.status).toBe('failed');
   });
 
   it('pages again once the list has been refetched', async () => {
@@ -226,17 +227,38 @@ describe('openAttachmentTab with a sender-declared MIME type', () => {
 
   it('normalizes the type used for the tab and its data URL', async () => {
     vi.mocked(api.fetchEmailAttachmentBytes).mockResolvedValue('aGk=');
-    await useEmailStore.getState().openAttachmentTab({
-      id: 'att-1',
-      accountId: 'acc',
-      emailId: 'a',
-      providerAttachmentId: 'p1',
-      filename: 'page.html',
-      mimeType: 'Text/HTML; charset=utf-8',
-    } as never);
+    await useEmailStore.getState().openAttachmentTab(
+      {
+        id: 'att-1',
+        accountId: 'acc',
+        emailId: 'a',
+        providerAttachmentId: 'p1',
+        filename: 'page.html',
+        mimeType: 'Text/HTML; charset=utf-8',
+      } as never,
+      'sender@example.com',
+    );
 
     const tab = useEmailStore.getState().tabs[0];
     expect(tab.type === 'attachment' && tab.mimeType).toBe('text/html');
     expect(tab.type === 'attachment' && tab.dataUrl).toBe('data:text/html;base64,aGk=');
+    expect(tab.type === 'attachment' && tab.senderEmail).toBe('sender@example.com');
+  });
+
+  it('reads the attachment by its row, which may hold the bytes and no provider id', async () => {
+    vi.mocked(api.fetchEmailAttachmentBytes).mockResolvedValue('aGk=');
+    await useEmailStore.getState().openAttachmentTab(
+      {
+        id: 'att-1',
+        accountId: 'acc',
+        emailId: 'a',
+        providerAttachmentId: '',
+        filename: 'plan.pdf',
+        mimeType: 'application/pdf',
+      } as never,
+      'sender@example.com',
+    );
+
+    expect(api.fetchEmailAttachmentBytes).toHaveBeenCalledWith('acc', 'att-1');
   });
 });

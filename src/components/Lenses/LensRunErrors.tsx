@@ -28,8 +28,8 @@ export function LensRunErrors({ lensId, run }: LensRunErrorsProps) {
   };
 
   return (
-    <details onToggle={onToggle} className="text-[11px] text-gray-400">
-      <summary className="cursor-pointer select-none text-red-300/80 hover:text-red-300">
+    <details onToggle={onToggle} className="text-[11px] text-gray-500">
+      <summary className="cursor-pointer select-none text-red-600 hover:text-red-700">
         {run.failed > 0
           ? t('lenses:runHistory.errorsSummary', { count: run.failed })
           : t('lenses:runHistory.runErrorSummary')}
@@ -38,10 +38,10 @@ export function LensRunErrors({ lensId, run }: LensRunErrorsProps) {
         {run.errorMessage && (
           <p>
             <span className="text-gray-500">{t('lenses:runHistory.runError')}:</span>{' '}
-            <span className="text-red-300">{run.errorMessage}</span>
+            <span className="text-red-700">{run.errorMessage}</span>
           </p>
         )}
-        {loadError && <p className="text-red-400">{loadError}</p>}
+        {loadError && <p className="text-red-600">{loadError}</p>}
         {failures === null && !loadError && run.failed > 0 && <p>{t('lenses:runHistory.loading')}</p>}
         {failures !== null && failures.length === 0 && run.failed > 0 && (
           <p className="italic">{t('lenses:runHistory.failuresRetried')}</p>
@@ -49,11 +49,11 @@ export function LensRunErrors({ lensId, run }: LensRunErrorsProps) {
         {failures && failures.length > 0 && (
           <ul className="space-y-1">
             {failures.map((f) => (
-              <li key={f.emailId} className="rounded border border-gray-800 px-2 py-1">
-                <div className="truncate text-gray-200" title={f.subject}>
+              <li key={f.emailId} className="rounded border border-gray-200 px-2 py-1">
+                <div className="truncate text-gray-800" title={f.subject}>
                   {f.subject || t('lenses:create.noSubject')} <span className="text-gray-500">— {f.sender}</span>
                 </div>
-                <div className="break-words text-red-300">{f.errorMessage || t('lenses:runHistory.unknownError')}</div>
+                <div className="break-words text-red-700">{f.errorMessage || t('lenses:runHistory.unknownError')}</div>
               </li>
             ))}
           </ul>

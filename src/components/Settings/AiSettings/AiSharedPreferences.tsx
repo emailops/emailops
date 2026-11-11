@@ -74,7 +74,7 @@ export function AiSharedPreferences({
     <>
       {/* Chat routing mode */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.routingMode')}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.routingMode')}</label>
         <p className="text-xs text-gray-500 mb-2">{t('settings:ai.routingModeHelp')}</p>
         <Select
           value={routingMode}
@@ -92,7 +92,7 @@ export function AiSharedPreferences({
       {/* Keep-alive — local backends only */}
       {showKeepAlive && (
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.keepAlive')}</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.keepAlive')}</label>
           <p className="text-xs text-gray-500 mb-2">
             {t('settings:ai.keepAliveHelpStart')} <code>-1</code> {/* i18n-ignore */}{' '}
             {t('settings:ai.keepAliveHelpMiddle')} <code> 0</code> {/* i18n-ignore */}{' '}
@@ -107,7 +107,7 @@ export function AiSharedPreferences({
               const v = parseInt(e.target.value, 10);
               if (Number.isFinite(v)) onKeepAliveChange(v);
             }}
-            className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+            className="w-32 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
           />
         </div>
       )}
@@ -115,7 +115,7 @@ export function AiSharedPreferences({
       {/* Context window — embedded llama.cpp only */}
       {showContextWindow && (
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.contextWindow')}</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.contextWindow')}</label>
           <p className="text-xs text-gray-500 mb-2">{t('settings:ai.contextWindowHelp')}</p>
           <input
             type="number"
@@ -126,18 +126,18 @@ export function AiSharedPreferences({
               const v = parseInt(e.target.value, 10);
               if (Number.isFinite(v)) onNCtxChange(v);
             }}
-            className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+            className="w-32 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
           />
         </div>
       )}
 
       {/* AI processing limits: whole account up to N emails, else a day cutoff */}
       <div>
-        <span className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.ageCutoff')}</span>
+        <span className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.ageCutoff')}</span>
         <p className="text-xs text-gray-500 mb-2">{t('settings:ai.ageCutoffHelp')}</p>
         <div className="flex flex-wrap items-end gap-4">
           <label className="block">
-            <span className="block text-xs text-gray-400 mb-1">{t('settings:ai.emailCountCutoff')}</span>
+            <span className="block text-xs text-gray-500 mb-1">{t('settings:ai.emailCountCutoff')}</span>
             <input
               type="number"
               min={0}
@@ -147,11 +147,11 @@ export function AiSharedPreferences({
                 const v = parseInt(e.target.value, 10);
                 if (Number.isFinite(v)) onMaxEmailCountChange(Math.max(0, v));
               }}
-              className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+              className="w-32 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
             />
           </label>
           <label className="block">
-            <span className="block text-xs text-gray-400 mb-1">
+            <span className="block text-xs text-gray-500 mb-1">
               {t('settings:ai.ageCutoffDays', { n: aiMaxEmailCount })}
             </span>
             <input
@@ -163,7 +163,7 @@ export function AiSharedPreferences({
                 const v = parseInt(e.target.value, 10);
                 if (Number.isFinite(v)) onMaxEmailAgeDaysChange(Math.max(0, v));
               }}
-              className="w-32 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+              className="w-32 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
             />
           </label>
         </div>
@@ -171,7 +171,7 @@ export function AiSharedPreferences({
 
       {/* Output language */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.outputLanguage')}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.outputLanguage')}</label>
         <p className="text-xs text-gray-500 mb-2">{t('settings:ai.outputLanguageHelp')}</p>
         <Select
           value={aiOutputLanguage}
@@ -195,7 +195,7 @@ export function AiSharedPreferences({
             aria-label={t('settings:ai.helpDocs')}
           />
           <span>
-            <span className="block text-sm font-medium text-gray-300">{t('settings:ai.helpDocs')}</span>
+            <span className="block text-sm font-medium text-gray-700">{t('settings:ai.helpDocs')}</span>
             <span className="block text-xs text-gray-500">{t('settings:ai.helpDocsHelp')}</span>
           </span>
         </label>

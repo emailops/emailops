@@ -14,6 +14,7 @@ preferences and credentials.
 - `sync.stateRefresh` read state and removals made elsewhere reach stored mail (IMAP flags, Outlook, Gmail History API).
 - `sync.uidValidity` a changed IMAP UIDVALIDITY re-keys stored mail instead of duplicating it (V027 `folder_uid_validity`).
 - `sync.largeAttachments` Outlook attachments over the inline limit go through upload sessions.
+- `sidebar.starOnGitHub` the star button next to **Give feedback** asks, in a dialog, before opening the repository in the system browser.
 
 ## How to get to it (user POV)
 
@@ -25,6 +26,7 @@ preferences and credentials.
 Preconditions: baseline. The demo accounts have no credentials: every sync ends in the expected "Authentication required" banner, so only the read-only paths are drivable.
 
 - Switch → `$V wd click 'button*=ulises@fastmail.com'` → the `h2` still says Inbox and the rows change; `$V wd click 'button=All accounts'` → at least as many rows; back with `$V wd click 'button*=ulises@emailopslabs.dev'`.
+- Star on GitHub → `$V wd click 'aria/Star on GitHub'` → a dialog titled *Support EmailOps with a star on GitHub* names the repository URL; `$V wd click 'button=Cancel'` closes it without opening anything (Visit opens the system browser, which the sweep does not do).
 
 ## Gotchas
 
@@ -39,4 +41,5 @@ Preconditions: baseline. The demo accounts have no credentials: every sync ends 
 | V026–V029 present in the test schema | contract (`db::schema_parity_tests`) |
 | account and system command arguments | contract (`src/lib/apiContract/cuentas.api.test.ts`) |
 | account switching | e2e (`Cuentas/*`) |
+| star-on-GitHub dialog: open, visit, cancel, open failure logged | unit (`src/components/Sidebar/FeedbackMenu.test.tsx`) + e2e (`Cuentas/estrella en GitHub`) |
 | eval | n/a: no model takes part in sync or account management |

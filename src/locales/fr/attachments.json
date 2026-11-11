@@ -6,7 +6,6 @@
   },
   "viewer": {
     "selectAttachment": "Sélectionnez une pièce jointe à prévisualiser",
-    "pdfUnsupported": "L'aperçu PDF n'est pas pris en charge dans ce navigateur",
     "previewUnavailable": "Aperçu indisponible pour ce type de fichier",
     "loadFailed": "Échec du chargement de la pièce jointe.",
     "imageLoadFailed": "Échec du chargement de l'image.",
@@ -15,7 +14,10 @@
     "openExternally": "Ouvrir en externe",
     "openInDefaultApp": "Ouvrir dans l'application par défaut",
     "previewLoadFailed": "Échec du chargement de l'aperçu : {{error}}",
-    "download": "Télécharger"
+    "download": "Télécharger",
+    "zoomOut": "Zoom arrière",
+    "zoomIn": "Zoom avant",
+    "fitWidth": "Ajuster à la largeur"
   },
   "toolbar": {
     "title": "Pièces jointes",

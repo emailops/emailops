@@ -12,7 +12,7 @@ import { SettingsPanel } from './SettingsPanel';
  *  backend. */
 const DEFAULT_PROMPT_TEMPLATE = `You are an email assistant for {persona}.
 Writing style: {style}
-Language: Match the language of the original email.
+Language: Match the language of the message you are answering.
 
 {thread_context}
 {rag_context}
@@ -79,13 +79,13 @@ export function AiDraftsSettings() {
   };
 
   if (loading) {
-    return <p className="text-gray-400 text-sm p-4">{t('common:state.loading')}</p>;
+    return <p className="text-gray-500 text-sm p-4">{t('common:state.loading')}</p>;
   }
 
   return (
     <SettingsPanel
       footer={
-        <div className="px-6 py-4 border-t border-gray-700 flex justify-end flex-shrink-0">
+        <div className="px-6 py-4 border-t border-gray-200 flex justify-end flex-shrink-0">
           <button
             onClick={() => void handleSave()}
             disabled={saving}
@@ -96,22 +96,22 @@ export function AiDraftsSettings() {
         </div>
       }
     >
-      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+      {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>}
       {success && (
-        <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
+        <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">{success}</div>
       )}
 
       <section>
         <div className="flex items-center justify-between py-2">
           <div>
-            <label className="block text-sm font-medium text-gray-300">{t('settings:aiDrafts.enable')}</label>
+            <label className="block text-sm font-medium text-gray-700">{t('settings:aiDrafts.enable')}</label>
             <p className="text-xs text-gray-500 mt-0.5">{t('settings:aiDrafts.enableDesc')}</p>
           </div>
           <button
             type="button"
             onClick={() => setEnabled((v) => !v)}
             className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-              enabled ? 'bg-primary-600' : 'bg-gray-600'
+              enabled ? 'bg-primary-600' : 'bg-gray-300'
             }`}
             role="switch"
             aria-checked={enabled}
@@ -126,7 +126,7 @@ export function AiDraftsSettings() {
       </section>
 
       <section>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:aiDrafts.persona')}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:aiDrafts.persona')}</label>
         <p className="text-xs text-gray-500 mb-2">
           {t('settings:aiDrafts.personaHelpStart')} <code>{'{persona}'}</code> {t('settings:aiDrafts.personaHelpEnd')}
         </p>
@@ -135,13 +135,13 @@ export function AiDraftsSettings() {
           value={persona}
           onChange={(e) => setPersona(e.target.value)}
           disabled={!enabled}
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-50"
+          className="w-full bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-50"
           placeholder={DEFAULT_PERSONA}
         />
       </section>
 
       <section>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:aiDrafts.writingStyle')}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:aiDrafts.writingStyle')}</label>
         <p className="text-xs text-gray-500 mb-2">
           {t('settings:aiDrafts.writingStyleHelpStart')} <code>{'{style}'}</code>
           {t('settings:aiDrafts.writingStyleHelpEnd')}
@@ -151,29 +151,29 @@ export function AiDraftsSettings() {
           onChange={(e) => setStyle(e.target.value)}
           disabled={!enabled}
           rows={3}
-          className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-50"
+          className="w-full bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none disabled:opacity-50"
           placeholder={DEFAULT_STYLE}
         />
       </section>
 
       <section>
         <div className="flex items-center justify-between mb-1">
-          <label className="block text-sm font-medium text-gray-300">{t('settings:aiDrafts.promptTemplate')}</label>
+          <label className="block text-sm font-medium text-gray-700">{t('settings:aiDrafts.promptTemplate')}</label>
           <button
             type="button"
             onClick={handleResetTemplate}
             disabled={!enabled}
-            className="text-xs text-primary-400 hover:text-primary-300 disabled:opacity-50"
+            className="text-xs text-primary-600 hover:text-primary-700 disabled:opacity-50"
           >
             {t('settings:aiDrafts.resetToDefault')}
           </button>
         </div>
         <p className="text-xs text-gray-500 mb-2">
-          {t('settings:aiDrafts.promptHelpStart')} <code className="text-gray-400">{'{persona}'}</code>,{' '}
-          <code className="text-gray-400">{'{style}'}</code>,{' '}
-          <code className="text-gray-400">{'{thread_context}'}</code>,{' '}
-          <code className="text-gray-400">{'{rag_context}'}</code>,{' '}
-          <code className="text-gray-400">{'{instructions}'}</code>
+          {t('settings:aiDrafts.promptHelpStart')} <code className="text-gray-500">{'{persona}'}</code>,{' '}
+          <code className="text-gray-500">{'{style}'}</code>,{' '}
+          <code className="text-gray-500">{'{thread_context}'}</code>,{' '}
+          <code className="text-gray-500">{'{rag_context}'}</code>,{' '}
+          <code className="text-gray-500">{'{instructions}'}</code>
           {t('settings:aiDrafts.promptHelpEnd')}
         </p>
         <textarea
@@ -182,7 +182,7 @@ export function AiDraftsSettings() {
           disabled={!enabled}
           rows={14}
           spellCheck={false}
-          className="w-full bg-[#1e1e1e] text-gray-100 font-mono border border-gray-600 rounded px-3 py-2 text-xs leading-relaxed focus:border-primary-500 outline-none disabled:opacity-50 resize-none"
+          className="w-full bg-white text-gray-900 font-mono border border-gray-300 rounded px-3 py-2 text-xs leading-relaxed focus:border-primary-500 outline-none disabled:opacity-50 resize-none"
         />
       </section>
     </SettingsPanel>

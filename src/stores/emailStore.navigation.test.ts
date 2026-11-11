@@ -10,13 +10,14 @@ const focused = { id: 'focused', accountId: 'acc', threadId: 't1', isRead: true,
 const cited = { id: 'cited', accountId: 'acc', threadId: 't2', isRead: true, timestamp: 2 } as Email;
 
 vi.mock('@/lib/api', () => ({
+  getJunkVerdicts: vi.fn(async () => ({})),
   getEmailById: vi.fn(async () => focused),
   getEmailInboxPosition: vi.fn(async () => 0),
   getEmailCount: vi.fn(async () => 500),
   getEmails: vi.fn(async () => [focused]),
   getThread: vi.fn(async () => [focused]),
   getEmailBody: vi.fn(async () => ''),
-  searchEmails: vi.fn(async () => ({ emails: [cited] })),
+  listThreads: vi.fn(async () => ({ emails: [cited], threadLatestAt: {}, nextCursor: null, parsedQuery: null })),
 }));
 
 import * as api from '@/lib/api';
@@ -35,22 +36,9 @@ describe('fetchEmails after navigateToEmail', () => {
     store.setSearchQuery('id:cited');
     await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined);
 
-    // Search spans every category: the selected tab is not sent. In the inbox
-    // it is not narrowed to a mailbox either.
-    expect(vi.mocked(api.searchEmails).mock.calls[0]).toEqual(['acc', 'id:cited', true, undefined]);
+    // Search spans every category: the selected tab is not sent.
+    expect(vi.mocked(api.listThreads).mock.calls[0]).toEqual(['acc', 'id:cited', 'inbox', false, null, 50, true]);
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['cited']);
-  });
-
-  it('runs a later fetch when pre-seeded search results took over a navigation in flight', async () => {
-    const store = useEmailStore.getState();
-    const navigation = store.navigateToEmail('acc', 'focused');
-    store.applySearchResults('id:cited', [cited]);
-    await navigation;
-
-    await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined); // pre-seeded: no-op
-    await useEmailStore.getState().fetchEmails('acc', null, ['primary'], false, undefined);
-
-    expect(api.searchEmails).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the category filter off the navigated list until the next fetch', async () => {

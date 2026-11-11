@@ -66,21 +66,21 @@ export function SmartFilters({
     <div className="flex items-center justify-between mb-2">
       <button
         onClick={() => setIsOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-300"
+        className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-700"
       >
         <CollapseChevron open={isOpen} />
         {t('sidebar:smartFilters.title')}
       </button>
       <div className="flex items-center gap-1">
         {activeFilter && (
-          <button onClick={onClearFilter} className="text-xs text-gray-400 hover:text-gray-300">
+          <button onClick={onClearFilter} className="text-xs text-gray-500 hover:text-gray-700">
             {t('common:actions.clear')}
           </button>
         )}
         <button
           onClick={onRefresh}
           disabled={isLoading}
-          className="p-0.5 text-gray-500 hover:text-gray-300 disabled:opacity-50 transition-colors"
+          className="p-0.5 text-gray-500 hover:text-gray-700 disabled:opacity-50 transition-colors"
           title={t('sidebar:filterActions.recalculate')}
         >
           <svg
@@ -161,7 +161,7 @@ export function SmartFilters({
             setMenu({ filter: { type: filter.type, value: filter.value }, x: e.clientX, y: e.clientY });
           }}
           className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-            isActive ? 'bg-primary-600 text-white' : 'text-gray-300 hover:bg-gray-800'
+            isActive ? 'bg-primary-600 text-white' : 'text-gray-700 hover:bg-gray-100'
           }`}
         >
           <FilterIcon type={filter.type} className="w-3.5 h-3.5 flex-shrink-0" />
@@ -178,14 +178,14 @@ export function SmartFilters({
           <span className="absolute inset-y-0 right-2 flex items-center gap-0.5">
             <button
               onClick={() => (pinned ? onUnpinFilter(filter) : onPinFilter(filter))}
-              className={`p-0.5 rounded hover:bg-gray-700 ${isActive ? 'hover:bg-primary-500' : ''}`}
+              className={`p-0.5 rounded hover:bg-gray-200 ${isActive ? 'hover:bg-primary-500' : ''}`}
               title={pinned ? 'Unpin' : 'Pin'}
             >
               <PinIcon filled={pinned} className="w-3 h-3" />
             </button>
             <button
               onClick={() => onRemoveFilter(filter)}
-              className={`p-0.5 rounded hover:bg-gray-700 ${isActive ? 'hover:bg-primary-500' : ''}`}
+              className={`p-0.5 rounded hover:bg-gray-200 ${isActive ? 'hover:bg-primary-500' : ''}`}
               title={t('sidebar:filterActions.hide')}
             >
               <XIcon className="w-3 h-3" />
@@ -232,7 +232,7 @@ export function SmartFilters({
                 <button
                   type="button"
                   onClick={() => toggleGroup(type)}
-                  className="px-3 mt-0.5 text-xs text-gray-500 hover:text-gray-300"
+                  className="px-3 mt-0.5 text-xs text-gray-500 hover:text-gray-700"
                 >
                   {expandedGroups.has(type)
                     ? t('sidebar:smartFilters.showLess')
@@ -285,13 +285,13 @@ function FilterContextMenu({
       />
       <div
         role="menu"
-        className="fixed z-50 min-w-40 py-1 rounded-lg border border-gray-700 bg-gray-800 shadow-lg"
+        className="fixed z-50 min-w-40 py-1 rounded-lg border border-gray-200 bg-white shadow-lg"
         style={{ left: x, top: y }}
       >
         <button
           type="button"
           role="menuitem"
-          className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700"
+          className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100"
           onClick={onAppend}
         >
           {t('sidebar:filterActions.addToSearch')}

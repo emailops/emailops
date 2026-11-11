@@ -211,9 +211,16 @@ pub enum Command {
         /// Skip this many hits before returning (for paging: page 2 = `--offset 25`).
         #[arg(long, default_value_t = 0)]
         offset: usize,
-        /// Include search diagnostics (method, AI availability, parsed filters,
-        /// hit counts). `--json` puts them under `data.trace`; pretty mode
-        /// prints a trace block after the results.
+        /// The view the search runs in: `inbox`, `sent`, `archive`, `spam`,
+        /// `trash`, `starred`, `snoozed` or `folder:<path>`.
+        #[arg(long, default_value = "inbox")]
+        view: String,
+        /// Only conversations with something unread (the list's Unread toggle).
+        #[arg(long)]
+        unread: bool,
+        /// Include search diagnostics (parsed filters, rows read, pages, time).
+        /// `--json` puts them under `data.trace`; pretty mode prints a trace
+        /// block after the results.
         #[arg(long)]
         trace: bool,
     },
@@ -248,6 +255,11 @@ pub enum Command {
         /// thread-bound path from the CLI.
         #[arg(long, value_name = "THREAD_ID")]
         thread: Option<String>,
+        /// Ground the turn in this PDF attachment (its attachment meta id), as
+        /// the chat panel does while the PDF is open in the viewer. Wins over
+        /// `--thread`.
+        #[arg(long, value_name = "ATTACHMENT_ID")]
+        attachment: Option<String>,
         /// Prewarm the chat prompt-prefix cache (system message + empty
         /// sources tail) BEFORE the first question, mirroring what the app
         /// does at startup / chat-panel open. Use in benches so turn-1
@@ -718,6 +730,26 @@ mod tests {
     }
 
     #[test]
+    fn search_runs_in_the_inbox_unless_told_otherwise() {
+        let cli = Cli::parse_from(["emailops-cli", "search", "invoice"]);
+        match cli.command {
+            Some(Command::Search { view, unread, .. }) => {
+                assert_eq!(view, "inbox");
+                assert!(!unread);
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+        let cli = Cli::parse_from(["emailops-cli", "search", "invoice", "--view", "spam", "--unread"]);
+        match cli.command {
+            Some(Command::Search { view, unread, .. }) => {
+                assert_eq!(view, "spam");
+                assert!(unread);
+            }
+            other => panic!("expected Search, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn search_offset_defaults_to_zero_and_parses() {
         let cli = Cli::parse_from(["emailops-cli", "search", "invoice"]);
         match cli.command {
@@ -841,6 +873,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_attachment_flag_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "summarise it", "--attachment", "att-1"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Chat { attachment: Some(ref id), .. }) if id == "att-1"
+        ));
+    }
+
+    #[test]
     fn chat_research_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "chat", "themes this quarter?", "--research"]);
         assert!(matches!(cli.command, Some(Command::Chat { research: true, .. })));
@@ -856,6 +897,7 @@ mod tests {
                 conversation,
                 fresh,
                 thread,
+                attachment,
                 prewarm,
                 research,
                 estimate,
@@ -865,6 +907,7 @@ mod tests {
                 assert!(conversation.is_none());
                 assert!(!fresh);
                 assert!(thread.is_none());
+                assert!(attachment.is_none());
                 assert!(!prewarm);
                 assert!(!research, "research mode is opt-in");
                 assert!(!estimate);

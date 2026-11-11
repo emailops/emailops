@@ -1,0 +1,2 @@
+src-tauri/bundled-skills/** text eol=lf
+src-tauri/src/db/emails/lookup_sql.snapshot.txt text eol=lf

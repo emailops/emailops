@@ -2,7 +2,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { AVATAR_PALETTE, accountColorClass, hashColorClass, SENDER_TEXT_PALETTE, senderTextColorClass } from './colors';
+import {
+  ACCOUNT_COLORS,
+  AVATAR_PALETTE,
+  accountColorClass,
+  accountColorHex,
+  hashColorClass,
+  SENDER_TEXT_PALETTE,
+  senderTextColorClass,
+} from './colors';
 
 describe('hashColorClass', () => {
   it('is deterministic for the same seed', () => {
@@ -26,12 +34,21 @@ describe('hashColorClass', () => {
 });
 
 describe('accountColorClass', () => {
-  it('is deterministic and stable across calls', () => {
-    expect(accountColorClass('acc-1')).toBe(accountColorClass('acc-1'));
+  it("paints an account with its stored colour's class", () => {
+    const accounts = [{ id: 'acc-1', color: 'rose' as const }];
+    expect(accountColorClass(accounts, 'acc-1')).toBe('bg-rose-500');
   });
 
-  it('returns a Tailwind bg- class', () => {
-    expect(accountColorClass('acc-1')).toMatch(/^bg-/);
+  it('falls back to a neutral class for an account it does not know', () => {
+    expect(accountColorClass([], 'gone')).toBe('bg-gray-400');
+  });
+});
+
+describe('accountColorHex', () => {
+  it('gives every palette colour a hex for the calendar chips', () => {
+    for (const color of ACCOUNT_COLORS) {
+      expect(accountColorHex(color)).toMatch(/^#[0-9a-f]{6}$/);
+    }
   });
 });
 

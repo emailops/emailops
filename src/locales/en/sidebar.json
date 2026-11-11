@@ -51,7 +51,13 @@
     "button": "Give feedback",
     "general": "General feedback",
     "bug": "Bug report",
-    "idea": "Idea"
+    "idea": "Idea",
+    "star": "Star on GitHub",
+    "starDialog": {
+      "title": "Support EmailOps with a star on GitHub",
+      "body": "Do you want to visit {{url}}?",
+      "visit": "Visit GitHub"
+    }
   },
   "accountActions": {
     "sync": "Sync now",

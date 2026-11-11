@@ -299,12 +299,12 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
       // moneda" without closing the dialog first.
       nonBlocking
       footer={
-        <div className="flex justify-end gap-2 border-t border-gray-700 px-6 py-3">
+        <div className="flex justify-end gap-2 border-t border-gray-200 px-6 py-3">
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+            className="rounded border border-gray-300 px-3 py-1.5 text-xs text-gray-800 hover:bg-gray-100 disabled:opacity-50"
           >
             {t('common:actions.cancel')}
           </button>
@@ -321,16 +321,16 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
         </div>
       }
     >
-      <div className="space-y-5 text-xs text-gray-300">
-        {error && <div className="rounded border border-red-700/50 bg-red-900/30 px-3 py-2 text-red-300">{error}</div>}
+      <div className="space-y-5 text-xs text-gray-700">
+        {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700">{error}</div>}
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-gray-700">
+        <div className="flex gap-1 border-b border-gray-200">
           <button
             type="button"
             onClick={() => setTab('templates')}
             className={`px-3 py-1.5 text-xs font-medium ${
-              tab === 'templates' ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
+              tab === 'templates' ? 'border-b-2 border-blue-500 text-blue-700' : 'text-gray-500 hover:text-gray-800'
             }`}
           >
             {t('lenses:create.tabTemplates')}
@@ -339,7 +339,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
             type="button"
             onClick={() => setTab('custom')}
             className={`px-3 py-1.5 text-xs font-medium ${
-              tab === 'custom' ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
+              tab === 'custom' ? 'border-b-2 border-blue-500 text-blue-700' : 'text-gray-500 hover:text-gray-800'
             }`}
           >
             {t('lenses:create.tabCustom')}
@@ -349,7 +349,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
         {missingFromChat.length > 0 && (
           <div
             data-testid="lens-create-missing-from-chat"
-            className="rounded border border-amber-700/50 bg-amber-900/30 px-3 py-2 text-xs text-amber-200"
+            className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
           >
             {t('lenses:create.filledFromChatMissing', { fields: missingFromChat.join(', ') })}
           </div>
@@ -368,12 +368,12 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                     key={tpl.key}
                     type="button"
                     onClick={() => applyTemplate(tpl)}
-                    className="group flex items-start gap-3 rounded border border-gray-700 bg-[#1e1e1e]/60 p-3 text-left transition-colors hover:border-blue-500/60 hover:bg-blue-900/10 disabled:opacity-50"
+                    className="group flex items-start gap-3 rounded border border-gray-200 bg-gray-50 p-3 text-left transition-colors hover:border-blue-500/60 hover:bg-blue-50 disabled:opacity-50"
                   >
                     <span className="text-xl leading-none">{tpl.icon}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium text-gray-100">{templateName(tpl)}</span>
-                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-400">
+                      <span className="block truncate font-medium text-gray-900">{templateName(tpl)}</span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-500">
                         {t(`lenses:templates.${tpl.key}.description`, { defaultValue: tpl.description })}
                       </span>
                     </span>
@@ -391,25 +391,25 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               <h3 className="text-[11px] uppercase tracking-wider text-gray-500">{t('lenses:identity.title')}</h3>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="mb-1 block text-gray-400">{t('lenses:identity.name')}</span>
+                  <span className="mb-1 block text-gray-500">{t('lenses:identity.name')}</span>
                   <input
                     type="text"
                     data-testid="lens-create-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder={t('lenses:create.namePlaceholder')}
-                    className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-gray-400">{t('lenses:identity.icon')}</span>
+                  <span className="mb-1 block text-gray-500">{t('lenses:identity.icon')}</span>
                   <input
                     type="text"
                     value={icon}
                     onChange={(e) => setIcon(e.target.value)}
                     placeholder="🧾"
                     maxLength={4}
-                    className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                   />
                 </label>
               </div>
@@ -420,7 +420,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               <h3 className="text-[11px] uppercase tracking-wider text-gray-500">{t('lenses:scope.title')}</h3>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="mb-1 block text-gray-400">{t('lenses:scope.account')}</span>
+                  <span className="mb-1 block text-gray-500">{t('lenses:scope.account')}</span>
                   <Select
                     value={accountId}
                     options={[
@@ -436,7 +436,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-gray-400">{t('lenses:scope.direction')}</span>
+                  <span className="mb-1 block text-gray-500">{t('lenses:scope.direction')}</span>
                   <Select
                     value={direction}
                     options={[
@@ -452,7 +452,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               </div>
 
               <div className="space-y-1">
-                <span className="block text-gray-400">{t('lenses:scope.mailboxes')}</span>
+                <span className="block text-gray-500">{t('lenses:scope.mailboxes')}</span>
                 <div className="flex flex-wrap gap-1.5">
                   {MAILBOXES.map((m) => (
                     <button
@@ -461,8 +461,8 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                       onClick={() => toggleInArray(mailboxes, m, setMailboxes)}
                       className={`rounded border px-2 py-0.5 text-[11px] ${
                         mailboxes.includes(m)
-                          ? 'border-blue-500 bg-blue-600/30 text-blue-200'
-                          : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-100'
                       }`}
                     >
                       {t(`lenses:scope.mailboxNames.${m}`)}
@@ -478,7 +478,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
               />
 
               <div className="space-y-1">
-                <span className="block text-gray-400">{t('lenses:scope.categories')}</span>
+                <span className="block text-gray-500">{t('lenses:scope.categories')}</span>
                 <div className="flex flex-wrap gap-1.5">
                   {CATEGORIES.map((c) => (
                     <button
@@ -487,8 +487,8 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                       onClick={() => toggleInArray(categories, c, setCategories)}
                       className={`rounded border px-2 py-0.5 text-[11px] ${
                         categories.includes(c)
-                          ? 'border-blue-500 bg-blue-600/30 text-blue-200'
-                          : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-100'
                       }`}
                     >
                       {t(`lenses:scope.categoryNames.${c}`)}
@@ -499,49 +499,49 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="mb-1 block text-gray-400">{t('lenses:scope.lastNDays')}</span>
+                  <span className="mb-1 block text-gray-500">{t('lenses:scope.lastNDays')}</span>
                   <input
                     type="number"
                     min={1}
                     value={lastDays}
                     onChange={(e) => setLastDays(e.target.value)}
-                    className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-gray-400">{t('lenses:scope.senderDomainsCsv')}</span>
+                  <span className="mb-1 block text-gray-500">{t('lenses:scope.senderDomainsCsv')}</span>
                   <input
                     type="text"
                     value={senderDomains}
                     onChange={(e) => setSenderDomains(e.target.value)}
                     placeholder="stripe.com, wise.com" // i18n-ignore: example sender domains
-                    className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                   />
                 </label>
               </div>
 
               <label className="block">
-                <span className="mb-1 block text-gray-400">{t('lenses:scope.senderEmails')}</span>
+                <span className="mb-1 block text-gray-500">{t('lenses:scope.senderEmails')}</span>
                 <input
                   type="text"
                   value={senderEmails}
                   onChange={(e) => setSenderEmails(e.target.value)}
                   placeholder="billing@stripe.com, invoices@vendor.com" // i18n-ignore: example sender emails
-                  className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
               </label>
 
               <label className="block">
-                <span className="mb-1 block text-gray-400">{t('lenses:scope.keywordQuery')}</span>
+                <span className="mb-1 block text-gray-500">{t('lenses:scope.keywordQuery')}</span>
                 <input
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={t('lenses:scope.keywordPlaceholder')}
-                  className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
               </label>
-              <label className="flex items-center gap-2 text-[11px] text-gray-300">
+              <label className="flex items-center gap-2 text-[11px] text-gray-700">
                 <input
                   type="checkbox"
                   checked={querySearchBody}
@@ -565,7 +565,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={5}
-                className="w-full resize-y rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                className="w-full resize-y rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
               />
               <p className="text-[11px] text-gray-500">{t('lenses:create.promptHelp')}</p>
               <div className="flex items-center gap-2">
@@ -573,7 +573,7 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                   type="button"
                   onClick={() => void handlePreview()}
                   disabled={previewing || submitting}
-                  className="rounded border border-gray-600 px-2 py-1 text-[11px] text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+                  className="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-800 hover:bg-gray-100 disabled:opacity-50"
                 >
                   {previewing ? t('lenses:create.testing') : t('lenses:create.testOnSample')}
                 </button>
@@ -585,15 +585,15 @@ export function LensCreateModal({ open, onClose, onCreated }: LensCreateModalPro
                     {t('lenses:create.previewTitle', { count: previewRows.length })}
                   </h4>
                   {previewRows.map((r) => (
-                    <div key={r.emailId} className="rounded border border-gray-700 bg-[#1e1e1e]/60 p-2 text-[11px]">
-                      <div className="truncate font-medium text-gray-200">
+                    <div key={r.emailId} className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px]">
+                      <div className="truncate font-medium text-gray-800">
                         {r.emailSubject || t('lenses:create.noSubject')}
                       </div>
                       <div className="truncate text-gray-500">{r.emailSender}</div>
                       {r.errorMessage ? (
-                        <div className="mt-1 text-red-400">{r.errorMessage}</div>
+                        <div className="mt-1 text-red-600">{r.errorMessage}</div>
                       ) : (
-                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[10px] text-gray-300">
+                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[10px] text-gray-700">
                           {JSON.stringify(r.data, null, 2)}
                         </pre>
                       )}

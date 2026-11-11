@@ -22,12 +22,17 @@
 //! **Spam** is left to the spam reconciliation: rows stored under `spam` are
 //! not loaded, and a message that gained `SPAM` is re-filed by the Spam
 //! listing pass.
+//!
+//! **Back in the inbox.** A message that gains `INBOX` while hidden or not
+//! stored is out of reach of the fetch passes, so the pass brings it in itself
+//! (see [`bring_in_returned_mail`]).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use crate::db::emails::mailbox_state::StoredMessageState;
 use crate::db::Database;
+use crate::models::error::AppError;
 use crate::models::Account;
 use crate::sync::gmail::mailbox_from_labels;
 use crate::sync::provider::{EmailProvider, HistoryListing, MessageChange, RemoteLabels};
@@ -112,6 +117,7 @@ pub(super) async fn refresh_from_history(
         };
         answered = true;
         held |= !apply_page(db, account, &page.changes, &mut applied);
+        held |= !bring_in_returned_mail(db, account, email_provider, &page.changes, &mut applied).await;
         if !held {
             cursor = page.resume_cursor;
         }
@@ -266,6 +272,101 @@ fn apply_page(db: &Database, account: &Account, changes: &[MessageChange], appli
     apply_changes(db, account, plan.changes, applied) && !plan.held_back
 }
 
+/// Download batch size, as in the sync's own passes.
+const RETURNED_MAIL_BATCH: usize = 20;
+
+/// Bring back what a page put in the inbox and no fetch pass can reach: they
+/// list forward from the newest stored message and skip stored ids, so an old
+/// message returning from the archive or from Trash is never seen by them.
+///
+/// - A row soft-deleted here is restored.
+/// - A message not stored is downloaded, unless the account's categories or
+///   sync date keep it out, as they would from any listing.
+/// - A download that fails goes on the failed-download list every sync retries.
+///
+/// `false` when the page has to be replayed: the database could not take it.
+async fn bring_in_returned_mail(
+    db: &Database,
+    account: &Account,
+    email_provider: &dyn EmailProvider,
+    changes: &[MessageChange],
+    applied: &mut Applied,
+) -> bool {
+    let returned = returned_to_inbox(changes);
+    if returned.is_empty() {
+        return true;
+    }
+    for id in &returned {
+        match db.apply_server_restore(id) {
+            Ok(true) => applied.moved += 1,
+            Ok(false) => {}
+            Err(e) => {
+                warn(account, &format!("Could not restore {id}: {e}"));
+                return false;
+            }
+        }
+    }
+    let known = match db.emails_exist_batch(&returned) {
+        Ok(known) => known,
+        Err(e) => {
+            warn(
+                account,
+                &format!("Could not read stored mail to refresh its state: {e}"),
+            );
+            return false;
+        }
+    };
+    let categories = selected_categories(db, account);
+    let floor = account.sync_from_timestamp.unwrap_or(0);
+    let missing: Vec<&str> = returned
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !known.contains(*id))
+        .collect();
+    for chunk in missing.chunks(RETURNED_MAIL_BATCH) {
+        let results = match email_provider.batch_get_messages(chunk).await {
+            Ok(results) => results,
+            Err(e) => chunk.iter().map(|_| Err(AppError::SyncError(e.to_string()))).collect(),
+        };
+        for (id, result) in chunk.iter().zip(results) {
+            match result {
+                Ok((mut email, category, attachments)) => {
+                    if email.timestamp < floor || !categories.iter().any(|c| c == category.as_str()) {
+                        continue;
+                    }
+                    email.account_id = account.id.clone();
+                    let stored = db
+                        .insert_emails_batch(std::slice::from_ref(&email))
+                        .and_then(|()| db.insert_attachment_infos(&email.id, &account.id, &attachments));
+                    if let Err(e) = stored {
+                        warn(account, &format!("Could not store {id}: {e}"));
+                        return false;
+                    }
+                    applied.moved += 1;
+                }
+                Err(e) => {
+                    warn(account, &format!("Could not download {id}, back in the inbox: {e}"));
+                    if let Err(e) = db.add_failed_email(&account.id, id, &e.to_string()) {
+                        warn(account, &format!("Could not record the failed download of {id}: {e}"));
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The Gmail categories the account syncs.
+fn selected_categories(db: &Database, account: &Account) -> Vec<String> {
+    db.get_preference(&format!("account_settings:{}", account.id))
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<crate::models::AccountSettings>(&json).ok())
+        .unwrap_or_default()
+        .gmail_categories
+}
+
 /// Write the planned changes. Each statement repeats the pending-push guard,
 /// so a change made locally since the rows were read is not overwritten.
 /// `false` when a write failed.
@@ -329,8 +430,8 @@ pub(super) struct HistoryPlan {
 
 /// Pure: fold a page of the change log onto the stored rows.
 ///
-/// - Changes to messages that are not stored are ignored: the fetch passes
-///   ingest new mail.
+/// - Changes to messages that are not stored are ignored here: the fetch
+///   passes ingest new mail, and [`bring_in_returned_mail`] what they cannot reach.
 /// - Several changes to one message collapse, in order, to its final state.
 /// - A row with a pending local push is left alone and holds the page back.
 pub(super) fn plan_history_changes(stored: &[StoredMessageState], changes: &[MessageChange]) -> HistoryPlan {
@@ -398,6 +499,24 @@ pub(super) fn plan_label_snapshot(
             None => Vec::new(),
         })
         .collect()
+}
+
+/// Pure: the messages a page of the change log leaves in the inbox, in order of
+/// arrival there. Whether they are stored is not its business.
+pub(super) fn returned_to_inbox(changes: &[MessageChange]) -> Vec<String> {
+    let inbox = |labels: &[String]| labels.iter().any(|label| label == "INBOX");
+    let mut returned: Vec<String> = Vec::new();
+    for change in changes {
+        match change {
+            MessageChange::LabelsAdded { id, labels } if inbox(labels) && !returned.contains(id) => {
+                returned.push(id.clone());
+            }
+            MessageChange::LabelsRemoved { id, labels } if inbox(labels) => returned.retain(|r| r != id),
+            MessageChange::Deleted { id } => returned.retain(|r| r != id),
+            _ => {}
+        }
+    }
+    returned
 }
 
 /// The labels a stored row stands for — the inverse of the mapping it was
@@ -531,6 +650,36 @@ mod tests {
     }
 
     // ── change log ────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_inbox_arrivals_of_a_page_are_the_ones_still_there_at_its_end() {
+        let cases: Vec<(&str, Vec<MessageChange>, Vec<&str>)> = vec![
+            ("returned", vec![added("m-1", &["INBOX"])], vec!["m-1"]),
+            ("another label", vec![added("m-1", &["STARRED"])], vec![]),
+            (
+                "archived again",
+                vec![added("m-1", &["INBOX"]), removed("m-1", &["INBOX"])],
+                vec![],
+            ),
+            (
+                "deleted for good",
+                vec![added("m-1", &["INBOX"]), deleted("m-1")],
+                vec![],
+            ),
+            (
+                "said twice",
+                vec![
+                    added("m-1", &["INBOX"]),
+                    added("m-1", &["INBOX"]),
+                    added("m-2", &["INBOX"]),
+                ],
+                vec!["m-1", "m-2"],
+            ),
+        ];
+        for (label, changes, expected) in cases {
+            assert_eq!(returned_to_inbox(&changes), expected, "{label}");
+        }
+    }
 
     #[test]
     fn a_page_of_the_change_log_becomes_local_changes() {
@@ -789,6 +938,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -853,6 +1003,76 @@ mod tests {
     /// One pass, `passes` refresh intervals after [`NOW`].
     async fn pass(db: &Arc<Database>, provider: &FakeEmailProvider, passes: i64) {
         refresh_stored_mail_state(db, &account(), provider, NOW + passes * REFRESH_INTERVAL_SECS).await;
+    }
+
+    /// Deleting here moves the message to Gmail's Trash and hides the row; the
+    /// row then counts as stored, so no fetch pass could bring it back.
+    #[tokio::test]
+    async fn a_message_deleted_here_and_restored_in_gmail_comes_back() {
+        let (db, provider) = synced(&[email("m-1", "inbox", true)]);
+        db.delete_email("m-1").unwrap();
+        provider.record_history(removed("m-1", &["TRASH"]));
+        provider.record_history(added("m-1", &["INBOX"]));
+
+        pass(&db, &provider, 0).await;
+
+        assert_eq!(row(&db, "m-1"), Some(("inbox".to_string(), true)));
+    }
+
+    /// The inbox listings reach forward from the newest stored message and an
+    /// archived message was never stored, so nothing else would ever fetch it.
+    #[tokio::test]
+    async fn an_old_message_moved_back_to_the_inbox_is_brought_in() {
+        let (db, provider) = synced(&[]);
+        let mut old = email("old", "inbox", true);
+        old.timestamp = 1_000;
+        provider.add_message(old, EmailCategory::Primary, vec![]);
+        provider.record_history(added("old", &["INBOX"]));
+
+        pass(&db, &provider, 0).await;
+
+        assert_eq!(row(&db, "old"), Some(("inbox".to_string(), true)));
+    }
+
+    #[tokio::test]
+    async fn a_returning_message_of_a_category_the_account_skips_stays_out() {
+        let (db, provider) = synced(&[]);
+        provider.add_message(email("promo", "inbox", true), EmailCategory::Promotions, vec![]);
+        provider.record_history(added("promo", &["INBOX"]));
+
+        pass(&db, &provider, 0).await;
+
+        assert_eq!(row(&db, "promo"), None);
+    }
+
+    #[tokio::test]
+    async fn a_returning_message_below_the_accounts_sync_date_stays_out() {
+        let (db, provider) = synced(&[]);
+        let mut old = email("old", "inbox", true);
+        old.timestamp = 500;
+        provider.add_message(old, EmailCategory::Primary, vec![]);
+        provider.record_history(added("old", &["INBOX"]));
+        let mut account = account();
+        account.sync_from_timestamp = Some(1_000);
+
+        refresh_stored_mail_state(&db, &account, &provider, NOW).await;
+
+        assert_eq!(row(&db, "old"), None);
+    }
+
+    #[tokio::test]
+    async fn a_returning_message_that_cannot_be_downloaded_goes_on_the_retry_list() {
+        let (db, provider) = synced(&[]);
+        provider.add_message(email("flaky", "inbox", true), EmailCategory::Primary, vec![]);
+        provider.fail_message("flaky");
+        provider.record_history(added("flaky", &["INBOX"]));
+
+        pass(&db, &provider, 0).await;
+
+        let failed = db.get_failed_emails("acc-1").unwrap();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].0, "flaky");
+        assert_eq!(cursor(&db), Some((START + 1).to_string()), "the log moves on");
     }
 
     #[tokio::test]

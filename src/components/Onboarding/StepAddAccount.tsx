@@ -78,7 +78,7 @@ export function StepAddAccount({ onBack, onComplete }: { onBack: () => void; onC
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-gray-400">{t('auth:onboarding.addAccount.intro')}</p>
+      <p className="text-sm text-gray-500">{t('auth:onboarding.addAccount.intro')}</p>
 
       <div className="space-y-2">
         <ProviderButton
@@ -109,18 +109,18 @@ export function StepAddAccount({ onBack, onComplete }: { onBack: () => void; onC
         />
       </div>
 
-      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+      {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>}
 
       <div className="flex items-center justify-between pt-2">
         <button
           onClick={onBack}
-          className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+          className="px-4 py-2 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
         >
           {t('common:actions.back')}
         </button>
         <button
           onClick={() => void handleSkip()}
-          className="text-sm text-gray-500 hover:text-gray-300 underline underline-offset-2"
+          className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2"
         >
           {t('auth:onboarding.addAccount.skipForNow')}
         </button>
@@ -168,9 +168,9 @@ function ProviderButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="w-full text-left px-4 py-3 rounded-lg bg-[#27272a] border border-gray-700 hover:border-primary-500 hover:bg-[#2d2d2f] transition-colors disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:border-gray-700 disabled:hover:bg-[#27272a]"
+      className="w-full text-left px-4 py-3 rounded-lg bg-white border border-gray-200 hover:border-primary-500 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:bg-white"
     >
-      <div className="text-sm font-medium text-gray-100">{label}</div>
+      <div className="text-sm font-medium text-gray-900">{label}</div>
       <div className="text-xs text-gray-500 mt-0.5">{description}</div>
     </button>
   );

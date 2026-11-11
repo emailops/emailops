@@ -24,6 +24,7 @@ import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { statusKey, useSenderStore } from '@/stores/senderStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
+import { useToastStore } from '@/stores/toastStore';
 import type { Email, SenderStatus, UnsubscribeOption } from '@/types';
 import { SenderDialogs } from './SenderDialogs';
 
@@ -149,6 +150,34 @@ describe('block confirmation', () => {
     await click(byTestId('sender-block-confirm'));
 
     expect(api.blockSender).toHaveBeenCalledWith('acc', 'deals@shop.example', false);
+  });
+
+  it('closes as soon as the block is confirmed, before the mail has moved', async () => {
+    useSenderStore.setState({ dialog: { type: 'block', accountId: 'acc', address: 'deals@shop.example' } });
+    let finish: (report: { moved: number; localOnly: number; failed: number }) => void = () => {};
+    vi.mocked(api.blockSender).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    await render();
+
+    await click(byTestId('sender-block-confirm'));
+
+    expect(useSenderStore.getState().dialog).toBeNull();
+    expect(byTestId('sender-block-confirm')).toBeNull();
+    await act(async () => finish({ moved: 40, localOnly: 0, failed: 0 }));
+    expect(useToastStore.getState().toasts.map((t) => t.message)).toContain(
+      'Blocked deals@shop.example. Messages moved to Spam: 40',
+    );
+  });
+
+  it('reports a block that fails after the dialog has closed in a toast that stays', async () => {
+    useSenderStore.setState({ dialog: { type: 'block', accountId: 'acc', address: 'deals@shop.example' } });
+    vi.mocked(api.blockSender).mockRejectedValue(new Error('provider down'));
+    await render();
+
+    await click(byTestId('sender-block-confirm'));
+
+    const toast = useToastStore.getState().toasts.find((t) => t.message.includes('provider down'));
+    expect(toast?.sticky).toBe(true);
+    expect(useSenderStore.getState().dialog).toBeNull();
   });
 
   it('unblocks, offering to bring their mail back from Spam', async () => {

@@ -33,6 +33,8 @@ const HEADLINE_REASONS = [
   'spf_fail',
   'dangerous_attachment',
   'credential_solicitation',
+  'ai_control_markup',
+  'markdown_remote_image',
   'display_name_contains_address',
   'server_spam_flag',
   'mixed_script_display_name',
@@ -56,8 +58,8 @@ const STYLES: Record<JunkKind, { wrap: string; button: string }> = {
     button: 'text-orange-900',
   },
   graymail: {
-    wrap: 'bg-slate-50 border-slate-200 text-slate-700',
-    button: 'text-slate-700',
+    wrap: 'bg-gray-50 border-gray-200 text-gray-700',
+    button: 'text-gray-700',
   },
   legit: { wrap: '', button: '' },
 };

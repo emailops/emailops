@@ -4,6 +4,7 @@ description: "Discutez avec votre boîte, générez des réponses, classez le co
 weight: 40
 nav:
   choosing-a-backend: settings/ai
+  openai-compatible-server: settings/ai
   the-model-catalog: settings/ai
   performance-knobs: settings/ai
   chat-with-your-mailbox: view/chat
@@ -42,6 +43,62 @@ e-mail ne quitte jamais votre machine.
   désactivée tant que vous ne l'activez pas. Son panneau affiche les dépenses de la période en
   cours face à ce plafond, avec **Démarrer une nouvelle période** pour remettre le compteur à
   zéro. <!-- claim:ai-choosing-backend-4 -->
+- **Compatible OpenAI** — un serveur que vous faites déjà tourner et qui parle l'API d'OpenAI :
+  LM Studio, vLLM, `llama-server` de llama.cpp, LiteLLM ou un proxy. Le chat va à ce serveur et,
+  sauf choix contraire, l'index des e-mails aussi ; voir
+  [un serveur compatible OpenAI](#openai-compatible-server). <!-- claim:ai-choosing-backend-5 -->
+
+### Un serveur compatible OpenAI {#openai-compatible-server}
+
+<!-- claim:ai-openai-compatible-1 -->
+Saisissez l'**URL du serveur** — par exemple `http://localhost:1234/v1` pour LM Studio ou
+`http://localhost:8080/v1` pour `llama-server` — et une clé API seulement si le serveur en demande
+une. **Charger les modèles** liste les modèles que sert le serveur ; vous pouvez aussi saisir un
+identifiant de modèle. **Tester** envoie une courte requête au serveur saisi avant que rien ne soit
+enregistré. La clé est conservée dans le trousseau du système, à part de la clé OpenRouter, et
+**Supprimer la clé enregistrée** l'efface.
+
+<!-- claim:ai-openai-compatible-2 -->
+Le `http://` non chiffré n'est accepté que pour cet ordinateur (`localhost`, `127.0.0.1`, `::1`).
+Un serveur sur une autre machine demande `https://`, même sur le réseau de votre domicile ou de
+votre bureau, et une URL contenant un nom d'utilisateur ou un mot de passe est refusée. Pour
+joindre sans https une machine de votre réseau, redirigez son port par un tunnel SSH
+(`ssh -L 8080:localhost:8080 <host>`) ou passez par Tailscale, pour qu'elle apparaisse sur
+`localhost`, et utilisez l'URL `http://localhost`.
+
+<!-- claim:ai-openai-compatible-3 -->
+Enregistrer un serveur qui n'est pas sur cet ordinateur vous demande d'abord de confirmer que le
+texte de vos e-mails, vos questions au chat et vos brouillons lui seront envoyés, et qu'EmailOps
+ne peut pas contrôler ce que ce serveur conserve ni s'il entraîne des modèles avec. La question
+revient chaque fois que l'URL passe sur un autre hôte.
+
+<!-- claim:ai-openai-compatible-4 -->
+**Index des e-mails (Embeddings)** choisit où la recherche sémantique calcule les Embeddings de
+votre courrier : **Ce serveur** (par défaut, pour que votre courrier aille à un seul endroit), le
+**Modèle de l'application (sur cet ordinateur)** (proposé seulement là où le backend In-app peut
+tourner) ou **OpenRouter**, qui fait revenir pour lui le budget mensuel et
+**Rétention zéro uniquement**. Un modèle d'embeddings du serveur est vérifié à l'enregistrement,
+et celui qui ne renvoie pas de vecteurs adaptés à l'index est refusé. Le changer reconstruit
+l'index, après confirmation.
+
+<!-- claim:ai-openai-compatible-5 -->
+**Taille du contexte (tokens)** indique à EmailOps combien le modèle peut lire d'un coup. Laissez
+0 pour utiliser ce que le serveur annonce : vLLM, LM Studio et `llama-server` indiquent avec
+combien de contexte ils ont chargé le modèle. Une taille indiquée ici est plafonnée par celle
+qu'annonce le serveur ; s'il n'annonce rien, le chat utilise la taille indiquée ici, ou
+suppose 8192. Les réponses attendent jusqu'à cinq minutes
+leur premier mot pendant qu'un serveur local lit un long prompt, et le raisonnement qu'un modèle
+écrit dans le texte est retiré de la réponse. EmailOps demande au serveur de sauter le
+raisonnement d'un modèle qui raisonne lors de ses appels internes courts ; vLLM et `llama-server`
+le respectent, LM Studio non : avec un tel modèle, désactivez-y son raisonnement dans les réglages
+du modèle.
+
+<!-- claim:ai-openai-compatible-6 -->
+Tester et Enregistrer affichent la taille de contexte que le chat utilisera et d'où elle vient,
+et avertissent quand elle est inférieure à 16384 tokens, où le chat fonctionne de façon réduite.
+LM Studio charge un modèle à la demande avec la longueur de contexte enregistrée pour ce modèle :
+augmentez-la là-bas, pas seulement ici. Une requête encore plus longue que ce qu'accepte le
+serveur échoue avec un message qui le dit.
 
 ### Le catalogue de modèles {#the-model-catalog}
 
@@ -116,6 +173,18 @@ trouvent leur réponse dans le fil, et une question sur le reste de votre boîte
 (*« qu'est-ce qui est arrivé aujourd'hui ? »*) continue d'y chercher. Ce contexte ne vaut
 que pour une question et n'est jamais enregistré dans la conversation : vous pouvez donc
 passer d'un e-mail à l'autre au sein d'un même chat.
+
+<!-- claim:ai-chat-mailbox-16 -->
+Avec un PDF ouvert dans un onglet, ou sélectionné dans **Pièces jointes**, la puce propose ce
+document, et le chat répond à partir de son texte. Une nouvelle conversation suggère alors
+**Résumer ce document**, **Points clés, dates et montants** et **Poser une question sur ce
+document**. Un PDF trop long pour la fenêtre de contexte du modèle est lu par parties, et la
+réponse s'appuie sur des notes prises sur chaque partie.
+
+<!-- claim:ai-chat-mailbox-17 -->
+Une conversation vide affiche des **Demandes suggérées** tirées de votre messagerie, comme le
+résumé du jour ou un fil qui attend encore votre réponse, et **Autre chose…** pour écrire la
+vôtre.
 
 <!-- claim:ai-chat-mailbox-3 -->
 Le chat interroge un compte à la fois, et un sélecteur indique lequel — une réponse ne
@@ -255,7 +324,9 @@ catégories indexées et reconstruisez l'index de zéro après un changement de 
 d'embeddings, dans **Paramètres → Recherche IA**.
 
 <!-- claim:ai-semantic-search-2 -->
-Avec les deux backends locaux, l'indexation se fait sur votre machine. Avec OpenRouter, elle
+Avec les deux backends locaux, l'indexation se fait sur votre machine. Avec un serveur
+compatible OpenAI, elle se fait là où l'indique son réglage **Index des e-mails (Embeddings)**.
+Avec OpenRouter, elle
 n'a lieu que si vous choisissez un **Modèle d'embeddings** dans son panneau : le texte de chaque
 e-mail indexé, ainsi que de chaque recherche et question du chat, est alors envoyé à OpenRouter
 et compte dans le budget mensuel. Sans modèle, la recherche sémantique est désactivée et la
@@ -321,17 +392,17 @@ extrait à nouveau en conservant les valeurs modifiées à la main. Les valeurs 
 ## Skills {#skills}
 
 <!-- claim:ai-skills-1 -->
-*Expérimental.* Un skill est une procédure enregistrée que le chat suit pour un type de
+Un skill est une procédure enregistrée que le chat suit pour un type de
 demande : la présentation de votre résumé hebdomadaire, la façon de répondre à un fournisseur.
 Chaque skill est un dossier dans le dossier de données de l'app, `skills/<nom>/SKILL.md` : un
 court en-tête avec un `name` (le nom du dossier) et une `description` de ce qu'il fait et quand
-l'utiliser, puis les instructions en Markdown. Seuls le nom et la description restent dans le
-prompt du chat ; les instructions sont lues lors des tours qui utilisent le skill. Rien de ce que
+l'utiliser, puis les instructions en Markdown. Rien d'un skill n'atteint le prompt du chat tant
+que vous ne l'invoquez pas. Rien de ce que
 contient le dossier d'un skill n'est jamais exécuté.
 
 <!-- claim:ai-skills-2 -->
-Les skills sont désactivés par défaut. Activez-les dans **Paramètres → Skills IA** avec
-**Activer les skills** ; une entrée **Skills** apparaît alors dans la barre latérale.
+Les skills sont activés par défaut. Désactivez-les dans **Paramètres → Skills IA** avec
+**Activer les skills** ; l'entrée **Skills** disparaît alors de la barre latérale.
 
 <!-- claim:ai-skills-3 -->
 La vue **Skills** liste chaque skill avec son propre interrupteur et ouvre le `SKILL.md` du skill
@@ -341,11 +412,31 @@ a modifié depuis son ouverture ; changer le `name` dans le fichier renomme le s
 **Supprimer** le déplace vers `skills/.deleted`, d'où il peut être restauré à la main.
 
 <!-- claim:ai-skills-4 -->
-Le chat applique un skill de trois façons : il en choisit un dont la description correspond à
-votre question, l'assistant en charge un pendant sa réponse, ou vous commencez le message par `/`
-suivi du nom du skill (`/weekly-report la semaine dernière` ; `/a /b` applique les deux). Taper
-`/` liste vos skills actifs. La trace de raisonnement indique le skill suivi par le tour et qui
-l'a choisi.
+Un skill ne s'applique que lorsque vous le demandez : commencez le message par `/` suivi du nom
+du skill (`/weekly-report la semaine dernière` ; `/a /b` applique les deux). Le chat n'en choisit
+jamais de lui-même. Taper `/` liste vos skills actifs. La trace de raisonnement indique le skill
+suivi par le tour.
+
+<!-- claim:ai-skills-5 -->
+EmailOps inclut aussi quelques skills vérifiés. **Paramètres → Skills IA** les liste avec un nom, une
+description et un interrupteur, même lorsque les skills sont désactivés ; en activer un propose alors
+d'activer les skills. Dans la vue **Skills**, en sélectionner un affiche son texte complet, en lecture
+seule, pour le lire avant de l'utiliser. Ils restent désactivés tant que vous ne les activez pas, et un
+skill activé fonctionne comme n'importe quel autre. Ils font partie de l'application : rien n'est
+téléchargé ni ajouté au dossier `skills`, et leur texte peut changer avec une mise à jour. La vue
+**Skills** renvoie aussi au guide pour proposer un skill au dépôt public.
+
+<!-- claim:ai-skills-6 -->
+**Modifier une copie** transforme un skill inclus en skill personnel dans `skills/<nom>/`, avec son
+interrupteur tel quel, et est refusé si un skill de ce nom existe déjà. Quand l'un de vos skills porte
+le même nom qu'un skill inclus, le chat utilise le vôtre et le skill inclus reste inactif. Les mises à
+jour ne modifient jamais vos skills, et ils suivent le dossier de données. Supprimer le dossier de
+données les supprime.
+
+<!-- claim:ai-skills-7 -->
+D'autres skills, et la façon de partager les vôtres, se trouvent dans le
+[dépôt de skills d'EmailOps](https://github.com/emailops/emailops-skills). Il contient aussi des
+skills pour Hermes, Claude Code et d'autres agents qui accèdent à vos e-mails via `emailops-cli`.
 
 ## Tout désactiver {#turning-it-all-off}
 

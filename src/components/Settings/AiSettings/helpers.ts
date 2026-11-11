@@ -1,4 +1,5 @@
 import type { CatalogModel } from '@/types';
+import { sendsIndexToOpenRouter } from './serverSettings';
 import type { AiConfigState } from './types';
 
 export function formatBytes(bytes: number): string {
@@ -75,6 +76,8 @@ export function chatModelForProvider(
   if (remembered) return remembered;
   if (next === 'ollama') return available.ollamaModels[0] ?? '';
   if (next === 'llamacpp') return available.catalog.find((m) => m.kind === 'chat' && m.isLocal)?.id ?? '';
+  // A server lists its own models; there is no id that would fit every one.
+  if (next === 'openai_compatible') return '';
   return DEFAULT_OPENROUTER_CHAT_MODEL;
 }
 
@@ -90,7 +93,13 @@ export function embeddingModelChanged(saved: string, next: string): boolean {
 /**
  * Whether Save must first ask the backend to check the OpenRouter embedding
  * model: any model other than `validatedModel`, the one that already passed.
+ * That covers OpenRouter itself and a server whose index OpenRouter computes;
+ * a server's own embedding model is probed by the backend as it saves.
  */
 export function needsEmbeddingProbe(config: AiConfigState, validatedModel: string | null): boolean {
-  return config.provider === 'openrouter' && config.embeddingModel !== '' && config.embeddingModel !== validatedModel;
+  return (
+    sendsIndexToOpenRouter(config.provider, config.server?.embeddingSource) &&
+    config.embeddingModel !== '' &&
+    config.embeddingModel !== validatedModel
+  );
 }

@@ -31,7 +31,7 @@ const TAG_COLORS: Record<string, Record<string, string>> = {
     question: 'bg-indigo-100 text-indigo-800',
     introduction: 'bg-pink-100 text-pink-800',
     feedback: 'bg-amber-100 text-amber-800',
-    notification: 'bg-slate-100 text-slate-700',
+    notification: 'bg-gray-100 text-gray-700',
     complaint: 'bg-red-100 text-red-700',
     promotion: 'bg-orange-100 text-orange-700',
     conversation: 'bg-sky-100 text-sky-800',
@@ -44,8 +44,8 @@ const TAG_COLORS: Record<string, Record<string, string>> = {
   junk: {
     phishing: 'bg-red-100 text-red-800',
     spam: 'bg-orange-100 text-orange-800',
-    graymail: 'bg-slate-100 text-slate-600',
-    _default: 'bg-slate-100 text-slate-600',
+    graymail: 'bg-gray-100 text-gray-600',
+    _default: 'bg-gray-100 text-gray-600',
   },
 };
 

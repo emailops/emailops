@@ -1,22 +1,41 @@
-//! Provider seam for calendar sync. Gmail (Google Calendar v3) and Outlook
-//! (Microsoft Graph calendarView) implement [`CalendarProvider`]; IMAP has no
-//! calendar. Tests use [`FakeCalendarProvider`].
+//! Provider seam for calendar sync. Gmail (Google Calendar v3), Outlook
+//! (Microsoft Graph calendarView) and subscribed ICS feeds
+//! (`sync::ics_feed_calendar`, read-only — the route for IMAP accounts such as
+//! Proton behind Bridge) implement [`CalendarProvider`]. Tests use
+//! [`FakeCalendarProvider`].
 //!
 //! v1 contract is deliberately simple: one call returns every event instance
-//! overlapping a rolling window, recurrences already expanded by the provider
-//! (Google `singleEvents=true`, Graph `calendarView`). The sync service does a
-//! full-window upsert-then-sweep on each run — no sync tokens, no delta
-//! bookkeeping, no 410-invalidation handling. `calendar_sync_state.sync_token`
-//! stays reserved for a future incremental upgrade.
+//! overlapping a rolling window, recurrences already expanded (server-side by
+//! Google `singleEvents=true` / Graph `calendarView`, locally for ICS feeds).
+//! The sync service does a full-window upsert-then-sweep on each run — no sync
+//! tokens, no delta bookkeeping, no 410-invalidation handling.
+//! `calendar_sync_state.sync_token` stays reserved for a future incremental
+//! upgrade.
 
 use async_trait::async_trait;
 
 use crate::models::error::Result;
 
-/// Whether a provider (by its `accounts.provider` string) has a calendar we
-/// can sync. IMAP does not (CalDAV is out of scope for v1).
-pub fn provider_supports_calendar(provider: &str) -> bool {
-    matches!(provider, "gmail" | "outlook")
+/// Which calendar backend serves an account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarKind {
+    Google,
+    Outlook,
+    /// Subscribed read-only ICS feeds (`calendar_feeds`); IMAP accounts only.
+    IcsFeeds,
+}
+
+/// Pure planner: the calendar an account has, from its `accounts.provider`
+/// string and how many ICS feeds it subscribed to. IMAP has no calendar API
+/// (CalDAV is out of scope), so it only counts once a feed exists. Callers
+/// with a DB go through `services::calendar::capability`.
+pub fn calendar_kind(provider: &str, feed_count: usize) -> Option<CalendarKind> {
+    match provider {
+        "gmail" => Some(CalendarKind::Google),
+        "outlook" => Some(CalendarKind::Outlook),
+        "imap" if feed_count > 0 => Some(CalendarKind::IcsFeeds),
+        _ => None,
+    }
 }
 
 /// A provider-neutral calendar the account can see: its own calendars, plus
@@ -489,11 +508,12 @@ mod tests {
     use crate::models::error::AppError;
 
     #[test]
-    fn gmail_and_outlook_support_calendar_imap_does_not() {
-        assert!(provider_supports_calendar("gmail"));
-        assert!(provider_supports_calendar("outlook"));
-        assert!(!provider_supports_calendar("imap"));
-        assert!(!provider_supports_calendar(""));
+    fn calendar_kind_is_google_outlook_or_feeds_only_when_imap_has_one() {
+        assert_eq!(calendar_kind("gmail", 0), Some(CalendarKind::Google));
+        assert_eq!(calendar_kind("outlook", 3), Some(CalendarKind::Outlook));
+        assert_eq!(calendar_kind("imap", 0), None);
+        assert_eq!(calendar_kind("imap", 1), Some(CalendarKind::IcsFeeds));
+        assert_eq!(calendar_kind("", 1), None);
     }
 
     // ── classify_calendar_fetch_error ──────────────────────────────────────

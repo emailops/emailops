@@ -13,6 +13,7 @@ import {
 import { useLogStore } from '@/stores/logStore';
 import { useSignatureStore } from '@/stores/signatureStore';
 import type { Account, AccountSignature, SignatureInput } from '@/types';
+import { SentFooterSetting } from './SentFooterSetting';
 
 type Status = { kind: 'idle' } | { kind: 'busy'; label: string } | { kind: 'notice'; text: string };
 
@@ -63,7 +64,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
   if (accounts.length === 0) {
     return (
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        <p className="text-sm text-gray-400">{t('settings:signatures.noAccounts')}</p>
+        <p className="text-sm text-gray-500">{t('settings:signatures.noAccounts')}</p>
       </div>
     );
   }
@@ -136,7 +137,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
   return (
     <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4" data-testid="signatures-settings">
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:signatures.title')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:signatures.title')}</h3>
         <p className="text-xs text-gray-500">{t('settings:signatures.help')}</p>
       </section>
 
@@ -152,7 +153,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
 
       {draft && (
         <>
-          <div className="bg-white rounded border border-gray-600 text-gray-900">
+          <div className="bg-white rounded border border-gray-300 text-gray-900">
             <RichTextEditor
               key={accountId}
               value={draft.html}
@@ -164,7 +165,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
           <p className="text-xs text-gray-500">{t('settings:signatures.imagesHelp')}</p>
 
           <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm text-gray-300">
+            <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
                 checked={draft.useForNew}
@@ -173,7 +174,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
               />
               {t('settings:signatures.useForNew')}
             </label>
-            <label className="flex items-center gap-2 text-sm text-gray-300">
+            <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
                 checked={draft.useForReplies}
@@ -202,7 +203,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
                   setStatus({ kind: 'idle' });
                 }}
                 disabled={busy}
-                className="px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                className="px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded"
               >
                 {t('settings:signatures.discard')}
               </button>
@@ -213,7 +214,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
               onClick={() => imageInputRef.current?.click()}
               disabled={busy}
               title={t('settings:signatures.addImageHint')}
-              className="px-3 py-1.5 text-sm text-gray-300 border border-gray-600 hover:text-white hover:bg-gray-700 rounded"
+              className="px-3 py-1.5 text-sm text-gray-700 border border-gray-300 hover:text-gray-900 hover:bg-gray-100 rounded"
             >
               {t('settings:signatures.addImage')}
             </button>
@@ -235,17 +236,18 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
                 type="button"
                 onClick={() => void handleImport()}
                 disabled={busy}
-                className="px-3 py-1.5 text-sm text-gray-300 border border-gray-600 hover:text-white hover:bg-gray-700 rounded"
+                className="px-3 py-1.5 text-sm text-gray-700 border border-gray-300 hover:text-gray-900 hover:bg-gray-100 rounded"
               >
                 {t('settings:signatures.importGmail')}
               </button>
             )}
-            {status.kind === 'busy' && <span className="text-xs text-gray-400">{status.label}</span>}
-            {status.kind === 'notice' && <span className="text-xs text-green-400">{status.text}</span>}
+            {status.kind === 'busy' && <span className="text-xs text-gray-500">{status.label}</span>}
+            {status.kind === 'notice' && <span className="text-xs text-green-600">{status.text}</span>}
           </div>
         </>
       )}
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-xs text-red-600">{error}</p>}
+      <SentFooterSetting />
     </div>
   );
 }

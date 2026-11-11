@@ -39,11 +39,11 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#1a1a1b]">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm px-4">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary-900/40 border border-primary-700 mb-4">
-            <svg className="w-7 h-7 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary-50 border border-primary-200 mb-4">
+            <svg className="w-7 h-7 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -52,7 +52,7 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
               />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-gray-100">{t('auth:lock.title')}</h1>
+          <h1 className="text-xl font-semibold text-gray-900">{t('auth:lock.title')}</h1>
           <p className="text-sm text-gray-500 mt-1">{t('auth:lock.subtitle')}</p>
         </div>
 
@@ -65,10 +65,10 @@ export function LockScreen({ onUnlock }: LockScreenProps) {
             placeholder={t('auth:lock.mainPasswordPlaceholder')}
             // biome-ignore lint/a11y/noAutofocus: lock screen is the only interactive element on mount
             autoFocus
-            className="w-full rounded-lg border border-gray-700 bg-[#2d2d2e] px-4 py-3 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
+            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20"
           />
 
-          {error && <p className="text-xs text-red-400 text-center">{error}</p>}
+          {error && <p className="text-xs text-red-600 text-center">{error}</p>}
 
           <button
             type="button"

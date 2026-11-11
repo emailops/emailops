@@ -49,6 +49,7 @@ vi.mock('@/lib/api', () => ({
       monthlyBudgetUsd: 0,
       hasApiKey: false,
       thinkingEnabled: false,
+      server: { baseUrl: null, hasApiKey: false, embeddingSource: 'server', contextWindow: 0, disclosedHost: null },
     }),
   ),
   // Probed on mount to decide whether the embedded provider tab is selectable

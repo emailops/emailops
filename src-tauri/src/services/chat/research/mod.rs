@@ -55,14 +55,15 @@ use super::planner::SearchPlan;
 use crate::ai::provider::{AIProvider, CompletionOptions, CompletionResult};
 use crate::db::emails::search::TagQuery;
 use crate::db::Database;
-use crate::models::error::Result;
+use crate::models::error::{AppError, Result};
 use crate::models::{Email, LlmCallTrace, ReportMode, ResearchEstimate, ResearchTrace, ToolCallTrace};
+use crate::services::ai::AiService;
 
 // ── Context window ──────────────────────────────────────────────────────────
 
 /// Ollama's default `num_ctx` (see `ai::ollama`), and the window every other
 /// backend is assumed to have.
-const DEFAULT_N_CTX: u32 = 8192;
+pub(crate) const DEFAULT_N_CTX: u32 = 8192;
 
 /// What a remote model is sized to when its own window is larger: every
 /// prompt token is paid for and leaves the machine, so the model's window is
@@ -100,7 +101,10 @@ pub(crate) fn plan_n_ctx(
     use crate::ai::provider::ProviderType;
     let reported = reported.filter(|n| *n > 0);
     match provider {
-        ProviderType::OpenRouter => reported.unwrap_or(DEFAULT_N_CTX).min(remote_budget),
+        // Remote servers: what the model reports, within the user's budget.
+        ProviderType::OpenRouter | ProviderType::OpenAiCompatible => {
+            reported.unwrap_or(DEFAULT_N_CTX).min(remote_budget)
+        }
         _ if reported.is_some() => reported.unwrap_or(DEFAULT_N_CTX),
         ProviderType::LlamaCpp if n_ctx_override > 0 => n_ctx_override,
         ProviderType::LlamaCpp => auto_tier,
@@ -230,6 +234,7 @@ pub(crate) async fn classify_question(
     };
     let (prefix, suffix) = mode::split_mode_prompt(&template, question);
     let (result, trace) = complete(
+        db,
         provider,
         (&prefix, &suffix),
         call_options(MODE_MAX_TOKENS, 0.0, Some(mode::mode_shape())),
@@ -269,6 +274,7 @@ async fn plan_question(input: &PrepareInput<'_>) -> (Option<SearchPlan>, Option<
     let catalog = crate::services::forms::registry::catalog(input.db);
     let t = std::time::Instant::now();
     let run = super::planner::plan_search(
+        input.db,
         input.provider,
         &template,
         input.user_email,
@@ -277,8 +283,6 @@ async fn plan_question(input: &PrepareInput<'_>) -> (Option<SearchPlan>, Option<
         &glossary,
         None,
         &catalog,
-        // Research gathers mail; it does not follow user skills.
-        "",
     )
     .await;
     let latency = t.elapsed().as_millis() as i64;
@@ -456,7 +460,7 @@ async fn gather_semantic(input: &PrepareInput<'_>, query: &str, keywords: Option
     // With no embedding model set up there is no vector index to ask; the
     // keyword hits below are the whole pool.
     if input.provider.embedding_configured() {
-        match input.provider.embed(query).await {
+        match AiService::embed_metered(input.db, input.provider, query).await {
             Ok(emb) => {
                 let req = crate::services::retrieval::VectorRequest {
                     account_id: input.account_id,
@@ -706,7 +710,8 @@ pub(crate) struct ResearchProgress {
 /// What a research run produced.
 #[derive(Debug, Default)]
 pub(crate) struct ResearchRun {
-    /// The report. `None` when the reduce call failed; `error` says why.
+    /// The report. `None` when the reduce call failed or the budget refused
+    /// the run before it found anything; `error` says why.
     pub answer: Option<String>,
     pub error: Option<String>,
     /// Every email that was read — the link allowlist.
@@ -748,7 +753,6 @@ fn call_trace(
     }
 }
 
-/// One completion with a timeout, traced.
 /// Options for one research call: no thinking, and — for the reading and
 /// condense steps — the JSON shape the reply must take.
 fn call_options(
@@ -764,22 +768,22 @@ fn call_options(
     }
 }
 
-async fn complete(
+/// One completion on the one-shot prefix slot with a timeout, traced and
+/// metered under `kind`.
+pub(in crate::services::chat) async fn complete(
+    db: &Database,
     provider: &dyn AIProvider,
     prompt: (&str, &str),
     opts: CompletionOptions,
     timeout: std::time::Duration,
     kind: &str,
     round: i32,
-) -> (std::result::Result<CompletionResult, String>, LlmCallTrace) {
+) -> (Result<CompletionResult>, LlmCallTrace) {
     let t = std::time::Instant::now();
-    let result = tokio::time::timeout(timeout, provider.complete_with_prefix(prompt.0, prompt.1, opts)).await;
+    let metered = AiService::complete_with_prefix_metered(db, provider, prompt.0, prompt.1, opts, kind);
+    let result = tokio::time::timeout(timeout, metered).await;
     let latency = t.elapsed().as_millis() as i64;
-    let result = match result {
-        Ok(Ok(r)) => Ok(r),
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err(format!("timed out after {}s", timeout.as_secs())),
-    };
+    let result = result.unwrap_or_else(|_| Err(AppError::AiError(format!("timed out after {}s", timeout.as_secs()))));
     let trace = call_trace(kind, round, latency, prompt, result.as_ref().ok());
     (result, trace)
 }
@@ -878,7 +882,9 @@ fn cancelled_run(
 
 /// Map → condense → reduce over a prepared set. Never fails the turn on its
 /// own: a batch that errors is logged and skipped, and only a failed report
-/// comes back as `answer: None` for the caller to surface.
+/// comes back as `answer: None` for the caller to surface. The budget is the
+/// exception to skipping: it ends the reading at the first batch it refuses,
+/// and what was found by then is the answer.
 pub(crate) async fn run_research(
     input: ResearchInput<'_>,
     on_progress: &(dyn Fn(ResearchProgress) + Sync),
@@ -927,6 +933,8 @@ pub(crate) async fn run_research(
     let mut notes: Vec<Vec<Note>> = Vec::with_capacity(batches.len());
     // Conversations read so far.
     let mut read = 0;
+    // Why the budget ended the reading, when it did.
+    let mut out_of_budget: Option<String> = None;
     progress(ResearchStage::Reading, 0, batches.len(), 0, total_emails, &found);
     for (i, range) in batches.iter().enumerate() {
         if input.stop.load(Ordering::Relaxed) {
@@ -943,6 +951,7 @@ pub(crate) async fn run_research(
         let labels = BatchLabels::new(range.start, &docs[range.clone()]);
         let (prefix, suffix) = split_map_prompt(input.map_template, input.question, &labels.render(), direction);
         let (result, trace) = complete(
+            input.db,
             input.provider,
             (&prefix, &suffix),
             call_options(MAP_MAX_TOKENS, 0.0, Some(labels.shape())),
@@ -952,12 +961,27 @@ pub(crate) async fn run_research(
         )
         .await;
         run.llm_calls.push(trace);
+        // Out of budget: every later batch would be refused the same way.
+        if let Err(e @ AppError::BudgetExceeded(_)) = &result {
+            super::emit_log(
+                "error",
+                &format!(
+                    "research: stopped after {} of {total_emails} emails: {e}",
+                    emails_in(read)
+                ),
+            );
+            run.trace.failed_batches += (batches.len() - i) as u32;
+            out_of_budget = Some(e.to_string());
+            break;
+        }
         // A reply cut at its output limit is incomplete JSON: the batch fails
         // loudly rather than losing its tail without a trace.
-        let parsed = result.and_then(|reply| match reply.truncated {
-            true => Err(format!("the reply stopped at its {MAP_MAX_TOKENS}-token limit")),
-            false => labels.parse(&reply.text),
-        });
+        let parsed = result
+            .map_err(|e| e.to_string())
+            .and_then(|reply| match reply.truncated {
+                true => Err(format!("the reply stopped at its {MAP_MAX_TOKENS}-token limit")),
+                false => labels.parse(&reply.text),
+            });
         match parsed {
             Ok(batch_findings) => {
                 // Held to who wrote each email before anything reads it.
@@ -1029,9 +1053,16 @@ pub(crate) async fn run_research(
         return run;
     }
 
+    // Out of budget with nothing found: the refusal is what the user needs to
+    // hear, not that no conversation answers the question.
+    if matches.is_empty() && out_of_budget.is_some() {
+        run.error = out_of_budget;
+        return run;
+    }
+
     // A list or a count is written in code from the matches: no condense, no
-    // report call.
-    if prepared.mode != ReportMode::Analysis {
+    // report call. So is what a run out of budget found: neither could run.
+    if prepared.mode != ReportMode::Analysis || out_of_budget.is_some() {
         run.answer = Some(mode::list_answer(
             prepared.mode,
             &matches,
@@ -1073,6 +1104,7 @@ pub(crate) async fn run_research(
                 &render_condense_input(&group_notes),
             );
             let (result, trace) = complete(
+                input.db,
                 input.provider,
                 (&prefix, &suffix),
                 call_options(CONDENSE_MAX_TOKENS, 0.0, Some(condense_shape(group_notes.len()))),
@@ -1083,10 +1115,12 @@ pub(crate) async fn run_research(
             .await;
             run.llm_calls.push(trace);
             run.trace.condense_calls += 1;
-            let condensed = result.and_then(|reply| match reply.truncated {
-                true => Err(format!("the reply stopped at its {CONDENSE_MAX_TOKENS}-token limit")),
-                false => parse_condensed(&reply.text, &group_notes),
-            });
+            let condensed = result
+                .map_err(|e| e.to_string())
+                .and_then(|reply| match reply.truncated {
+                    true => Err(format!("the reply stopped at its {CONDENSE_MAX_TOKENS}-token limit")),
+                    false => parse_condensed(&reply.text, &group_notes),
+                });
             match condensed {
                 // Merged notes carry every conversation of what they merged.
                 Ok(parsed) if !parsed.is_empty() => merged.push(parsed),
@@ -1142,6 +1176,7 @@ pub(crate) async fn run_research(
     let report_tokens = plan::plan_report_tokens(&budget, prefix.chars().count() + suffix.chars().count());
     let t_reduce = std::time::Instant::now();
     let (result, trace) = complete(
+        input.db,
         input.provider,
         (&prefix, &suffix),
         call_options(report_tokens, 0.2, None),
@@ -1251,6 +1286,12 @@ mod tests {
             DEFAULT_N_CTX
         );
         assert_eq!(plan_n_ctx(None, ProviderType::OpenRouter, 0, 16384, 4096), 4096);
+        // An OpenAI-compatible server is budgeted like OpenRouter.
+        assert_eq!(
+            plan_n_ctx(Some(200_000), ProviderType::OpenAiCompatible, 0, 16384, 32768),
+            32768
+        );
+        assert_eq!(plan_n_ctx(None, ProviderType::OpenAiCompatible, 0, 16384, 4096), 4096);
     }
 
     #[test]
@@ -1441,6 +1482,150 @@ mod tests {
     }
 
     const NO_FINDINGS: &str = r#"{"findings":[]}"#;
+
+    fn paid_provider() -> crate::ai::provider::FakeAiProvider {
+        crate::ai::provider::FakeAiProvider::new().with_provider_type(crate::ai::provider::ProviderType::OpenRouter)
+    }
+
+    fn paid_reply(text: &str, cost_usd: f64) -> CompletionResult {
+        CompletionResult {
+            text: text.to_string(),
+            cost_usd,
+            ..Default::default()
+        }
+    }
+
+    /// Thirty emails in three batches, prepared under a 1 USD budget.
+    async fn prepared_under_budget(db: &Arc<Database>, provider: &crate::ai::provider::FakeAiProvider) -> Prepared {
+        db.set_preference("ai_monthly_budget", "1.0").expect("budget");
+        seed(db, 29);
+        let categories: Vec<String> = Vec::new();
+        let prepared = gather(&prepare_input(db, provider, &categories), Some(supplier_plan())).await;
+        assert_eq!(batches_of(db, &prepared, 16384).len(), 3);
+        prepared
+    }
+
+    const INVOICE_5: &str = r#"{"findings":[{"conversation":"C6","text":"Invoice 5 for 100 EUR is due Friday","tag":"match","emails":["E7"]}]}"#;
+
+    /// The budget runs out on the first batch: nothing else is sent, and the
+    /// answer lists what was found and says the rest could not be read. No
+    /// condense or report can run, so the match list is the whole answer.
+    #[tokio::test]
+    async fn a_run_out_of_budget_mid_way_stops_reading_and_lists_what_it_found() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = paid_provider();
+        let prepared = prepared_under_budget(&db, &provider).await;
+        provider.push_completion_result(paid_reply(INVOICE_5, 1.0));
+        provider.push_completion_result(paid_reply(NO_FINDINGS, 1.0));
+        provider.push_completion_result(paid_reply(NO_FINDINGS, 1.0));
+        provider.push_completion_result(paid_reply("Tienes 29 facturas; ver [1].", 1.0));
+        let stop = AtomicBool::new(false);
+
+        let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|_| {}).await;
+
+        assert_eq!(provider.completion_calls().len(), 1, "no paid call past the budget");
+        assert_eq!(run.trace.batches, 1);
+        assert_eq!(run.trace.failed_batches, 2);
+        assert!(run.analyzed.len() < 30, "the unread batches are not sources");
+        assert_eq!(run.relevant, vec!["e05".to_string()]);
+        assert_eq!(run.error, None);
+        let answer = run.answer.expect("what was found stands");
+        assert!(answer.contains("Invoice 5"), "{answer}");
+        assert!(answer.contains("2 lotes no se pudieron leer"), "{answer}");
+    }
+
+    /// With nothing found there is nothing to list: the turn ends with the
+    /// budget message, in every answer form, not with "no conversation
+    /// answers your question".
+    #[tokio::test]
+    async fn a_run_refused_from_the_start_ends_with_the_budget_message() {
+        for mode in [ReportMode::Analysis, ReportMode::List, ReportMode::Count] {
+            let db = Arc::new(Database::new_for_testing().expect("test db"));
+            let provider = paid_provider();
+            let mut prepared = prepared_under_budget(&db, &provider).await;
+            prepared.mode = mode;
+            crate::services::ai::spend_for_testing(&db, 1.0);
+            provider.push_completion(NO_FINDINGS);
+            let stop = AtomicBool::new(false);
+
+            let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|_| {}).await;
+
+            assert!(provider.completion_calls().is_empty(), "{mode:?}: no paid call");
+            assert_eq!(run.answer, None, "{mode:?}");
+            let error = run.error.unwrap_or_default();
+            assert!(error.contains("AI budget exceeded"), "{mode:?}: {error}");
+        }
+    }
+
+    /// The last batch crosses the budget, so the report is refused: the
+    /// matches stand on their own, as for any report that fails.
+    #[tokio::test]
+    async fn a_report_refused_by_the_budget_falls_back_to_the_match_list() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = paid_provider();
+        let prepared = prepared_under_budget(&db, &provider).await;
+        provider.push_completion_result(paid_reply(INVOICE_5, 0.0));
+        provider.push_completion_result(paid_reply(NO_FINDINGS, 0.0));
+        provider.push_completion_result(paid_reply(NO_FINDINGS, 1.0));
+        provider.push_completion_result(paid_reply("Tienes 29 facturas; ver [1].", 1.0));
+        let stop = AtomicBool::new(false);
+
+        let run = run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|_| {}).await;
+
+        assert_eq!(provider.completion_calls().len(), 3, "no paid call past the budget");
+        assert_eq!(run.trace.batches, 3);
+        assert_eq!(run.trace.failed_batches, 0);
+        assert!(run.answer.expect("the matches stand").contains("Invoice 5"));
+    }
+
+    /// Every research call counts under its own step, the report included.
+    #[tokio::test]
+    async fn a_paid_research_run_records_each_step() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let provider = paid_provider();
+        let prepared = prepared_under_budget(&db, &provider).await;
+        db.set_preference("ai_monthly_budget", "0").expect("no budget");
+        provider.push_completion_result(paid_reply(INVOICE_5, 0.1));
+        provider.push_completion_result(paid_reply(NO_FINDINGS, 0.1));
+        provider.push_completion_result(paid_reply(NO_FINDINGS, 0.1));
+        provider.push_completion_result(paid_reply("Tienes 29 facturas; ver [1].", 0.1));
+        let stop = AtomicBool::new(false);
+
+        run_research(run_input(&db, &provider, &prepared, 16384, &stop), &|_| {}).await;
+
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 4);
+        let reports: i64 = db
+            .reader()
+            .query_row(
+                "SELECT COUNT(*) FROM ai_usage WHERE operation = 'research_reduce'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(reports, 1);
+    }
+
+    /// Out of budget the question is not embedded: its keywords still gather.
+    #[tokio::test]
+    async fn a_spent_budget_gathers_by_keyword_without_embedding_the_question() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed(&db, 3);
+        db.set_preference("ai_monthly_budget", "1.0").expect("budget");
+        crate::services::ai::spend_for_testing(&db, 1.0);
+        let provider = paid_provider();
+        let categories: Vec<String> = Vec::new();
+
+        let ids = gather_semantic(
+            &prepare_input(&db, &provider, &categories),
+            "supplier invoices",
+            Some("invoice"),
+        )
+        .await;
+
+        assert!(!ids.is_empty(), "the keyword hits stand");
+        assert!(provider.embed_calls().is_empty(), "no paid call past the budget");
+    }
 
     #[tokio::test]
     async fn research_reads_in_batches_and_reports_from_the_notes() {

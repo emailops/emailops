@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import type { CalendarEvent } from '@/types';
 import {
   addDays,
@@ -432,6 +433,19 @@ describe('resolveCalendarAccountId', () => {
 
   it('returns null when no account is enabled', () => {
     expect(resolveCalendarAccountId([{ id: 'x', enabled: false }], 'x', 'x')).toBeNull();
+  });
+
+  it('keeps "All accounts" when two or more accounts have a calendar', () => {
+    expect(resolveCalendarAccountId(accounts, ALL_ACCOUNTS_ID, 'a')).toBe(ALL_ACCOUNTS_ID);
+    expect(resolveCalendarAccountId(accounts, null, ALL_ACCOUNTS_ID)).toBe(ALL_ACCOUNTS_ID);
+  });
+
+  it('drops "All accounts" for the single account when only one has a calendar', () => {
+    const one = [
+      { id: 'a', enabled: true },
+      { id: 'b', enabled: false },
+    ];
+    expect(resolveCalendarAccountId(one, ALL_ACCOUNTS_ID, ALL_ACCOUNTS_ID)).toBe('a');
   });
 });
 

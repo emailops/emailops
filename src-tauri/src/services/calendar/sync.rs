@@ -4,10 +4,12 @@
 //! (`sync_account_calendar`) does the I/O against the [`CalendarProvider`]
 //! seam and the DB. No sync tokens in v1 — see `sync/calendar_provider.rs`.
 
+use std::sync::Arc;
+
 use crate::db::calendars::calendar_row_id;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::{Calendar, CalendarEvent};
+use crate::models::{Account, Calendar, CalendarEvent};
 use crate::services::calendar::meeting_link::extract_meeting_link;
 use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
 
@@ -40,6 +42,7 @@ pub fn plan_calendar_rows(account_id: &str, fetched: &[ProviderCalendar], now: i
             access_role: c.access_role.clone(),
             is_visible: c.selected,
             sort_order: index as i64,
+            feed_host: None,
             created_at: now,
             updated_at: now,
         })
@@ -174,27 +177,43 @@ pub async fn sync_account_calendar(
     Ok(rows.len() as u32)
 }
 
-/// Build the calendar client for an OAuth account. Errors for providers
-/// without a calendar (IMAP) — callers gate on `provider_supports_calendar`.
-pub fn build_calendar_provider(account_id: &str, provider_name: &str) -> Result<Box<dyn CalendarProvider>> {
-    // Reject unsupported providers before touching the keychain.
-    if !crate::sync::calendar_provider::provider_supports_calendar(provider_name) {
+/// Build the calendar client for an account: the OAuth API client for Gmail /
+/// Outlook, the ICS-feed provider for an IMAP account with subscribed feeds.
+/// Errors for accounts without a calendar — callers gate on
+/// `capability::calendar_available`.
+pub fn build_calendar_provider(db: &Database, account: &Account) -> Result<Box<dyn CalendarProvider>> {
+    use crate::sync::calendar_provider::CalendarKind;
+    // Resolve the capability before touching the keychain.
+    let Some(kind) = crate::services::calendar::capability::calendar_capability(db, account)? else {
         return Err(AppError::InvalidInput(format!(
-            "Provider {provider_name} has no calendar support"
+            "Account {} ({}) has no calendar",
+            account.email, account.provider
         )));
-    }
-    let mut tokens = crate::services::accounts::get_tokens(account_id)?;
-    match provider_name {
-        "gmail" => Ok(Box::new(crate::sync::gmail_calendar::GoogleCalendarClient::new(
-            std::mem::take(&mut tokens.access_token),
-            tokens.refresh_token.take(),
-            Some(account_id.to_string()),
-        ))),
-        _ => Ok(Box::new(crate::sync::outlook_calendar::OutlookCalendarClient::new(
-            std::mem::take(&mut tokens.access_token),
-            tokens.refresh_token.take(),
-            Some(account_id.to_string()),
-        ))),
+    };
+    match kind {
+        CalendarKind::IcsFeeds => Ok(Box::new(
+            crate::sync::ics_feed_calendar::IcsFeedCalendarProvider::from_db(
+                db,
+                &account.id,
+                Arc::new(crate::sync::ics_feed_calendar::ReqwestIcsFetcher),
+            )?,
+        )),
+        CalendarKind::Google => {
+            let mut tokens = crate::services::accounts::get_tokens(&account.id)?;
+            Ok(Box::new(crate::sync::gmail_calendar::GoogleCalendarClient::new(
+                std::mem::take(&mut tokens.access_token),
+                tokens.refresh_token.take(),
+                Some(account.id.clone()),
+            )))
+        }
+        CalendarKind::Outlook => {
+            let mut tokens = crate::services::accounts::get_tokens(&account.id)?;
+            Ok(Box::new(crate::sync::outlook_calendar::OutlookCalendarClient::new(
+                std::mem::take(&mut tokens.access_token),
+                tokens.refresh_token.take(),
+                Some(account.id.clone()),
+            )))
+        }
     }
 }
 
@@ -560,11 +579,62 @@ mod tests {
         assert_eq!(last, Some(42_000));
     }
 
+    fn account(id: &str, provider: &str) -> crate::models::Account {
+        crate::models::Account {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            email: format!("{id}@example.com"),
+            name: id.to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
+        }
+    }
+
     #[test]
-    fn build_provider_rejects_imap() {
-        let Err(error) = build_calendar_provider("acc-imap", "imap") else {
-            panic!("imap has no calendar and must be rejected");
+    fn build_provider_rejects_imap_without_feeds() {
+        let db = Database::new_for_testing().expect("db");
+        db.seed_test_account_with_provider("acc-imap", "imap");
+        let Err(error) = build_calendar_provider(&db, &account("acc-imap", "imap")) else {
+            panic!("imap without feeds has no calendar and must be rejected");
         };
-        assert!(error.to_string().contains("no calendar support"));
+        assert!(error.to_string().contains("no calendar"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn build_provider_returns_the_feed_provider_for_imap_with_a_feed() {
+        let provider = {
+            let _guard = crate::services::events::seam_test_lock();
+            crate::services::secrets_vault::reset_for_testing();
+            let _keychain = crate::services::keychain::install_for_testing();
+            let db = Database::new_for_testing().expect("db");
+            db.seed_test_account_with_provider("acc-imap", "imap");
+            db.insert_calendar_feed(&crate::models::CalendarFeed {
+                id: "feed-1".into(),
+                account_id: "acc-imap".into(),
+                label: "Shared".into(),
+                host: "cal.example.com".into(),
+                created_at: 1,
+            })
+            .expect("insert");
+            crate::services::secrets_vault::set(
+                crate::sync::ics_feed_calendar::CALENDAR_FEED_KEYRING_SERVICE,
+                "feed-1",
+                "https://cal.example.com/x.ics",
+            )
+            .expect("vault");
+            build_calendar_provider(&db, &account("acc-imap", "imap")).expect("feed provider")
+        };
+        let calendars = provider.list_calendars().await.expect("calendars");
+        assert_eq!(calendars.len(), 1);
+        assert_eq!(
+            (
+                calendars[0].provider_calendar_id.as_str(),
+                calendars[0].access_role.as_str()
+            ),
+            ("feed-1", "reader")
+        );
     }
 }

@@ -2,9 +2,9 @@
 // (when the message offers a way out) and the banner on mail from a sender the
 // user blocked or unsubscribed from. The confirmations live in `SenderDialogs`.
 
-import { format } from 'date-fns';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useFormatters } from '@/hooks/useFormatters';
 import { statusKey, useSenderStore } from '@/stores/senderStore';
 import type { SenderStatus } from '@/types';
 
@@ -55,11 +55,12 @@ export function UnsubscribeButton({ accountId, emailId, senderName }: SenderCont
 /** "You blocked this sender · Unblock", and when the user unsubscribed. */
 export function SenderBanner({ accountId, emailId }: Omit<SenderControlProps, 'senderName'>) {
   const { t } = useTranslation(['inbox']);
+  const fmt = useFormatters();
   const status = useSenderStatus(accountId, emailId);
   const openDialog = useSenderStore((s) => s.openDialog);
   if (!status || (!status.blocked && status.unsubscribedAt === null)) return null;
   return (
-    <div className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+    <div className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
       {status.blocked && (
         <div className="flex items-center gap-2" data-testid="blocked-sender-banner">
           <span>{t('inbox:sender.blockedBanner')}</span>
@@ -74,7 +75,7 @@ export function SenderBanner({ accountId, emailId }: Omit<SenderControlProps, 's
       )}
       {status.unsubscribedAt !== null && (
         <div data-testid="unsubscribed-banner">
-          {t('inbox:sender.unsubscribedBanner', { date: format(new Date(status.unsubscribedAt * 1000), 'PP') })}
+          {t('inbox:sender.unsubscribedBanner', { date: fmt.date(status.unsubscribedAt) })}
         </div>
       )}
     </div>

@@ -65,7 +65,7 @@ export function LensPromptEditor({ lens, open, onClose }: LensPromptEditorProps)
           <button
             type="button"
             onClick={onClose}
-            className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700"
+            className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-800 hover:bg-gray-100"
           >
             Cancel
           </button>
@@ -82,17 +82,17 @@ export function LensPromptEditor({ lens, open, onClose }: LensPromptEditorProps)
     >
       <div className="space-y-3">
         <div className="text-[11px] text-gray-500">
-          Prompt version: <span className="text-gray-300">{lens.promptVersion}</span>
+          Prompt version: <span className="text-gray-700">{lens.promptVersion}</span>
         </div>
         <textarea
           value={value}
           onChange={(e) => setValue(e.currentTarget.value)}
           spellCheck={false}
           rows={14}
-          className="w-full rounded border border-gray-600 bg-[#1e1e1e] p-3 font-mono text-xs leading-relaxed text-gray-100 focus:border-blue-500 focus:outline-none"
+          className="w-full rounded border border-gray-300 bg-white p-3 font-mono text-xs leading-relaxed text-gray-900 focus:border-blue-500 focus:outline-none"
           placeholder={t('lenses:prompt.placeholder')}
         />
-        {error && <div className="text-xs text-red-400">{error}</div>}
+        {error && <div className="text-xs text-red-600">{error}</div>}
       </div>
     </Modal>
   );

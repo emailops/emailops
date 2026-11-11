@@ -82,23 +82,23 @@ export function Dashboard({ accounts, onOpenAccountSettings }: DashboardProps) {
   }, [refreshStats]);
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-950 text-gray-200 p-6">
+    <div className="flex-1 overflow-auto bg-gray-50 text-gray-800 p-6">
       <div className="max-w-6xl mx-auto space-y-6">
         <header>
-          <h1 className="text-2xl font-semibold text-white">{t('dashboard:title')}</h1>
-          <p className="text-sm text-gray-400">
+          <h1 className="text-2xl font-semibold text-gray-900">{t('dashboard:title')}</h1>
+          <p className="text-sm text-gray-500">
             Per-account sync, classification, and AI processing status. Polls every {DASHBOARD_POLL_MS / 1000}s.
           </p>
         </header>
 
         {err && (
-          <div className="border border-red-800 bg-red-950 text-red-200 text-sm rounded p-3">
+          <div className="border border-red-200 bg-red-50 text-red-700 text-sm rounded p-3">
             Failed to load dashboard: {err}
           </div>
         )}
 
         <section>
-          <h2 className="text-sm font-semibold text-gray-300 mb-2 uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">
             {t('dashboard:queues.title')}
           </h2>
           {queues ? (
@@ -109,14 +109,14 @@ export function Dashboard({ accounts, onOpenAccountSettings }: DashboardProps) {
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-gray-300 mb-2 uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">
             {t('dashboard:storage.title')}
           </h2>
           <StorageCard stats={storage} error={storageErr} />
         </section>
 
         <section>
-          <h2 className="text-sm font-semibold text-gray-300 mb-2 uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider">
             {t('dashboard:accounts.title')}
           </h2>
           {stats === null ? (

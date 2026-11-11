@@ -106,6 +106,7 @@ function savedConfig(over: Record<string, unknown>) {
     hasApiKey: true,
     thinkingEnabled: false,
     zeroDataRetention: false,
+    server: { baseUrl: null, hasApiKey: false, embeddingSource: 'server', contextWindow: 0, disclosedHost: null },
     ...over,
   };
   return {
@@ -237,6 +238,7 @@ describe('AiSettings — embedding model', () => {
       0,
       false,
       false,
+      undefined,
     );
     expect(api.validateOpenRouterEmbeddingModel.mock.invocationCallOrder[0]).toBeLessThan(
       api.setAiConfig.mock.invocationCallOrder[0],

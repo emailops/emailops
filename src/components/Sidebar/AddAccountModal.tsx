@@ -141,9 +141,9 @@ export function AddAccountModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-[#1f1f20] shadow-2xl">
-        <div className="border-b border-gray-700 px-6 py-4">
-          <h2 className="text-lg font-semibold text-gray-100">{resolvedTitle}</h2>
+      <div className="theme-chrome w-full max-w-lg rounded-xl bg-white shadow-2xl">
+        <div className="border-b border-gray-200 px-6 py-4">
+          <h2 className="text-lg font-semibold text-gray-900">{resolvedTitle}</h2>
           <p className="mt-1 text-sm text-gray-500">{description}</p>
         </div>
 
@@ -154,7 +154,7 @@ export function AddAccountModal({
               <label
                 key={option.id}
                 className={`block cursor-pointer rounded-lg border p-3 transition-colors ${
-                  selected ? 'border-primary-500 bg-primary-900/20' : 'border-gray-700 hover:border-gray-500'
+                  selected ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <div className="flex items-start gap-3">
@@ -164,10 +164,10 @@ export function AddAccountModal({
                     value={option.id}
                     checked={selected}
                     onChange={() => setPreset(option.id)}
-                    className="mt-1 h-4 w-4 border-gray-700 text-primary-600 focus:ring-primary-500"
+                    className="mt-1 h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
                   />
                   <div>
-                    <div className="text-sm font-medium text-gray-100">{option.label}</div>
+                    <div className="text-sm font-medium text-gray-900">{option.label}</div>
                     <div className="text-sm text-gray-500">{option.description}</div>
                   </div>
                 </div>
@@ -176,8 +176,8 @@ export function AddAccountModal({
           })}
 
           {preset === 'custom' && (
-            <div className="rounded-lg border border-gray-700 bg-[#27272a] p-3">
-              <label className="block text-sm font-medium text-gray-300" htmlFor="sync-from-date">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <label className="block text-sm font-medium text-gray-700" htmlFor="sync-from-date">
                 {t('modal:accountSettings.syncSince')}
               </label>
               <input
@@ -186,24 +186,24 @@ export function AddAccountModal({
                 value={customDate}
                 max={formatDateInputValue(new Date())}
                 onChange={(event) => setCustomDate(event.target.value)}
-                className="mt-2 w-full rounded-lg border border-gray-700 bg-[#1f1f20] text-gray-100 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40 [color-scheme:dark]"
+                className="mt-2 w-full rounded-lg border border-gray-300 bg-white text-gray-900 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
               />
-              {isCustomDateInvalid && <p className="mt-2 text-xs text-red-400">Pick a valid date to continue.</p>}
+              {isCustomDateInvalid && <p className="mt-2 text-xs text-red-600">Pick a valid date to continue.</p>}
             </div>
           )}
 
           {warningMessage && (
-            <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
               {warningMessage}
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-gray-700 px-6 py-4">
+        <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-400 hover:bg-gray-800"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
           >
             Cancel
           </button>

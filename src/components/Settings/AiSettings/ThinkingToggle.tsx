@@ -10,14 +10,14 @@ export function ThinkingToggle({ enabled, onToggle }: ThinkingToggleProps) {
   return (
     <div className="flex items-center justify-between">
       <div>
-        <label className="block text-sm font-medium text-gray-300">{t('settings:ai.thinkingMode')}</label>
+        <label className="block text-sm font-medium text-gray-700">{t('settings:ai.thinkingMode')}</label>
         <p className="text-xs text-gray-500 mt-0.5">{t('settings:ai.thinkingModeHelp')}</p>
       </div>
       <button
         type="button"
         onClick={onToggle}
         className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-          enabled ? 'bg-primary-600' : 'bg-gray-600'
+          enabled ? 'bg-primary-600' : 'bg-gray-300'
         }`}
       >
         <span

@@ -1,5 +1,5 @@
 {
-  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule; the longest matching prefix across features wins, as for `vitest`), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes (vitest: matched against the file path; `src/lib/apiContract/<feature>.api.test.ts` holds each feature's api.ts ↔ Rust command contract) that count as contract tests instead of unit tests. `integration_names` = keywords looked up in an integration test's name, first feature in file order wins. Unmatched tests land in `Transversal`.",
+  "_doc": "Feature manifest for verify_all.py. Each feature lists how its tests are recognised per layer: `rust` = test-path prefixes (module::submodule; the longest matching prefix across features wins, as for `vitest`), `vitest` = file-path prefixes, `e2e` = sweep feature names or `Feature/step` regexes, `oracle` = tagboard_check kinds, `evals` = case-id regexes, `contract` = rust/vitest name regexes (vitest: matched against the file path; `src/lib/apiContract/<feature>.api.test.ts` holds each feature's api.ts ↔ Rust command contract) that count as contract tests instead of unit tests. `integration_names` = keywords looked up in an integration test's name, first feature in file order wins. `paths` = path prefixes of files that are neither a Rust module nor under `src/`, such as a feature's doc. Top-level `transversal.paths` = path prefixes every feature shares, listed with the reason, so that \"sin mapear\" only ever means a file nobody has placed yet. Unmatched tests land in `Transversal`.",
   "types": [
     "unit",
     "integration",
@@ -13,6 +13,41 @@
     "perf"
   ],
   "features": [
+    {
+      "id": "eo-docs",
+      "name": "EO Docs",
+      "rust": [
+        "services::shared_docs",
+        "db::shared_docs",
+        "commands::shared_docs"
+      ],
+      "vitest": [
+        "src/components/Documents",
+        "src/lib/docSchema",
+        "src/lib/docDrag",
+        "src/lib/docFolders",
+        "src/lib/docPdf",
+        "src/lib/eoDocAttachment",
+        "src/lib/officeImport",
+        "src/lib/sharedDocOrigin",
+        "src/lib/sheetConflicts",
+        "src/lib/sheetFilter",
+        "src/lib/sheetFormula",
+        "src/lib/sheetModel",
+        "src/stores/sharedDocsStore",
+        "src/hooks/useSharedYDoc",
+        "src/lib/apiContract/sharedDocs.api.test"
+      ],
+      "e2e": [
+        "EO Docs"
+      ],
+      "paths": [
+        "docs/EO-DOCS.md"
+      ],
+      "integration_names": [
+        "shared_doc"
+      ]
+    },
     {
       "id": "organizar",
       "name": "Archivar, destacar, posponer y selección",
@@ -121,7 +156,8 @@
         "src/components/EmailView/EmailView.shortcuts",
         "src/components/EmailView/ReplyCompose.sendShortcut",
         "src/stores/overlayStore",
-        "src/components/EmailView/EmailView.tooltips"
+        "src/components/EmailView/EmailView.tooltips",
+        "src/components/common/Modal"
       ],
       "e2e": [
         "Atajos"
@@ -200,7 +236,8 @@
         "services::sync_error_dedup",
         "sync",
         "db::accounts",
-        "commands::accounts"
+        "commands::accounts",
+        "util::panic_guard"
       ],
       "vitest": [
         "src/stores/accountStore",
@@ -259,7 +296,8 @@
         "src/lib/categories",
         "src/lib/viewNavigation",
         "src/components/shared/EmailPreviewById",
-        "src/lib/apiContract/inbox.api.test"
+        "src/lib/apiContract/inbox.api.test",
+        "src/components/shared/ExternalLinkDialog"
       ],
       "e2e": [
         "Inbox",
@@ -287,7 +325,9 @@
         "services::embeddings",
         "db::embeddings",
         "services::agent_search",
-        "services::search"
+        "services::search",
+        "services::list",
+        "commands::search"
       ],
       "vitest": [
         "src/components/Inbox/InboxSearchBox",
@@ -295,7 +335,11 @@
         "src/components/Search",
         "src/lib/apiContract/busqueda.api.test",
         "src/lib/filterQuery",
+        "src/lib/listPaging",
         "src/components/Sidebar/SmartFilters"
+      ],
+      "paths": [
+        "src-tauri/examples/search_test.rs"
       ],
       "e2e": [
         "Búsqueda"
@@ -390,7 +434,9 @@
         "services::forms",
         "services::help_docs",
         "db::help_docs",
-        "services::thread_reader"
+        "services::thread_reader",
+        "db::emails::chat_starters",
+        "commands::memory"
       ],
       "vitest": [
         "src/components/Chat",
@@ -405,7 +451,8 @@
         "src/lib/traceFlow",
         "src/lib/researchFilter",
         "src/lib/researchTime",
-        "src/lib/apiContract/chat.api.test"
+        "src/lib/apiContract/chat.api.test",
+        "src/components/Memory"
       ],
       "e2e": [
         "Chat",
@@ -415,7 +462,8 @@
       "evals": [
         "demo_",
         "memory_",
-        "thread_"
+        "thread_",
+        "starter_"
       ],
       "integration_names": [
         "chat",
@@ -462,7 +510,9 @@
         "services::filters",
         "services::tag_priority",
         "services::classification",
-        "db::filters"
+        "db::filters",
+        "commands::filters",
+        "commands::classification"
       ],
       "vitest": [
         "src/lib/tagBoard",
@@ -521,16 +571,23 @@
         "db::calendars",
         "sync::gmail_calendar",
         "sync::outlook_calendar",
-        "sync::calendar_provider"
+        "sync::calendar_provider",
+        "sync::ics_feed_calendar",
+        "commands::calendar",
+        "db::calendar_feeds"
       ],
       "vitest": [
         "src/components/Calendar",
         "src/lib/calendar",
         "src/stores/calendarIntegrationStore",
-        "src/lib/apiContract/calendario.api.test"
+        "src/lib/apiContract/calendario.api.test",
+        "src/hooks/useCalendar",
+        "src/components/RightDock",
+        "src/lib/rightDockLayout"
       ],
       "e2e": [
-        "Vistas/Calendar"
+        "Vistas/Calendar",
+        "Calendario"
       ],
       "evals": [
         "^cal"
@@ -569,7 +626,8 @@
         "src/components/EmailView/AttachmentTabView",
         "src/components/EmailView/EmailAttachments",
         "src/lib/mimeType",
-        "src/lib/apiContract/lenses.api.test"
+        "src/lib/apiContract/lenses.api.test",
+        "src/lib/download"
       ],
       "e2e": [
         "Vistas/Tasks",
@@ -599,7 +657,8 @@
         "services::dashboard",
         "services::storage_stats",
         "services::background_tasks",
-        "db::backup_tests"
+        "db::backup_tests",
+        "runtime::core"
       ],
       "vitest": [
         "src/components/Dashboard",
@@ -630,7 +689,10 @@
         "services::clock",
         "services::events",
         "services::logger",
-        "commands::security"
+        "commands::security",
+        "services::data_move",
+        "commands::data_location",
+        "util::data_location"
       ],
       "vitest": [
         "src/components/Settings",
@@ -646,7 +708,11 @@
         "src/lib/privacyPolicy",
         "src/lib/version",
         "src/lib/apiContract/ajustes.api.test",
-        "src/lib/theme"
+        "src/lib/theme",
+        "src/components/DataLocation",
+        "src/components/LockGate",
+        "src/components/LockScreen",
+        "src/lib/localeDates"
       ],
       "e2e": [
         "Ajustes"
@@ -672,6 +738,26 @@
       "contract_note": "el envelope --json se comprueba en la capa contract"
     }
   ],
+  "transversal": {
+    "_doc": "Path prefixes of files that belong to every feature: the app shell, the shared types, the single integration test file (its tests are attributed one by one through integration_names), the Tauri config, the frontend API module, the project logs, the user docs (checked by `make docs-check`, not here) and the verification tooling itself. A change here is reviewed through the feature it serves.",
+    "paths": [
+      ".claude/skills/",
+      "CHANGELOG.md",
+      "docs/DECISIONS.md",
+      "docs/IMPLEMENTATION-GAPS.md",
+      "docs/cli.md",
+      "docs/site/",
+      "tests/e2e/TEST_PLAN.md",
+      "src/lib/api.ts",
+      "scripts/generate_demo_db.py",
+      "scripts/test_generate_demo_db.py",
+      "src-tauri/src/lib.rs",
+      "src-tauri/tauri.conf.json",
+      "src-tauri/tests/integration.rs",
+      "src/App.tsx",
+      "src/types/index.ts"
+    ]
+  },
   "contract": {
     "rust": [
       "schema_parity",

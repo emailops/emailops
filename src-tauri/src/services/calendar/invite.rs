@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use super::ics::{parse_ics_time, split_content_line, unescape_text, unfold_ics_lines};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
@@ -34,92 +35,6 @@ pub struct CalendarInvite {
     pub recurrence: Option<String>,
     /// iTIP method: "REQUEST" (invitation), "CANCEL", … Defaults to "REQUEST".
     pub method: String,
-}
-
-/// Unfold RFC 5545 folded lines (CRLF followed by space/tab continues the line).
-fn unfold_ics_lines(ics: &str) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for raw in ics.replace("\r\n", "\n").split('\n') {
-        if let Some(continuation) = raw.strip_prefix(' ').or_else(|| raw.strip_prefix('\t')) {
-            if let Some(last) = lines.last_mut() {
-                last.push_str(continuation);
-                continue;
-            }
-        }
-        lines.push(raw.to_string());
-    }
-    lines
-}
-
-/// Split a content line into (name, params, value) at the first `:` outside
-/// double quotes. `DTSTART;TZID=Europe/Madrid:20260728T073000` →
-/// ("DTSTART", ["TZID=Europe/Madrid"], "20260728T073000").
-fn split_content_line(line: &str) -> Option<(String, Vec<String>, String)> {
-    let mut in_quotes = false;
-    let mut colon_at = None;
-    for (i, c) in line.char_indices() {
-        match c {
-            '"' => in_quotes = !in_quotes,
-            ':' if !in_quotes => {
-                colon_at = Some(i);
-                break;
-            }
-            _ => {}
-        }
-    }
-    let colon_at = colon_at?;
-    let (head, value) = line.split_at(colon_at);
-    let mut parts = head.split(';');
-    let name = parts.next()?.trim().to_ascii_uppercase();
-    let params = parts.map(|p| p.to_string()).collect();
-    Some((name, params, value[1..].to_string()))
-}
-
-/// Unescape RFC 5545 TEXT values (`\\n` → newline, `\\,` `\\;` `\\\\` literal).
-fn unescape_text(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    let mut chars = value.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('n') | Some('N') => out.push('\n'),
-            Some(escaped) => out.push(escaped),
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
-/// Parse an ICS date/time value with its params into UTC epoch seconds.
-/// Handles `...Z` (UTC), `TZID=<zone>` local wall time, floating local time
-/// (treated as UTC — best effort), and `VALUE=DATE` all-day dates.
-fn parse_ics_time(value: &str, params: &[String]) -> Option<(i64, bool)> {
-    let value = value.trim();
-    if params.iter().any(|p| p.eq_ignore_ascii_case("VALUE=DATE")) || (value.len() == 8 && !value.contains('T')) {
-        let date = chrono::NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
-        return Some((date.and_hms_opt(0, 0, 0)?.and_utc().timestamp(), true));
-    }
-    if let Some(stripped) = value.strip_suffix('Z') {
-        let naive = chrono::NaiveDateTime::parse_from_str(stripped, "%Y%m%dT%H%M%S").ok()?;
-        return Some((naive.and_utc().timestamp(), false));
-    }
-    let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
-    let tzid = params
-        .iter()
-        .find_map(|p| p.strip_prefix("TZID=").or_else(|| p.strip_prefix("tzid=")));
-    if let Some(tzid) = tzid {
-        if let Ok(tz) = tzid.trim_matches('"').parse::<chrono_tz::Tz>() {
-            use chrono::TimeZone;
-            if let Some(local) = tz.from_local_datetime(&naive).earliest() {
-                return Some((local.timestamp(), false));
-            }
-        }
-    }
-    // Unknown zone / floating time: UTC is the least-wrong fallback.
-    Some((naive.and_utc().timestamp(), false))
 }
 
 /// Parse the first VEVENT of an iCalendar document. Returns `None` when there

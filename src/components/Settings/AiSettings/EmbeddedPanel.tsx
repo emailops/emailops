@@ -44,7 +44,7 @@ export function EmbeddedPanel({
           {/* Chat models */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-gray-300">{t('settings:ai.chatModel')}</label>
+              <label className="text-sm font-medium text-gray-700">{t('settings:ai.chatModel')}</label>
               {!hasLocalChat && <span className="text-xs text-gray-500">{t('settings:ai.downloadOneToStart')}</span>}
             </div>
             <div className="space-y-2">
@@ -66,7 +66,7 @@ export function EmbeddedPanel({
           {/* Embedding models */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-gray-300">{t('settings:ai.embeddingModel')}</label>
+              <label className="text-sm font-medium text-gray-700">{t('settings:ai.embeddingModel')}</label>
               {!hasLocalEmbed && <span className="text-xs text-gray-500">{t('settings:ai.embeddingRequired')}</span>}
             </div>
             <div className="space-y-2">

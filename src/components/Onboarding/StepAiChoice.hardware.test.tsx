@@ -18,6 +18,7 @@ vi.mock('react-i18next', () => ({
         : key,
   }),
 }));
+vi.mock('@/components/DataLocation/DataLocationLine', () => ({ DataLocationLine: () => null }));
 vi.mock('@/stores/aiStore', () => ({ useAiStore: () => ({ setEnabled: vi.fn() }) }));
 vi.mock('@/lib/api', () => ({
   detectAiCapability: vi.fn(async () => ({

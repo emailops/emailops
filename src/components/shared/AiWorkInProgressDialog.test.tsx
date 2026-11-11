@@ -29,7 +29,11 @@ const item = (kind: AiWorkKind, over: Partial<AiWorkItem> = {}): AiWorkItem => (
   progress: null,
   ...over,
 });
-const activity = (items: AiWorkItem[], provider = 'ollama'): AiProviderActivity => ({ provider, items });
+const activity = (items: AiWorkItem[], provider = 'ollama'): AiProviderActivity => ({
+  provider,
+  embeddingProvider: provider,
+  items,
+});
 
 const PROVIDER_CHANGE = { provider: true, model: true, embeddingModel: true };
 const CHAT_MODEL_CHANGE = { provider: false, model: true, embeddingModel: false };

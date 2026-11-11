@@ -1,5 +1,13 @@
 use super::*;
 
+/// `filename` as the `n`th file of that name in one message: `image (2).png`.
+fn numbered_filename(filename: &str, n: usize) -> String {
+    match filename.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem} ({n}).{ext}"),
+        _ => format!("{filename} ({n})"),
+    }
+}
+
 impl Database {
     /// Returns file extension statistics for attachments in the account.
     /// Returns top 20 extensions ordered by distinct email count.
@@ -121,6 +129,12 @@ impl Database {
     /// Each tuple is (email_id, account_id, provider_attachment_id, filename, mime_type, file_size, inline_data).
     /// `inline_data` is Some(base64) for IMAP attachments whose bytes are embedded inline;
     /// it is None for Gmail attachments that must be re-fetched by provider_attachment_id.
+    ///
+    /// `(email_id, filename)` identifies a row, and one message can carry two
+    /// files of one name (two `image.png` from a phone): the later ones are
+    /// numbered in message order, so storing the message again changes nothing.
+    /// An `INLINE::<filename>` id follows the new name, which is how its bytes
+    /// are looked up.
     #[allow(clippy::type_complexity)]
     pub fn insert_email_attachment_metas_batch(
         &self,
@@ -131,8 +145,20 @@ impl Database {
         }
         let mut conn = self.connection();
         let tx = conn.transaction()?;
+        let mut taken: std::collections::HashSet<(&str, String)> = std::collections::HashSet::new();
         for (email_id, account_id, provider_attachment_id, filename, mime_type, file_size, inline_data) in metas {
             let id = uuid::Uuid::new_v4().to_string();
+            let mut unique_name = filename.clone();
+            let mut n = 1;
+            while !taken.insert((email_id.as_str(), unique_name.clone())) {
+                n += 1;
+                unique_name = numbered_filename(filename, n);
+            }
+            let provider_attachment_id = if provider_attachment_id.starts_with("INLINE::") {
+                format!("INLINE::{unique_name}")
+            } else {
+                provider_attachment_id.clone()
+            };
             tx.execute(
                 "INSERT INTO email_attachment_meta
                  (id, email_id, account_id, provider_attachment_id, filename, mime_type, file_size, inline_data)
@@ -143,7 +169,7 @@ impl Database {
                     email_id,
                     account_id,
                     provider_attachment_id,
-                    filename,
+                    unique_name,
                     mime_type,
                     file_size,
                     inline_data
@@ -201,6 +227,24 @@ impl Database {
         Ok(())
     }
 
+    /// The id of `account_id`'s attachment named `filename` (the newest email's
+    /// when several carry that name).
+    pub fn find_attachment_meta_id(&self, account_id: &str, filename: &str) -> Result<Option<String>> {
+        let conn = self.reader();
+        let result = conn.query_row(
+            "SELECT m.id FROM email_attachment_meta m JOIN emails e ON e.id = m.email_id
+             WHERE m.account_id = ?1 AND m.filename = ?2
+             ORDER BY e.timestamp DESC LIMIT 1",
+            params![account_id, filename],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Update the local file_path once an attachment has been downloaded to disk.
     pub fn set_email_attachment_file_path(&self, email_id: &str, filename: &str, file_path: &str) -> Result<()> {
         let conn = self.connection();
@@ -256,5 +300,129 @@ impl Database {
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::numbered_filename;
+    use crate::db::Database;
+    use crate::services::attachments::tests::{make_account, make_email};
+
+    type Meta = (String, String, String, String, String, i64, Option<String>);
+
+    fn meta(email_id: &str, provider_id: &str, filename: &str, inline: Option<&str>) -> Meta {
+        (
+            email_id.to_string(),
+            "acc-1".to_string(),
+            provider_id.to_string(),
+            filename.to_string(),
+            "image/png".to_string(),
+            1,
+            inline.map(str::to_string),
+        )
+    }
+
+    fn seeded() -> (Database, String) {
+        let db = Database::new_for_testing().unwrap();
+        make_account(&db, "acc-1", "imap", "me@example.com");
+        let email = make_email("acc-1", "msg-1", "billing@vendor.example", "Quote");
+        db.insert_email(&email).unwrap();
+        (db, email.id)
+    }
+
+    fn stored(db: &Database, email_id: &str) -> Vec<(String, String)> {
+        let mut rows: Vec<(String, String)> = db
+            .get_email_attachment_metas(email_id)
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.filename, m.provider_attachment_id))
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    #[test]
+    fn two_attachments_of_one_name_both_survive() {
+        let (db, id) = seeded();
+        db.insert_email_attachment_metas_batch(&[
+            meta(&id, "att-1", "image.png", None),
+            meta(&id, "att-2", "image.png", None),
+        ])
+        .unwrap();
+        assert_eq!(
+            stored(&db, &id),
+            [
+                ("image (2).png".to_string(), "att-2".to_string()),
+                ("image.png".to_string(), "att-1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_repeated_inline_attachment_keeps_its_own_bytes() {
+        let (db, id) = seeded();
+        db.insert_email_attachment_metas_batch(&[
+            meta(&id, "INLINE::image.png", "image.png", Some("Zmlyc3Q=")),
+            meta(&id, "INLINE::image.png", "image.png", Some("c2Vjb25k")),
+        ])
+        .unwrap();
+        assert_eq!(
+            stored(&db, &id)[0],
+            ("image (2).png".to_string(), "INLINE::image (2).png".to_string())
+        );
+        assert_eq!(
+            db.get_attachment_inline_data(&id, "image (2).png").unwrap().as_deref(),
+            Some("c2Vjb25k")
+        );
+        assert_eq!(
+            db.get_attachment_inline_data(&id, "image.png").unwrap().as_deref(),
+            Some("Zmlyc3Q=")
+        );
+    }
+
+    #[test]
+    fn storing_the_same_message_again_adds_nothing() {
+        let (db, id) = seeded();
+        let batch = [
+            meta(&id, "att-1", "image.png", None),
+            meta(&id, "att-2", "image.png", None),
+        ];
+        db.insert_email_attachment_metas_batch(&batch).unwrap();
+        db.insert_email_attachment_metas_batch(&batch).unwrap();
+        assert_eq!(stored(&db, &id).len(), 2);
+    }
+
+    #[test]
+    fn a_number_already_taken_is_skipped() {
+        let (db, id) = seeded();
+        db.insert_email_attachment_metas_batch(&[
+            meta(&id, "att-1", "image (2).png", None),
+            meta(&id, "att-2", "image.png", None),
+            meta(&id, "att-3", "image.png", None),
+        ])
+        .unwrap();
+        let names: Vec<String> = stored(&db, &id).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(names, ["image (2).png", "image (3).png", "image.png"]);
+    }
+
+    #[test]
+    fn the_same_name_in_two_messages_is_left_alone() {
+        let (db, first) = seeded();
+        let other = make_email("acc-1", "msg-2", "billing@vendor.example", "Quote");
+        db.insert_email(&other).unwrap();
+        db.insert_email_attachment_metas_batch(&[
+            meta(&first, "att-1", "image.png", None),
+            meta(&other.id, "att-2", "image.png", None),
+        ])
+        .unwrap();
+        assert_eq!(stored(&db, &other.id)[0].0, "image.png");
+    }
+
+    #[test]
+    fn the_number_goes_before_the_extension() {
+        assert_eq!(numbered_filename("report.final.pdf", 2), "report.final (2).pdf");
+        assert_eq!(numbered_filename("notes", 3), "notes (3)");
+        assert_eq!(numbered_filename(".profile", 2), ".profile (2)");
     }
 }

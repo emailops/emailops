@@ -23,6 +23,67 @@ pub struct Account {
     pub sort_order: i32,
     pub enabled: bool,
     pub sync_from_timestamp: Option<i64>,
+    pub color: AccountColor,
+}
+
+/// The colour that identifies an account wherever accounts are mixed (sidebar,
+/// unified inbox, "All accounts" calendar). Stored as its wire name in
+/// `accounts.color` (V040, CHECK-constrained to this set); the frontend maps
+/// each key to its own classes and hex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "lowercase")]
+pub enum AccountColor {
+    Blue,
+    Emerald,
+    Amber,
+    Purple,
+    Rose,
+    Cyan,
+    Indigo,
+    Orange,
+}
+
+impl AccountColor {
+    /// Palette order: new accounts take the first colour no account uses yet.
+    pub const ALL: [AccountColor; 8] = [
+        Self::Blue,
+        Self::Emerald,
+        Self::Amber,
+        Self::Purple,
+        Self::Rose,
+        Self::Cyan,
+        Self::Indigo,
+        Self::Orange,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Emerald => "emerald",
+            Self::Amber => "amber",
+            Self::Purple => "purple",
+            Self::Rose => "rose",
+            Self::Cyan => "cyan",
+            Self::Indigo => "indigo",
+            Self::Orange => "orange",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.as_str() == s)
+    }
+
+    /// The colour for a new account: the least used one among `used` (the
+    /// existing accounts' colours), earliest in palette order on a tie — so
+    /// the first eight accounts never share a colour.
+    pub fn next_free(used: &[AccountColor]) -> AccountColor {
+        let uses = |color: AccountColor| used.iter().filter(|&&c| c == color).count();
+        Self::ALL
+            .into_iter()
+            .min_by_key(|&color| uses(color))
+            .unwrap_or(Self::Blue)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,8 +326,28 @@ pub struct Calendar {
     pub access_role: String,
     pub is_visible: bool,
     pub sort_order: i64,
+    /// Host of the ICS feed behind this calendar (`calendar_feeds.host`);
+    /// `None` for provider-API calendars. Lets the UI offer feed-specific
+    /// affordances without ever seeing the feed URL.
+    pub feed_host: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// A subscribed read-only ICS feed (Proton Calendar "share via link", or any
+/// published iCalendar URL) attached to an account whose provider has no
+/// calendar API. The URL itself is a credential and lives in the secrets
+/// vault keyed by `id` — see `migrations/V039__calendar_feeds.sql`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarFeed {
+    pub id: String,
+    pub account_id: String,
+    pub label: String,
+    /// Feed URL host, for display and provider detection (not sensitive).
+    pub host: String,
+    pub created_at: i64,
 }
 
 /// One calendar event instance synced from the provider. Recurring events are
@@ -345,6 +426,16 @@ pub struct SmartFilterPref {
     pub filter_value: String,
     pub status: String,
     pub account_id: String,
+}
+
+/// Where a page of a list with a query continues: the last row delivered, in
+/// the list's `thread_ts, timestamp, id` order. Opaque to the UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadCursor {
+    pub thread_ts: i64,
+    pub timestamp: i64,
+    pub id: String,
 }
 
 /// A suggestion stored in the DB (filter_type + filter_value + count)
@@ -640,6 +731,8 @@ pub struct Draft {
     pub to_addresses: Vec<String>,
     #[serde(default)]
     pub cc_addresses: Vec<String>,
+    #[serde(default)]
+    pub bcc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
     #[serde(default)]
@@ -665,6 +758,8 @@ pub struct SaveDraftRequest {
     pub to_addresses: Vec<String>,
     #[serde(default)]
     pub cc_addresses: Vec<String>,
+    #[serde(default)]
+    pub bcc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
     #[serde(default)]
@@ -711,6 +806,9 @@ pub struct ProviderDraft {
     pub provider_draft_id: String,
     pub to_addresses: Vec<String>,
     pub cc_addresses: Vec<String>,
+    /// Empty when the provider does not report a draft's blind copies.
+    #[serde(default)]
+    pub bcc_addresses: Vec<String>,
     pub subject: String,
     pub body: String,
     pub body_html: Option<String>,
@@ -721,9 +819,9 @@ pub struct ProviderDraft {
     #[serde(default)]
     pub updated_at: Option<i64>,
     /// Provider token that changes whenever the draft's content changes. Gmail
-    /// mints a new message id on every draft save, so it doubles as an ETag:
-    /// the pull pass stores it and skips the full read while it stays the same.
-    /// `None` for providers that don't report one.
+    /// mints a new message id on every draft save, so it doubles as an ETag;
+    /// Graph reports a `changeKey`. The pull pass stores it and skips the full
+    /// read while it stays the same. `None` for providers that don't report one.
     #[serde(default)]
     pub provider_message_id: Option<String>,
     /// RFC 5322 `Message-ID` of the email this draft replies to, as the
@@ -732,6 +830,32 @@ pub struct ProviderDraft {
     /// for a new message, or a provider that does not report it.
     #[serde(default)]
     pub in_reply_to: Option<String>,
+    /// The attachments the provider copy carries. A draft is pushed back with
+    /// exactly the files stored locally, so one left out here is removed from
+    /// the provider by the next edit.
+    #[serde(default)]
+    pub attachments: Vec<ProviderDraftAttachment>,
+}
+
+/// One attachment of a [`ProviderDraft`], as the provider reports it.
+///
+/// `filename` comes from outside: it is a label, never a path component.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDraftAttachment {
+    /// The provider message holding the attachment: what
+    /// `EmailProvider::fetch_attachment_bytes` takes. Not the change token,
+    /// which on Outlook is no message id at all.
+    pub message_id: String,
+    /// Empty when the listing carried the bytes in `inline_data`, or when the
+    /// provider offers no way to download them. With neither, the draft has a
+    /// file this app cannot hold, and it must not be pushed without it.
+    pub attachment_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    /// Base64 content, for an attachment small enough to come with the listing.
+    #[serde(default)]
+    pub inline_data: Option<String>,
 }
 
 // AI config and usage types
@@ -1260,8 +1384,7 @@ pub struct ChatTrace {
     #[serde(default)]
     pub steps: Vec<TraceStep>,
     /// User skills whose instructions rode in this turn's prompt, and how they
-    /// got there. A skill the model loaded itself shows up in `tool_calls` as
-    /// a `load_skill` call instead.
+    /// got there.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub applied_skills: Vec<AppliedSkill>,
     /// The conversation's `search_emails` page as this turn left it: the next
@@ -1273,6 +1396,10 @@ pub struct ChatTrace {
     /// nothing was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<BudgetTrace>,
+    /// The answer stopped at the model's token limit, so it ends mid-way. Kept
+    /// here and not in the answer text, which later turns replay to the model.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub answer_truncated: bool,
 }
 
 /// One thing the context budget cut from a chat prompt so it fits the window
@@ -1365,7 +1492,8 @@ pub struct AppliedSkill {
 pub enum SkillVia {
     /// The user typed `/name`.
     Slash,
-    /// The query planner matched the question to the skill's description.
+    /// The query planner picked it. Skills are `/name`-only now; kept so traces
+    /// saved before that still read back.
     Planner,
 }
 
@@ -1465,6 +1593,8 @@ pub struct ChatSourcesEvent {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChatPhase {
+    /// Waiting in the AI queue for the task running before it to finish.
+    Queued,
     /// Classifying the route (RAG-first vs tools-first).
     Routing,
     /// Retrieving relevant emails (hybrid vector + FTS).
@@ -1483,6 +1613,8 @@ pub enum ChatPhase {
     /// Research mode: gathering candidates and reading them in batches. The
     /// `chat-research-progress` event carries the batch counts.
     Researching,
+    /// Reading an open PDF too long for one prompt, part by part.
+    ReadingDocument,
     /// Streaming the final assistant answer.
     Generating,
 }
@@ -1743,13 +1875,9 @@ pub struct EmailWindow {
     /// inbox filter rule — which put one six-message thread in four board
     /// blocks at once.
     pub latest_tag_only: bool,
-    /// Only mail stored in this mailbox (`inbox`, `sent`, `archive`,
-    /// `folder:<path>`): a filter applied from a view lists that view's mail.
-    /// Absent means every live mailbox.
-    pub mailbox: Option<String>,
-    /// Only conversations with a live unread message — the list's Unread
-    /// toggle, thread-level like the inbox's.
-    pub unread_only: bool,
+    /// Count by the list's rules, for the sidebar: folders in, flagged mail in.
+    /// Off, the Tag Board's: it summarises mail, and flagged mail stays out.
+    pub match_list: bool,
 }
 
 impl EmailWindow {
@@ -1784,20 +1912,6 @@ impl EmailWindow {
             *next_index += 1;
             binds.push(Box::new(until));
         }
-        if let Some(mailbox) = self.mailbox.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-            parts.push(format!("{alias}.mailbox = ?{next_index}"));
-            *next_index += 1;
-            binds.push(Box::new(mailbox.to_string()));
-        }
-        // Same thread seek, and the same index hint, as the inbox's unread
-        // check (`mailbox_scope_sql`).
-        if self.unread_only {
-            parts.push(format!(
-                "EXISTS (SELECT 1 FROM emails u INDEXED BY idx_emails_thread_latest \
-                 WHERE u.account_id = {alias}.account_id AND u.thread_id = {alias}.thread_id \
-                 AND u.is_read = 0 AND u.is_deleted = 0)"
-            ));
-        }
 
         let sql = if parts.is_empty() {
             String::new()
@@ -1831,6 +1945,31 @@ pub struct CreateTaskRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_account_gets_the_first_palette_colour_no_account_uses() {
+        assert_eq!(AccountColor::next_free(&[]), AccountColor::Blue);
+        assert_eq!(
+            AccountColor::next_free(&[AccountColor::Blue, AccountColor::Amber]),
+            AccountColor::Emerald
+        );
+    }
+
+    #[test]
+    fn once_every_colour_is_taken_the_least_used_one_comes_next() {
+        let mut used = AccountColor::ALL.to_vec();
+        used.push(AccountColor::Blue);
+        assert_eq!(AccountColor::next_free(&used), AccountColor::Emerald);
+    }
+
+    #[test]
+    fn account_colour_round_trips_through_its_wire_name() {
+        for color in AccountColor::ALL {
+            assert_eq!(AccountColor::parse(color.as_str()), Some(color));
+            assert_eq!(serde_json::to_value(color).unwrap(), color.as_str());
+        }
+        assert_eq!(AccountColor::parse("teal"), None);
+    }
 
     /// The demo mailbox seeds a saved chat whose trace is this fixture
     /// (`scripts/generate_demo_db.py`); the docs check opens its reasoning
@@ -1870,6 +2009,7 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(ChatPhase::RunningTools).unwrap(), "runningTools");
         assert_eq!(serde_json::to_value(ChatPhase::Generating).unwrap(), "generating");
+        assert_eq!(serde_json::to_value(ChatPhase::Queued).unwrap(), "queued");
     }
 
     #[test]

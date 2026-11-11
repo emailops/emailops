@@ -39,11 +39,11 @@ export function KeyboardShortcutsSetting() {
         type="button"
         data-testid="keyboard-shortcuts-show"
         onClick={() => setHelpOpen(true)}
-        className="mt-2 text-xs text-primary-400 hover:text-primary-300 hover:underline"
+        className="mt-2 text-xs text-primary-600 hover:text-primary-700 hover:underline"
       >
         {t('settings:appearance.keyboardShortcutsShowList')}
       </button>
-      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </section>
   );
 }

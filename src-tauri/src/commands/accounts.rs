@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
-use crate::models::{Account, AccountSettings, AccountSignature, SignatureInput};
+use crate::models::{Account, AccountColor, AccountSettings, AccountSignature, SignatureInput};
 use crate::services;
 use crate::sync::imap::ImapCredentials;
 use crate::AppState;
@@ -162,6 +162,9 @@ pub async fn update_imap_credentials(
     // Verify credentials work before saving.
     services::accounts::test_imap_connection(credentials.clone()).await?;
     services::accounts::store_imap_credentials(&account_id, &credentials)?;
+    // The running IDLE watcher holds the credentials it was started with.
+    state.scheduler.unwatch_account(&account_id);
+    state.scheduler.watch_account(&account);
     Ok(())
 }
 
@@ -204,8 +207,8 @@ pub async fn add_imap_account(
 /// Persist a new sync range and make it take effect *now*.
 ///
 /// A range change that only lands in the DB is invisible for as long as the
-/// current sync runs — and an IMAP account only syncs on IDLE notifications, so
-/// "as long as" can mean "until new mail happens to arrive". The in-flight run
+/// current sync runs, and for an IMAP account until its next IDLE notification
+/// or periodic sync after that. The in-flight run
 /// is therefore asked to stop at its next batch boundary (already-downloaded
 /// emails are kept) and a replacement sync is queued behind it, which reads the
 /// new range when it starts.
@@ -240,6 +243,16 @@ pub async fn update_account_name(
     name: String,
 ) -> Result<Account, AppError> {
     services::accounts::update_account_name(&state.db, &account_id, &name)
+}
+
+/// Recolour an account (sidebar dot, unified-inbox marker, calendar events).
+#[tauri::command]
+pub async fn set_account_color(
+    state: State<'_, AppState>,
+    account_id: String,
+    color: AccountColor,
+) -> Result<Account, AppError> {
+    services::accounts::set_account_color(&state.db, &account_id, color)
 }
 
 #[tauri::command]

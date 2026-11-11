@@ -4,7 +4,7 @@ import { Modal } from '@/components/common/Modal';
 import { errorText } from '@/lib/errors';
 
 const DANGER = 'rounded bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50';
-const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700';
+const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100';
 
 interface DeleteDocDialogProps {
   title: string;
@@ -42,7 +42,7 @@ export function DeleteDocDialog({ title, sharedWith, onDelete, onClose }: Delete
       // The error sits in the fixed header, never below the fold.
       subtitle={
         error ? (
-          <span data-testid="delete-doc-error" className="text-red-300">
+          <span data-testid="delete-doc-error" className="text-red-700">
             {error}
           </span>
         ) : undefined
@@ -64,9 +64,9 @@ export function DeleteDocDialog({ title, sharedWith, onDelete, onClose }: Delete
         </>
       }
     >
-      <p className="text-sm text-gray-300">{t('documents:deleteDialog.body')}</p>
+      <p className="text-sm text-gray-700">{t('documents:deleteDialog.body')}</p>
       {sharedWith > 0 && (
-        <p className="mt-2 text-sm text-gray-300">{t('documents:deleteDialog.shared', { count: sharedWith })}</p>
+        <p className="mt-2 text-sm text-gray-700">{t('documents:deleteDialog.shared', { count: sharedWith })}</p>
       )}
     </Modal>
   );

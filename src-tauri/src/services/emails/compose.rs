@@ -5,12 +5,15 @@
 //! Split into a **pure planner** ([`plan_compose`]) that turns raw inputs into a
 //! [`SaveDraftRequest`] + resolved attachment records with zero I/O, and thin
 //! executors ([`compose_draft`], [`send_draft`], [`pull_provider_drafts`]) that
-//! do the DB writes, file reads, and provider calls.
+//! do the DB writes, file reads, and provider calls. The files of pulled
+//! attachments are `draft_files`' business.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use base64::Engine;
 
+use super::draft_files;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, Draft, DraftAttachment, DraftAttachmentInput, SaveDraftRequest};
@@ -44,6 +47,7 @@ pub struct ComposeInput {
     pub email_id: Option<String>,
     pub to: Vec<String>,
     pub cc: Vec<String>,
+    pub bcc: Vec<String>,
     pub subject: String,
     pub body: String,
     pub body_html: Option<String>,
@@ -114,6 +118,7 @@ pub fn plan_compose(input: &ComposeInput) -> ComposePlan {
         account_id: input.account_id.clone(),
         to_addresses: input.to.clone(),
         cc_addresses: input.cc.clone(),
+        bcc_addresses: input.bcc.clone(),
         subject: input.subject.clone(),
         body: input.body.clone(),
         body_html: input.body_html.as_deref().map(super::sanitize_outgoing_html),
@@ -170,18 +175,37 @@ mod ipc_attachment_guard_tests {
     fn rejects_any_path_on_a_new_draft() {
         assert!(check_webview_draft_attachments(&[input("/etc/hosts")], &[]).is_err());
     }
+
+    /// A composer may name a file it stored for drafts, and nothing that only
+    /// looks like one.
+    #[test]
+    fn accepts_a_stored_draft_file_and_no_path_that_escapes_it() {
+        assert!(check_webview_draft_attachments(&[input("attachments/a1/drafts/0b1c.pdf")], &[]).is_ok());
+        for path in [
+            "attachments/a1/drafts/../../../.ssh/id_ed25519",
+            "attachments/../drafts/x.pdf",
+            "/attachments/a1/drafts/x.pdf",
+            "attachments/a1/inbox/x.pdf",
+        ] {
+            assert!(check_webview_draft_attachments(&[input(path)], &[]).is_err(), "{path}");
+        }
+    }
 }
 
 /// Guard for draft saves that come from the webview (the `save_draft` IPC
-/// command). The GUI composer sends new attachments as inline bytes, never as
-/// paths; file-path attachments are added only by the CLI. So the webview may
-/// only re-submit — or drop — the paths the draft already has. Without this,
-/// script running in the webview could name any local file and have it read
-/// and uploaded to the provider as an attachment (CASA/DASA 1.4.3).
+/// command). The GUI composer stores a file it attaches through
+/// `store_draft_file`, which writes it under `attachments/<account>/drafts/`;
+/// other file-path attachments are added only by the CLI. So the webview may
+/// only name such a stored file, or re-submit — or drop — the paths the draft
+/// already has. Without this, script running in the webview could name any
+/// local file and have it read and uploaded to the provider as an attachment
+/// (CASA/DASA 1.4.3).
 pub fn check_webview_draft_attachments(requested: &[DraftAttachmentInput], existing: &[DraftAttachment]) -> Result<()> {
     match requested
         .iter()
-        .find(|r| !existing.iter().any(|e| e.file_path == r.file_path))
+        // A file the user attached in a composer is stored before the save
+        // that first names it.
+        .find(|r| !existing.iter().any(|e| e.file_path == r.file_path) && !draft_files::is_stored_draft_file(&r.file_path))
     {
         Some(_) => Err(AppError::InvalidInput(
             "draft attachments can only keep files the draft already has".to_string(),
@@ -191,10 +215,10 @@ pub fn check_webview_draft_attachments(requested: &[DraftAttachmentInput], exist
 }
 
 /// Read a resolved attachment's bytes and base64-encode them for the provider
-/// send/draft payloads.
-fn load_attachment(att: &DraftAttachment) -> Result<EmailAttachment> {
-    let bytes = std::fs::read(&att.file_path)
-        .map_err(|e| AppError::IoError(format!("Failed to read attachment {}: {e}", att.file_path)))?;
+/// send/draft payloads. A pulled attachment whose file is not here yet fails
+/// here, so a draft missing a file is never pushed or sent without it.
+fn load_attachment(db: &Database, att: &DraftAttachment) -> Result<EmailAttachment> {
+    let bytes = draft_files::read_draft_file(db, att)?;
     Ok(EmailAttachment {
         filename: att.filename.clone(),
         mime_type: att.mime_type.clone(),
@@ -204,8 +228,8 @@ fn load_attachment(att: &DraftAttachment) -> Result<EmailAttachment> {
     })
 }
 
-pub(crate) fn load_attachments(drafts: &[DraftAttachment]) -> Result<Vec<EmailAttachment>> {
-    drafts.iter().map(load_attachment).collect()
+pub(crate) fn load_attachments(db: &Database, drafts: &[DraftAttachment]) -> Result<Vec<EmailAttachment>> {
+    drafts.iter().map(|att| load_attachment(db, att)).collect()
 }
 
 /// Build the footer-free [`EmailBody`] for a draft push. The footer is added
@@ -220,7 +244,12 @@ fn draft_body(body: &str, body_html: Option<&str>) -> EmailBody {
 /// Serializes draft pushes. The composer's save and the sync can both decide to
 /// push the same draft; without this, two pushes of a draft that has no
 /// provider id yet would each create one upstream and leave a duplicate.
-static DRAFT_PUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+///
+/// It also holds, per draft id, the revision the provider refused as malformed
+/// (`InvalidInput`, Gmail's 400). That content fails the same way every time,
+/// so it waits for the user's next edit instead of going out on every sync.
+/// Kept in memory only: after a restart each such draft is tried once more.
+static DRAFT_PUSH_LOCK: tokio::sync::Mutex<BTreeMap<String, i64>> = tokio::sync::Mutex::const_new(BTreeMap::new());
 
 /// Push a dirty local draft to the provider's Drafts folder and mark the
 /// revision that was sent as clean. A no-op when the draft is already clean or
@@ -231,6 +260,9 @@ static DRAFT_PUSH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new((
 /// rather than updated. An update the provider answers with not-found (the
 /// draft was sent or deleted from another device since) falls back to a create
 /// as well. Either way the stale id is replaced by the new one.
+///
+/// A revision the provider refused as malformed is not sent again (see
+/// [`DRAFT_PUSH_LOCK`]); the push is then a no-op until the draft changes.
 async fn push_draft(
     db: &Arc<Database>,
     account: &Account,
@@ -238,18 +270,23 @@ async fn push_draft(
     draft_id: &str,
     gone_upstream: Option<&str>,
 ) -> Result<()> {
-    let _pushing = DRAFT_PUSH_LOCK.lock().await;
+    let mut refused = DRAFT_PUSH_LOCK.lock().await;
     let Some((draft, revision)) = db.draft_for_push(draft_id)? else {
         return Ok(());
     };
-    if revision == 0 {
+    if revision == 0 || refused.get(draft_id) == Some(&revision) {
         return Ok(());
     }
 
-    let attachments = load_attachments(&draft.attachments)?;
+    let attachments = load_attachments(db, &draft.attachments)?;
     let body = draft_body(&draft.body, draft.body_html.as_deref());
     let from = account.email.as_str();
-    let (to, cc, subject) = (&draft.to_addresses, &draft.cc_addresses, draft.subject.as_str());
+    let (to, cc, bcc, subject) = (
+        &draft.to_addresses,
+        &draft.cc_addresses,
+        &draft.bcc_addresses,
+        draft.subject.as_str(),
+    );
     // A reply draft goes up as a reply, so the provider copy keeps its thread.
     let parent = match draft.email_id.as_deref() {
         Some(email_id) => db.get_email(email_id)?,
@@ -263,26 +300,51 @@ async fn push_draft(
         .provider_draft_id
         .as_deref()
         .filter(|id| Some(*id) != gone_upstream);
-    let updated = match linked {
-        Some(existing) => match provider
-            .update_draft(existing, from, to, cc, subject, &body, &attachments, reply.as_ref())
-            .await
-        {
-            Ok(id) => Some(id),
-            Err(AppError::NotFound(_)) => None,
-            Err(e) => return Err(e),
-        },
-        None => None,
-    };
-    let provider_id = match updated {
-        Some(id) => id,
-        None => {
-            provider
-                .create_draft(from, to, cc, subject, &body, &attachments, reply.as_ref())
-                .await?
+    let sent: Result<String> = async {
+        let updated = match linked {
+            Some(existing) => match provider
+                .update_draft(
+                    existing,
+                    from,
+                    to,
+                    cc,
+                    bcc,
+                    subject,
+                    &body,
+                    &attachments,
+                    reply.as_ref(),
+                )
+                .await
+            {
+                Ok(id) => Some(id),
+                Err(AppError::NotFound(_)) => None,
+                Err(e) => return Err(e),
+            },
+            None => None,
+        };
+        match updated {
+            Some(id) => Ok(id),
+            None => {
+                provider
+                    .create_draft(from, to, cc, bcc, subject, &body, &attachments, reply.as_ref())
+                    .await
+            }
         }
-    };
-    db.mark_draft_pushed(&draft.id, &provider_id, revision)
+    }
+    .await;
+    match sent {
+        Ok(provider_id) => {
+            // Revisions count from 1 again once the draft is clean.
+            refused.remove(draft_id);
+            db.mark_draft_pushed(&draft.id, &provider_id, revision)
+        }
+        Err(e) => {
+            if matches!(e, AppError::InvalidInput(_)) {
+                refused.insert(draft_id.to_string(), revision);
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Save a composed draft locally and, when the account's provider supports
@@ -330,7 +392,8 @@ pub async fn compose_draft(
                 mime_type: a.mime_type.clone(),
             })
             .collect();
-        db.replace_draft_attachments(&saved.id, &att_records)?;
+        let dropped = db.replace_draft_attachments(&saved.id, &att_records)?;
+        draft_files::remove_pulled_files(db, &dropped);
     }
 
     // Push to the provider when supported, using the draft's *current* persisted
@@ -363,7 +426,7 @@ pub async fn send_draft(
         ));
     }
 
-    let attachments = load_attachments(&draft.attachments)?;
+    let attachments = load_attachments(db, &draft.attachments)?;
     // Footer-free body; `send_new_email_with_provider` appends the footer once.
     // Sanitized again here: a draft pulled from the provider's Drafts folder is
     // stored with the provider's raw HTML, which never went through compose.
@@ -390,6 +453,7 @@ pub async fn send_draft(
                 Some(&account.id),
                 Some(draft.to_addresses.clone()),
                 Some(draft.cc_addresses.clone()),
+                draft.bcc_addresses.clone(),
                 Some(&draft.subject),
                 attachments,
                 provider,
@@ -402,6 +466,7 @@ pub async fn send_draft(
                 &account.id,
                 draft.to_addresses.clone(),
                 draft.cc_addresses.clone(),
+                draft.bcc_addresses.clone(),
                 &draft.subject,
                 &body,
                 attachments,
@@ -411,27 +476,52 @@ pub async fn send_draft(
         }
     }
 
-    // Best-effort cleanup of the provider-side draft; a failure here must not
-    // make a successful send look failed.
+    // A failure here must not make a successful send look failed.
     if let Some(provider_id) = draft.provider_draft_id.as_deref() {
-        if provider_supports_drafts(&account.provider) {
-            if let Err(e) = provider.delete_draft(provider_id).await {
-                crate::services::logger::log(
-                    "debug",
-                    "drafts",
-                    format!("Sent draft but could not remove provider copy {provider_id}: {e}"),
-                );
-            }
+        if let Err(e) = remove_provider_copy(db, account, provider_id, Some(provider)).await {
+            crate::services::logger::log(
+                "error",
+                "drafts",
+                format!("Sent draft but could not keep track of its provider copy {provider_id}: {e}"),
+            );
         }
     }
-    db.delete_draft(draft_id, &account.id)?;
+    let dropped = db.delete_draft(draft_id, &account.id)?;
+    draft_files::remove_pulled_files(db, &dropped);
     Ok(())
 }
 
+/// Remove the provider's copy of a draft that is leaving this install. A copy
+/// that cannot be removed now (no provider, a provider failure) is remembered
+/// and retried by [`pull_provider_drafts`]: left alone, the next pull would
+/// take it for a draft written on another device and bring it back, ready to
+/// be sent a second time.
+async fn remove_provider_copy(
+    db: &Database,
+    account: &Account,
+    provider_draft_id: &str,
+    provider: Option<&dyn EmailProvider>,
+) -> Result<()> {
+    if !provider_supports_drafts(&account.provider) {
+        return Ok(());
+    }
+    if let Some(provider) = provider {
+        match provider.delete_draft(provider_draft_id).await {
+            Ok(()) => return Ok(()),
+            Err(e) => crate::services::logger::log(
+                "warn",
+                "drafts",
+                format!("Could not remove provider draft {provider_draft_id}, the next sync retries: {e}"),
+            ),
+        }
+    }
+    db.add_draft_tombstone(&account.id, provider_draft_id)
+}
+
 /// Delete a draft locally and, when it is linked to a provider draft, from the
-/// provider's Drafts folder too. Provider deletion is best-effort so a network
-/// hiccup never blocks the local delete. `provider` may be `None` (offline / no
-/// provider built) — the local row is still removed.
+/// provider's Drafts folder too. A provider that cannot be reached never blocks
+/// the local delete: `provider` may be `None` (offline / no provider built),
+/// and the copy goes on a later sync ([`remove_provider_copy`]).
 pub async fn delete_draft(
     db: &Arc<Database>,
     account: &Account,
@@ -443,19 +533,13 @@ pub async fn delete_draft(
     // account's provider.
     if db.get_draft(draft_id)?.is_some() {
         let draft = crate::services::ownership::draft_in_account(db, &account.id, draft_id)?;
-        if let (Some(provider_id), Some(provider)) = (draft.provider_draft_id.as_deref(), provider) {
-            if provider_supports_drafts(&account.provider) {
-                if let Err(e) = provider.delete_draft(provider_id).await {
-                    crate::services::logger::log(
-                        "debug",
-                        "drafts",
-                        format!("Deleted draft locally but not on provider ({provider_id}): {e}"),
-                    );
-                }
-            }
+        if let Some(provider_id) = draft.provider_draft_id.as_deref() {
+            remove_provider_copy(db, account, provider_id, provider).await?;
         }
     }
-    db.delete_draft(draft_id, &account.id)
+    let dropped = db.delete_draft(draft_id, &account.id)?;
+    draft_files::remove_pulled_files(db, &dropped);
+    Ok(())
 }
 
 /// Minimum gap between two **on-demand** draft pulls for one account.
@@ -508,6 +592,19 @@ pub async fn refresh_provider_drafts(
     pull_provider_drafts(db, account, provider).await
 }
 
+/// Serializes the pull pass. The sync and the on-demand refresh can overlap, and
+/// two passes over one draft would each download its files, the later one
+/// recording a file the earlier one has just replaced.
+static DRAFT_PULL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Recorded once an account's drafts have been read with their attachments.
+/// Drafts pulled by a version that left them behind carry a change token that
+/// still matches, so without this they would never be read again, and the next
+/// edit would remove their files from the provider.
+pub(crate) fn draft_attachments_pulled_key(account_id: &str) -> String {
+    format!("draft_attachments_pulled_v1:{account_id}")
+}
+
 /// Reconcile the local drafts of an account with the provider's Drafts folder,
 /// one [`plan_draft_sync`] decision per draft: pull what changed upstream, push
 /// what changed here, re-create a dirty draft whose provider copy is gone, and
@@ -522,6 +619,7 @@ pub async fn pull_provider_drafts(
     account: &Account,
     provider: &dyn EmailProvider,
 ) -> Result<usize> {
+    let _pulling = DRAFT_PULL_LOCK.lock().await;
     let account_id = account.id.as_str();
     // Snapshot the local rows before listing. A draft pushed while the listing
     // is in flight is then simply not part of this pass, instead of looking
@@ -530,7 +628,13 @@ pub async fn pull_provider_drafts(
     // Hand the provider what we already have so it can skip re-reading drafts
     // that have not changed upstream. At steady state this makes the pass one
     // listing call and zero content reads.
-    let known = db.provider_draft_change_tokens(account_id)?;
+    let attachments_key = draft_attachments_pulled_key(account_id);
+    let attachments_pulled = db.get_preference(&attachments_key)?.is_some();
+    let known = if attachments_pulled {
+        db.provider_draft_change_tokens(account_id)?
+    } else {
+        std::collections::HashMap::new()
+    };
     let pull = provider.list_drafts(&known).await?;
 
     let changed: std::collections::HashMap<&str, &crate::models::ProviderDraft> = pull
@@ -539,8 +643,10 @@ pub async fn pull_provider_drafts(
         .map(|pd| (pd.provider_draft_id.as_str(), pd))
         .collect();
     let present: std::collections::HashSet<&str> = pull.present_ids.iter().map(String::as_str).collect();
+    let tombstones = db.draft_tombstones(account_id)?;
 
     let mut pulled = 0usize;
+    let mut files_complete = true;
     let mut to_prune = Vec::new();
     let mut linked_locally = std::collections::HashSet::new();
     for local in &locals {
@@ -565,7 +671,14 @@ pub async fn pull_provider_drafts(
                 };
                 // One draft that cannot be pushed (an attachment file that was
                 // moved, a provider refusal) must not stop the others. It
-                // stays dirty, so the next pass tries again.
+                // stays dirty, so the next pass tries again, except a revision
+                // the provider refused as malformed (see `DRAFT_PUSH_LOCK`).
+                if let Some(pd) = provider_id.and_then(|id| changed.get(id)) {
+                    if !attachments_pulled {
+                        draft_files::adopt_attachments(db, account_id, &local.id, &pd.attachments)?;
+                    }
+                    files_complete &= draft_files::fill_missing_files(db, provider, &local.id, &pd.attachments).await?;
+                }
                 if let Err(e) = push_draft(db, account, provider, &local.id, gone_upstream).await {
                     crate::services::logger::log(
                         "warn",
@@ -576,7 +689,7 @@ pub async fn pull_provider_drafts(
             }
             DraftSyncAction::Pull => {
                 if let Some(pd) = provider_id.and_then(|id| changed.get(id)) {
-                    db.upsert_provider_draft(account_id, pd)?;
+                    draft_files::import_draft(db, account_id, provider, pd, Some(&local.id)).await?;
                     pulled += 1;
                 }
             }
@@ -587,16 +700,39 @@ pub async fn pull_provider_drafts(
 
     // Drafts written on another device that this one has never stored.
     for pd in &pull.changed {
-        if linked_locally.contains(pd.provider_draft_id.as_str()) {
+        if linked_locally.contains(pd.provider_draft_id.as_str()) || tombstones.contains(&pd.provider_draft_id) {
             continue;
         }
         if plan_draft_sync(None, UpstreamDraftState::Changed) == DraftSyncAction::Pull {
-            db.upsert_provider_draft(account_id, pd)?;
+            draft_files::import_draft(db, account_id, provider, pd, None).await?;
             pulled += 1;
         }
     }
 
-    db.prune_provider_drafts(account_id, &to_prune)?;
+    // Copies of drafts deleted here: one no longer listed is done with.
+    for id in &tombstones {
+        let removed = if present.contains(id.as_str()) {
+            provider.delete_draft(id).await
+        } else {
+            Ok(())
+        };
+        match removed {
+            Ok(()) => db.remove_draft_tombstone(account_id, id)?,
+            Err(e) => crate::services::logger::log(
+                "warn",
+                "drafts",
+                format!("Could not remove provider draft {id}, the next sync retries: {e}"),
+            ),
+        }
+    }
+
+    let pruned = db.prune_provider_drafts(account_id, &to_prune)?;
+    draft_files::remove_pulled_files(db, &pruned.dropped_files);
+    // A dirty draft still waiting for a file keeps its matching token, so only
+    // another pass that ignores the tokens would ever list it as changed.
+    if !attachments_pulled && files_complete {
+        db.set_preference(&attachments_key, "1")?;
+    }
     Ok(pulled)
 }
 
@@ -623,6 +759,7 @@ mod tests {
             email_id: None,
             to: vec!["dest@example.com".to_string()],
             cc: Vec::new(),
+            bcc: Vec::new(),
             subject: subject.to_string(),
             body: body.to_string(),
             body_html: None,
@@ -702,6 +839,7 @@ mod tests {
                 account_id: "a1".to_string(),
                 to_addresses: vec!["dest@example.com".to_string()],
                 cc_addresses: Vec::new(),
+                bcc_addresses: Vec::new(),
                 subject: "Pulled".to_string(),
                 body: "hello".to_string(),
                 body_html: Some(UNSAFE_HTML.to_string()),
@@ -764,6 +902,28 @@ mod tests {
         assert_eq!(provider.provider_drafts()[0].subject, "First edited");
     }
 
+    /// The read-back after a push replaces the local row with the provider's
+    /// copy, so a blind copy the provider dropped would be lost (#270).
+    #[tokio::test]
+    async fn a_pushed_draft_keeps_its_bcc_and_sends_it() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let mut with_bcc = input("a1", "Quiet", "body");
+        with_bcc.bcc = vec!["hidden@example.com".to_string()];
+
+        let draft = compose_draft(&db, &account, with_bcc, Some(&provider))
+            .await
+            .expect("compose");
+        assert_eq!(provider.provider_drafts()[0].bcc_addresses, vec!["hidden@example.com"]);
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        let stored = db.get_draft(&draft.id).expect("get").expect("draft");
+        assert_eq!(stored.bcc_addresses, vec!["hidden@example.com"]);
+
+        send_draft(&db, &account, &draft.id, &provider).await.expect("send");
+        assert_eq!(provider.sent()[0].bcc_emails, vec!["hidden@example.com"]);
+    }
+
     #[tokio::test]
     async fn compose_draft_stays_local_for_unsupported_provider() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
@@ -775,6 +935,108 @@ mod tests {
             .expect("compose");
         assert!(draft.provider_draft_id.is_none(), "imap draft stays local");
         assert_eq!(provider.provider_drafts().len(), 0);
+    }
+
+    fn draft_writes(provider: &FakeEmailProvider) -> usize {
+        provider
+            .calls()
+            .iter()
+            .filter(|call| *call == "create_draft" || *call == "update_draft")
+            .count()
+    }
+
+    fn only_draft_id(db: &Database) -> String {
+        let drafts = db.list_drafts("a1").expect("list");
+        assert_eq!(drafts.len(), 1);
+        drafts[0].id.clone()
+    }
+
+    // Regression: Gmail answered 400 to one draft and every sync sent the same
+    // content again, once a minute, for as long as the app was open.
+    #[tokio::test]
+    async fn a_draft_the_provider_refused_as_malformed_is_not_sent_again_by_the_sync() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.reject_draft_writes(Some("Invalid thread_id value"));
+
+        let err = compose_draft(&db, &account, input("a1", "Hi", "body"), Some(&provider))
+            .await
+            .expect_err("the provider refuses the draft");
+        assert!(matches!(err, AppError::InvalidInput(_)), "got {err:?}");
+
+        pull_provider_drafts(&db, &account, &provider)
+            .await
+            .expect("first sync");
+        pull_provider_drafts(&db, &account, &provider)
+            .await
+            .expect("second sync");
+
+        assert_eq!(draft_writes(&provider), 1, "the refused content is sent once");
+    }
+
+    #[tokio::test]
+    async fn a_refused_draft_is_sent_again_once_the_user_edits_it() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.reject_draft_writes(Some("Invalid thread_id value"));
+        compose_draft(&db, &account, input("a1", "Hi", "body"), Some(&provider))
+            .await
+            .expect_err("the provider refuses the draft");
+        provider.reject_draft_writes(None);
+
+        let mut edit = input("a1", "Hi again", "body two");
+        edit.draft_id = Some(only_draft_id(&db));
+        compose_draft(&db, &account, edit, None).await.expect("local edit");
+        pull_provider_drafts(&db, &account, &provider).await.expect("sync");
+
+        let pushed = provider.provider_drafts();
+        assert_eq!(pushed.len(), 1, "the edited draft reaches the provider");
+        assert_eq!(pushed[0].subject, "Hi again");
+    }
+
+    #[tokio::test]
+    async fn a_draft_the_provider_could_not_take_is_sent_again_by_the_next_sync() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.fail_draft_writes(Some("503 backend error"));
+        compose_draft(&db, &account, input("a1", "Hi", "body"), Some(&provider))
+            .await
+            .expect_err("the push fails");
+        provider.fail_draft_writes(None);
+
+        pull_provider_drafts(&db, &account, &provider).await.expect("sync");
+
+        assert_eq!(provider.provider_drafts().len(), 1, "a transient failure is retried");
+    }
+
+    // Revisions count from 1 again after every successful push, so a refusal
+    // must be forgotten once a later revision of the draft got through.
+    #[tokio::test]
+    async fn a_draft_pushed_after_a_refusal_keeps_syncing_its_later_edits() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.reject_draft_writes(Some("Invalid thread_id value"));
+        compose_draft(&db, &account, input("a1", "First", "body"), Some(&provider))
+            .await
+            .expect_err("the provider refuses the draft");
+        provider.reject_draft_writes(None);
+        let draft_id = only_draft_id(&db);
+        let mut second = input("a1", "Second", "body");
+        second.draft_id = Some(draft_id.clone());
+        compose_draft(&db, &account, second, Some(&provider))
+            .await
+            .expect("the edit is pushed");
+
+        let mut third = input("a1", "Third", "body");
+        third.draft_id = Some(draft_id);
+        compose_draft(&db, &account, third, None).await.expect("local edit");
+        pull_provider_drafts(&db, &account, &provider).await.expect("sync");
+
+        assert_eq!(provider.provider_drafts()[0].subject, "Third");
     }
 
     #[tokio::test]
@@ -819,6 +1081,114 @@ mod tests {
             .expect("delete");
         assert!(db.get_draft(&draft.id).expect("get").is_none());
         assert_eq!(provider.provider_drafts().len(), 0, "provider copy removed too");
+    }
+
+    /// The provider copy outlives the local row when the provider cannot be
+    /// reached, and a pull must not take it for a draft from another device.
+    #[tokio::test]
+    async fn a_deleted_draft_stays_deleted_when_the_provider_copy_could_not_be_removed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, input("a1", "Bye", "body"), Some(&provider))
+            .await
+            .expect("compose");
+
+        provider.fail_draft_deletes(Some("provider unreachable"));
+        delete_draft(&db, &account, &draft.id, Some(&provider))
+            .await
+            .expect("the local delete does not wait for the provider");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        assert!(db.list_drafts("a1").expect("list").is_empty(), "the draft came back");
+    }
+
+    #[tokio::test]
+    async fn a_draft_deleted_offline_stays_deleted() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, input("a1", "Bye", "body"), Some(&provider))
+            .await
+            .expect("compose");
+
+        delete_draft(&db, &account, &draft.id, None).await.expect("delete");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        assert!(db.list_drafts("a1").expect("list").is_empty(), "the draft came back");
+        assert!(provider.provider_drafts().is_empty(), "the pull removes the copy");
+    }
+
+    /// A sent draft that came back could be sent a second time.
+    #[tokio::test]
+    async fn a_sent_draft_stays_gone_when_the_provider_copy_could_not_be_removed() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, input("a1", "Bye", "body"), Some(&provider))
+            .await
+            .expect("compose");
+
+        provider.fail_draft_deletes(Some("provider unreachable"));
+        send_draft(&db, &account, &draft.id, &provider)
+            .await
+            .expect("a failed clean-up does not fail the send");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        assert!(
+            db.list_drafts("a1").expect("list").is_empty(),
+            "the sent draft came back"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_next_pull_retries_the_delete_of_the_provider_copy() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, input("a1", "Bye", "body"), Some(&provider))
+            .await
+            .expect("compose");
+        provider.fail_draft_deletes(Some("provider unreachable"));
+        delete_draft(&db, &account, &draft.id, Some(&provider))
+            .await
+            .expect("delete");
+
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        assert_eq!(provider.provider_drafts().len(), 1, "still unreachable: the copy stays");
+
+        provider.fail_draft_deletes(None);
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        assert!(provider.provider_drafts().is_empty(), "the retry removes the copy");
+        assert!(db.list_drafts("a1").expect("list").is_empty());
+    }
+
+    /// Once the copy is gone the id means nothing: a draft of that id could
+    /// only be a new one, and must not be skipped.
+    #[tokio::test]
+    async fn a_copy_removed_elsewhere_is_no_longer_remembered() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "gmail");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let draft = compose_draft(&db, &account, input("a1", "Bye", "body"), Some(&provider))
+            .await
+            .expect("compose");
+        let copy = provider.provider_drafts().remove(0);
+        provider.fail_draft_deletes(Some("provider unreachable"));
+        delete_draft(&db, &account, &draft.id, Some(&provider))
+            .await
+            .expect("delete");
+
+        provider.fail_draft_deletes(None);
+        provider
+            .delete_draft(&copy.provider_draft_id)
+            .await
+            .expect("removed from another device");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        provider.add_provider_draft(copy);
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        assert_eq!(db.list_drafts("a1").expect("list").len(), 1);
     }
 
     #[tokio::test]
@@ -956,12 +1326,14 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Server draft".to_string(),
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
 
         let pulled = pull_provider_drafts(&db, &account, &provider).await.expect("pull");
@@ -993,12 +1365,14 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Server draft".to_string(),
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
 
         assert_eq!(
@@ -1051,12 +1425,14 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "First".to_string(),
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
 
         assert_eq!(
@@ -1071,12 +1447,14 @@ mod tests {
             provider_draft_id: "srv-2".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Second".to_string(),
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_100),
             provider_message_id: Some("msg-2".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
         assert_eq!(
             refresh_provider_drafts(&db, &account, &provider, 1_001)
@@ -1107,12 +1485,14 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Shared".to_string(),
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
 
         refresh_provider_drafts(&db, &account_a, &provider, 2_000)
@@ -1151,12 +1531,14 @@ mod tests {
             provider_draft_id: provider_draft_id.clone(),
             to_addresses: vec!["dest@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Edited in Gmail".to_string(),
             body: "body two".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_500),
             provider_message_id: Some("msg-2".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
 
         assert_eq!(pull_provider_drafts(&db, &account, &provider).await.expect("pull"), 1);
@@ -1177,12 +1559,14 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Before".to_string(),
             body: "hi".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_000),
             provider_message_id: Some("msg-1".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
         pull_provider_drafts(&db, &account, &provider).await.expect("first");
 
@@ -1191,12 +1575,14 @@ mod tests {
             provider_draft_id: "srv-1".to_string(),
             to_addresses: vec!["x@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "After".to_string(),
             body: "hi again".to_string(),
             body_html: None,
             updated_at: Some(1_700_000_500),
             provider_message_id: Some("msg-2".to_string()),
             in_reply_to: None,
+            attachments: Vec::new(),
         });
 
         assert_eq!(

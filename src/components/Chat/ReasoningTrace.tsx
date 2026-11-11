@@ -96,6 +96,12 @@ function StepTitle({ step, trace }: { step: FlowStep; trace: ChatTrace }) {
         ? t('chat:reasoning.flow.kind.llmCallN', { n: step.ordinal.n, total: step.ordinal.total })
         : t('chat:reasoning.flow.kind.llmCall');
       break;
+    case 'documentPart':
+      title = t('chat:reasoning.flow.kind.documentPart', {
+        n: step.ordinal?.n ?? 1,
+        total: step.ordinal?.total ?? 1,
+      });
+      break;
     case 'llmRound':
       title = t('chat:reasoning.flow.kind.llmRound', { n: step.round ?? 0 });
       break;

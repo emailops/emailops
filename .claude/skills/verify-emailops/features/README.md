@@ -13,16 +13,17 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
   embeddings present, AI on (embedded llama.cpp, `qwen3.5-4b-q4_k_m`). A third,
   credential-less Gmail account `ulises.emailopslabs@gmail.com` (`demo-acct-calendar`) owns
   the demo calendar `demo-cal-work` (six events around today; tomorrow 10:00 is "Sprint 6
-  planning — Faro Logistics") because calendar features are only offered to Gmail/Outlook.
+  planning — Faro Logistics") because IMAP accounts only get a calendar through a subscribed ICS feed, and the demo accounts have none.
 - The instance holds no remote-provider key: `launch` starts it with `OPENROUTER_API_KEY` set and empty, so the
   developer's key in `.env.local` is not loaded and nothing in the UI can reach OpenRouter.
 - Verification fixtures (`insert_verification_fixtures` in `scripts/generate_demo_db.py`): a trashed quote and its
-  correction (Larkspur Freight, with a shortcut and a web-page attachment), a renewal notice and a junk-marked
+  correction (Larkspur Freight, with a shortcut and a web-page attachment that holds a remote image), a renewal notice and a junk-marked
   lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly) whose `email_headers` carry
-  RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote and one
-  archived message (*Studio key handover confirmed*).
+  RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote, one
+  archived message (*Studio key handover confirmed*), the Lens *Renewal quotes* with a row of each Larkspur quote, and a memory
+  fact on Quayside Studios that carries an order for the model.
 - The schema comes from this checkout's migrations (`init_db` example), not from the production DB; `ensure_demo_db.sh`
-  rebuilds the demo DB when a migration is newer than it.
+  rebuilds the demo DB when the content of a migration or the generator changed since it was built.
 - `$V doctor` passes. Never drive an instance this run did not start (the developer's
   own app on port 1420 usually holds the production mailbox).
 - The red "Authentication required for account …" banners are expected on all three accounts.
@@ -76,4 +77,5 @@ that says `n/a` and why.
 - [Keyboard shortcuts](./keyboard-shortcuts.md) — `?` overlay, `j`/`k` cursor, action keys. **Driven live 02/10/2026.**
 - [Unsubscribe and block sender](./sender-controls.md) — Unsubscribe dialog (Cancel only), Block/Unblock, Settings → Junk list. **Driven live 02/10/2026.**
 - [New-mail notifications](./new-mail-notifications.md) — Settings → Notifications persistence; delivery via the fake provider. **Driven live 02/10/2026.**
+- [EO Docs](./eo-docs.md) — create, edit, history, links in a read-only view; sharing proven against the fake provider. **Driven live 31/10/2026.**
 - [Chat skills](./skills.md) — toggle, Skills view, new/save/delete, `/` suggestions. Handles confirmed live 29/09/2026.

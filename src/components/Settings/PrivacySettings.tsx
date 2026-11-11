@@ -1,6 +1,7 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DataLocationSection } from '@/components/DataLocation/DataLocationSection';
 import { FALLBACK_LANGUAGE, isSupportedLanguage } from '@/i18n/resources';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
@@ -29,7 +30,7 @@ function ToggleRow({
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-200">{label}</div>
+        <div className="text-sm font-medium text-gray-800">{label}</div>
         {description && <div className="text-xs text-gray-500 mt-0.5">{description}</div>}
       </div>
       <button
@@ -38,8 +39,8 @@ function ToggleRow({
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         disabled={disabled}
-        className={`relative mt-0.5 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-[#252526] disabled:opacity-50 ${
-          checked ? 'bg-primary-600' : 'bg-gray-600'
+        className={`relative mt-0.5 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-gray-50 disabled:opacity-50 ${
+          checked ? 'bg-primary-600' : 'bg-gray-300'
         }`}
       >
         <span
@@ -110,13 +111,13 @@ function PasswordDialog({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
-      <div className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-5 shadow-xl w-full max-w-sm mx-4">
-        <h3 className="text-sm font-semibold text-gray-100 mb-4">{title}</h3>
+      <div className="bg-white border border-gray-300 rounded-lg p-5 shadow-xl w-full max-w-sm mx-4">
+        <h3 className="text-sm font-semibold text-gray-900 mb-4">{title}</h3>
 
         <div className="space-y-3">
           {(mode === 'change' || mode === 'remove') && (
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">
+              <label className="block text-xs font-medium text-gray-500 mb-1">
                 {t('settings:privacy.passwordDialog.currentPassword')}
               </label>
               <input
@@ -125,7 +126,7 @@ function PasswordDialog({
                 autoFocus
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full rounded-lg border border-gray-600 bg-[#1f1f20] px-3 py-2 text-sm text-gray-100 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
               />
             </div>
           )}
@@ -133,7 +134,7 @@ function PasswordDialog({
           {mode !== 'remove' && (
             <>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">
                   {mode === 'set'
                     ? t('settings:privacy.passwordDialog.password')
                     : t('settings:privacy.passwordDialog.newPassword')}
@@ -144,11 +145,11 @@ function PasswordDialog({
                   autoFocus={mode === 'set'}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full rounded-lg border border-gray-600 bg-[#1f1f20] px-3 py-2 text-sm text-gray-100 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-400 mb-1">
+                <label className="block text-xs font-medium text-gray-500 mb-1">
                   {t('settings:privacy.passwordDialog.confirmPassword')}
                 </label>
                 <input
@@ -156,13 +157,13 @@ function PasswordDialog({
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-                  className="w-full rounded-lg border border-gray-600 bg-[#1f1f20] px-3 py-2 text-sm text-gray-100 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500"
                 />
               </div>
             </>
           )}
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-red-600">{error}</p>}
         </div>
 
         <div className="flex gap-2 justify-end mt-5">
@@ -170,7 +171,7 @@ function PasswordDialog({
             type="button"
             onClick={onClose}
             disabled={isSaving}
-            className="px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
+            className="px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
           >
             {t('common:actions.cancel')}
           </button>
@@ -240,8 +241,14 @@ export function PrivacySettings() {
 
   const handlePasswordSuccess = useCallback(() => {
     setDialog(null);
-    api.hasMainPassword().then(setHasPassword);
-  }, []);
+    api
+      .hasMainPassword()
+      .then(setHasPassword)
+      .catch((e) => {
+        setSaveError(errorText(e));
+        addLog('error', 'system', `Failed to read the password state: ${errorText(e)}`);
+      });
+  }, [addLog]);
 
   const handleOpenPrivacyPolicy = useCallback(() => {
     const language = isSupportedLanguage(i18n.language) ? i18n.language : FALLBACK_LANGUAGE;
@@ -261,7 +268,7 @@ export function PrivacySettings() {
   if (loadError) {
     return (
       <div className="flex-1 px-6 py-5">
-        <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">
+        <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
           {t('settings:privacy.loadFailed', { error: loadError })}
         </div>
       </div>
@@ -274,17 +281,17 @@ export function PrivacySettings() {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {saveError && (
-        <div className="mx-6 mt-5 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">
+        <div className="mx-6 mt-5 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
           {t('settings:privacy.saveFailed', { error: saveError })}
         </div>
       )}
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-8">
         {/* Password ─────────────────────────────────────────────────────────── */}
         <section>
-          <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:privacy.password')}</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:privacy.password')}</h3>
           <p className="text-xs text-gray-500 mb-3">{t('settings:privacy.passwordHelp')}</p>
 
-          <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
+          <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-200">
             <div className="px-4 py-3">
               <ToggleRow
                 label={t('settings:privacy.usePassword')}
@@ -299,7 +306,7 @@ export function PrivacySettings() {
                 <button
                   type="button"
                   onClick={() => setDialog('change')}
-                  className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+                  className="text-sm text-primary-600 hover:text-primary-700 transition-colors"
                 >
                   {t('settings:privacy.changePassword')}
                 </button>
@@ -310,13 +317,13 @@ export function PrivacySettings() {
 
         {/* Privacy ─────────────────────────────────────────────────────────── */}
         <section>
-          <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:privacy.title')}</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:privacy.title')}</h3>
 
           <div className="mt-3">
-            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
               {t('settings:privacy.emailContent')}
             </h4>
-            <div className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+            <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
               <ToggleRow
                 label={t('settings:privacy.allowRemoteToggle')}
                 description={t('settings:privacy.allowRemoteToggleDesc')}
@@ -329,7 +336,7 @@ export function PrivacySettings() {
           {/* Directly under the toggle these grants override, so the exception
             and the rule are read together. */}
           <div className="mt-3">
-            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
               {t('settings:privacy.trustedSenders.title')}
             </h4>
             <p className="text-xs text-gray-500 mb-2">{t('settings:privacy.trustedSenders.help')}</p>
@@ -340,12 +347,14 @@ export function PrivacySettings() {
             <button
               type="button"
               onClick={handleOpenPrivacyPolicy}
-              className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
+              className="text-sm text-primary-600 hover:text-primary-700 transition-colors"
             >
               {t('settings:privacy.privacyPolicyLink')} ↗
             </button>
           </div>
         </section>
+
+        <DataLocationSection />
 
         {dialog && <PasswordDialog mode={dialog} onClose={() => setDialog(null)} onSuccess={handlePasswordSuccess} />}
       </div>

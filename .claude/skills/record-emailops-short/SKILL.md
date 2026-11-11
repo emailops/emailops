@@ -1,6 +1,6 @@
 ---
 name: record-emailops-short
-description: "Make a vertical YouTube Short / Reel / TikTok (1080x1920, 30–45 s, text-only, sound-off first) that shows one EmailOps feature solving one problem, in the POV → before → after style the developer picked: a POV hook on a real screen, the painful manual way highlighted in red, the feature doing it (Lentes / chat / rules…) with an animated camera, kinetic captions, a typed-in prompt and click ripples, a before/after split screen, what happens next (e.g. a new row sliding in), and a closing card. Captures the real app on the synthetic demo instance, composes with a Python storyboard over short_fx.py, adds a CC BY music bed, and ships the MP4, a music-less cut, an .srt and a YouTube sheet. This is the default skill for any short; use record-emailops-demo for 16:9 promos, narrated walkthroughs and long how-tos."
+description: Make a vertical YouTube Short / Reel / TikTok (1080x1920, 30–45 s, text-only, sound-off first) showing one EmailOps feature solving one problem in the POV → before → after style, captured on the synthetic demo instance, with an animated camera, kinetic captions and a music bed; ships the MP4, a music-less cut, an .srt and a YouTube sheet. The default skill for any short; 16:9 promos and narrated walkthroughs go to record-emailops-demo.
 argument-hint: <feature and the problem it solves, and the language>
 allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 ---

@@ -236,15 +236,16 @@ Everything EmailOps stores is on your machine, in your OS application data direc
 - **OAuth tokens and passwords** — your OS keychain, never a plain file. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-To move or share a data directory (for testing, or a second profile), set the
-`EMAILOPS_DATA_DIR` environment variable before launching. The exact paths per platform, and
+To keep the data on another disk, choose **Settings → Privacy & Security → Data location → Change…**.
+For testing or a second profile, set the `EMAILOPS_DATA_DIR` environment variable before
+launching instead. The exact paths per platform, and
 what is written where, are in [Privacy & security](../privacy-security/#where-your-data-is-stored).
 
 ## Uninstalling
 
 <!-- claim:inst-uninstalling-1 -->
 Removing the app leaves your mail database and downloaded models behind on purpose, so a
-reinstall picks up where you left off. Delete the data directory too for a clean slate.
+reinstall picks up where you left off. Delete the data directory too for a clean slate; that also deletes the skills you created, as does any uninstaller option that removes app data.
 
 <!-- claim:inst-uninstalling-2 -->
 Nothing is removed from your mail provider either way — uninstalling EmailOps never touches

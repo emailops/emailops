@@ -12,6 +12,9 @@ use super::output;
 use super::session::CliSession;
 use super::{Command, OutputMode, RenderStyle, SuggestionAction};
 
+/// The list's page size: `search` reads what the app reads.
+const SEARCH_PAGE_SIZE: i32 = 50;
+
 /// Execute one parsed command against the session.
 pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> {
     match command {
@@ -66,34 +69,64 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             query,
             limit,
             offset,
+            view,
+            unread,
             trace,
         } => {
             let account = session.require_account()?;
-            let result =
-                crate::services::search::search_emails(&session.db, Some(&account), &query, false, None, None, None)
-                    .await?;
-            let total = result.emails.len();
-            let emails: Vec<_> = result
-                .emails
-                .iter()
-                .skip(offset)
-                .take(limit)
-                .map(|e| e.email.clone())
-                .collect();
-            let shown = emails.len();
+            let view = crate::db::emails::list::ListView::parse(&view)?;
+            let started = std::time::Instant::now();
+            let wanted = offset + limit;
+
+            // The same pages the list reads, until they cover the slice asked
+            // for: `--trace` says whether that was the end of the list.
+            let mut rows = Vec::new();
+            let mut pages = 0;
+            let mut cursor = None;
+            let (parsed_query, exhausted) = loop {
+                let page = crate::services::list::list_threads(
+                    &session.db,
+                    crate::services::list::ListRequest {
+                        account_id: Some(&account),
+                        query: &query,
+                        view: view.clone(),
+                        unread_only: unread,
+                        cursor,
+                        limit: SEARCH_PAGE_SIZE,
+                    },
+                )?;
+                pages += 1;
+                rows.extend(page.emails);
+                cursor = page.next_cursor;
+                if cursor.is_none() || rows.len() >= wanted {
+                    break (page.parsed_query, cursor.is_none());
+                }
+            };
+            let ms = started.elapsed().as_millis() as u64;
+            let total = rows.len();
+            let emails: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+            let trace_data = output::SearchTrace {
+                parsed: parsed_query.as_ref(),
+                shown: emails.len(),
+                total,
+                exhausted,
+                pages,
+                ms,
+            };
 
             if session.mode == OutputMode::Json {
                 if trace {
                     output::emit_ok(serde_json::json!({
                         "emails": emails,
                         "trace": {
-                            "query": result.query,
-                            "searchMethod": result.search_method,
-                            "aiAvailable": result.ai_available,
-                            "parsedQuery": result.parsed_query,
-                            "shown": shown,
+                            "query": query,
+                            "parsedQuery": parsed_query,
+                            "shown": trace_data.shown,
                             "offset": offset,
                             "totalHits": total,
+                            "exhausted": exhausted,
+                            "pages": pages,
+                            "ms": ms,
                         }
                     }))
                 } else {
@@ -102,14 +135,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             } else {
                 output::render_emails(&emails, session.style)?;
                 if trace {
-                    output::render_search_trace(
-                        &result.search_method,
-                        result.ai_available,
-                        result.parsed_query.as_ref(),
-                        shown,
-                        total,
-                        session.style.color(),
-                    );
+                    output::render_search_trace(&trace_data, session.style.color());
                 }
                 Ok(())
             }
@@ -121,6 +147,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             conversation,
             fresh,
             thread,
+            attachment,
             prewarm,
             research,
             estimate,
@@ -133,6 +160,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                     conversation,
                     fresh,
                     thread,
+                    attachment,
                     prewarm,
                     research,
                     estimate,
@@ -381,7 +409,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                     .db
                     .get_account(&account)?
                     .ok_or_else(|| AppError::NotFound(format!("account '{account}' not found")))?;
-                let provider = crate::services::calendar::sync::build_calendar_provider(&acct.id, &acct.provider)?;
+                let provider = crate::services::calendar::sync::build_calendar_provider(&session.db, &acct)?;
                 let count = crate::services::calendar::sync::sync_account_calendar(
                     &session.db,
                     &acct.id,
@@ -580,6 +608,7 @@ async fn run_compose(
         email_id: None,
         to: to.clone(),
         cc,
+        bcc: Vec::new(),
         subject: subject.clone(),
         body,
         body_html: None,
@@ -683,6 +712,7 @@ struct ChatOptions {
     conversation: Option<String>,
     fresh: bool,
     thread: Option<String>,
+    attachment: Option<String>,
     prewarm: bool,
     research: bool,
     /// With `research`: print the estimate and stop, reading nothing.
@@ -695,6 +725,7 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
         conversation,
         fresh,
         thread,
+        attachment,
         prewarm,
         research,
         estimate,
@@ -764,6 +795,16 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
             .map(|a| a.id),
         None => None,
     };
+    // `--attachment` likewise grounds under the account that owns the PDF: an
+    // email's attachment, or a file an attachment rule saved.
+    let ambient_account = match attachment.as_deref() {
+        Some(attachment_id) => match session.db.get_email_attachment_metas_by_id(attachment_id)? {
+            Some(meta) => Some(meta.account_id),
+            None => session.db.get_attachment(attachment_id)?.map(|a| a.account_id),
+        }
+        .or(ambient_account),
+        None => ambient_account,
+    };
 
     // Mirror the app's idle-time prompt-prefix prewarm before the first turn
     // so turn-1 prefill numbers match the in-app first-turn experience.
@@ -827,6 +868,7 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
             crate::services::chat::TurnContext {
                 ambient_thread_id: thread.clone(),
                 ambient_account_id: ambient_account.clone(),
+                ambient_attachment_id: attachment.clone(),
                 research,
                 ..Default::default()
             },
@@ -1313,6 +1355,7 @@ mod tests {
             account_id: account_id.to_string(),
             to_addresses: vec!["alina@example.com".to_string()],
             cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
             subject: "Confirmar reunión".to_string(),
             body: "Hola Alina".to_string(),
             body_html: None,

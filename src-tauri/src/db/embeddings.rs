@@ -245,7 +245,7 @@ impl Database {
 
     /// Check if an embedding exists and matches the content hash
     pub fn embedding_exists(&self, email_id: &str, content_hash: &str) -> Result<bool> {
-        let conn = self.connection();
+        let conn = self.reader();
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM embedding_chunks WHERE email_id = ?1 AND content_hash = ?2",
             params![email_id, content_hash],
@@ -254,7 +254,7 @@ impl Database {
         Ok(count > 0)
     }
 
-    /// Get emails that don't have embeddings yet.
+    /// Get emails that don't have embeddings yet, newest first.
     ///
     /// `categories` filters to emails matching one of the given Gmail-style
     /// categories. Empty slice = no category filter (all categories).
@@ -269,7 +269,7 @@ impl Database {
         categories: &[String],
         min_timestamp: Option<i64>,
     ) -> Result<Vec<String>> {
-        let conn = self.connection();
+        let conn = self.reader();
 
         let mut sql = String::from(
             // Spam/trash are never embedded — retrieval must never surface
@@ -299,8 +299,13 @@ impl Database {
             params_vec.push(Box::new(ts));
             sql.push_str(&format!(" AND e.timestamp >= ?{}", params_vec.len()));
         }
+        // Newest first, so mail that just arrived is searchable before the
+        // backlog is drained.
         params_vec.push(Box::new(limit));
-        sql.push_str(&format!(" LIMIT ?{}", params_vec.len()));
+        sql.push_str(&format!(
+            " ORDER BY e.timestamp DESC, e.id DESC LIMIT ?{}",
+            params_vec.len()
+        ));
 
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
@@ -317,7 +322,7 @@ impl Database {
 
     /// Count emails without embeddings
     pub fn count_emails_without_embeddings(&self, account_id: Option<&str>) -> Result<i32> {
-        let conn = self.connection();
+        let conn = self.reader();
 
         // Filters mirror get_emails_without_embeddings (deletion + mailbox) so
         // the pending count reaches zero when the embed loop finishes.
@@ -411,7 +416,7 @@ impl Database {
         sender_email_eq: Option<&str>,
         limit: i32,
     ) -> Result<Vec<(String, f64)>> {
-        let conn = self.connection();
+        let conn = self.reader();
 
         let fts_query = escape_fts_query(query);
 
@@ -710,6 +715,54 @@ mod tests {
     // OR semantics: multi-word NL queries must return emails matching ANY token,
     // not all of them. This is the inverse of `db.search_emails()` (AND-joined,
     // used by the UI filter bar) and the reason agent-search needs fts_search.
+    /// A batch write holds the write connection for seconds on a large mailbox,
+    /// and a search or a count behind it would stall the whole UI.
+    #[test]
+    fn reads_do_not_wait_for_the_write_connection() {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::new(dir.path().to_path_buf()).unwrap());
+        type Read = fn(&Database);
+        let reads: [(&str, Read); 4] = [
+            ("embedding_exists", |db| {
+                db.embedding_exists("e1", "hash").unwrap();
+            }),
+            ("get_emails_without_embeddings", |db| {
+                db.get_emails_without_embeddings(None, 10, &[], None).unwrap();
+            }),
+            ("count_emails_without_embeddings", |db| {
+                db.count_emails_without_embeddings(None).unwrap();
+            }),
+            ("fts_search_filtered", |db| {
+                db.fts_search_filtered("invoice", None, None, None, 10).unwrap();
+            }),
+        ];
+
+        let writer = db.connection();
+        let waited: Vec<&str> = reads
+            .iter()
+            .filter(|(_, read)| {
+                let (done, finished) = mpsc::channel();
+                let (db, read) = (db.clone(), *read);
+                std::thread::spawn(move || {
+                    read(&db);
+                    let _ = done.send(());
+                });
+                finished.recv_timeout(Duration::from_secs(2)).is_err()
+            })
+            .map(|(name, _)| *name)
+            .collect();
+        drop(writer);
+
+        assert_eq!(
+            waited,
+            Vec::<&str>::new(),
+            "these reads waited for the write connection"
+        );
+    }
+
     #[test]
     fn fts_search_or_semantics_matches_any_token() {
         let db = Database::new_for_testing().unwrap();
@@ -1023,6 +1076,20 @@ mod tests {
             "trash email must be skipped, got {:?}",
             ids
         );
+    }
+
+    // New mail must not wait behind the backlog: a batch takes the newest
+    // pending emails, whatever order they were stored in.
+    #[test]
+    fn get_emails_without_embeddings_returns_the_newest_first() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(&db, "e-mid", "acc1", "a@example.com", "subject", "body", 200, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-new", "acc1", "a@example.com", "subject", "body", 300, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-old", "acc1", "a@example.com", "subject", "body", 100, "inbox");
+
+        let ids = db.get_emails_without_embeddings(Some("acc1"), 2, &[], None).unwrap();
+
+        assert_eq!(ids, vec!["e-new".to_string(), "e-mid".to_string()]);
     }
 
     // Optimistic sent copies awaiting reconciliation must not be embedded —

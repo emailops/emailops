@@ -138,8 +138,8 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-neutral-900 border border-neutral-700 rounded-lg w-full max-w-md p-6 shadow-xl">
-        <h2 className="text-lg font-semibold text-white mb-4">{t('modal:imapAccount.modalTitle')}</h2>
+      <div className="theme-chrome bg-white border border-gray-200 rounded-lg w-full max-w-md p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('modal:imapAccount.modalTitle')}</h2>
 
         {/* Provider presets */}
         <div className="flex flex-wrap gap-2 mb-4">
@@ -151,7 +151,7 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
               className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
                 preset.label === p.label
                   ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-neutral-800 border-neutral-600 text-neutral-300 hover:bg-neutral-700'
+                  : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
               }`}
             >
               {p.label}
@@ -162,7 +162,7 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-email">
+              <label className="block text-xs text-gray-600 mb-1" htmlFor="add-imap-email">
                 {t('modal:imapAccount.email')}
               </label>
               <input
@@ -172,11 +172,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 onChange={credentialField(setEmail)}
                 required
                 placeholder={'you@example.com'} // i18n-ignore: example email address, not user-facing copy
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-username">
+              <label className="block text-xs text-gray-600 mb-1" htmlFor="add-imap-username">
                 {t('modal:imapAccount.usernameLabel')}
               </label>
               <input
@@ -186,12 +186,12 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 value={username}
                 onChange={credentialField(setUsername)}
                 placeholder={email.trim()} // i18n-ignore: echoes the address typed above
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
               />
-              <p className="text-neutral-500 text-xs mt-1">{t('modal:imapAccount.usernameHint')}</p>
+              <p className="text-gray-500 text-xs mt-1">{t('modal:imapAccount.usernameHint')}</p>
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-password">
+              <label className="block text-xs text-gray-600 mb-1" htmlFor="add-imap-password">
                 {t('modal:imapAccount.passwordLabel')}
               </label>
               <input
@@ -200,11 +200,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 value={password}
                 onChange={credentialField(setPassword)}
                 required
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-host">
+              <label className="block text-xs text-gray-600 mb-1" htmlFor="add-imap-host">
                 {t('modal:imapAccount.imapHost')}
               </label>
               <input
@@ -214,11 +214,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 onChange={credentialField(setHost)}
                 required
                 placeholder={'imap.example.com'} // i18n-ignore: example hostname, not user-facing copy
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.imapPort')}</label>
+              <label className="block text-xs text-gray-600 mb-1">{t('modal:imapAccount.imapPort')}</label>
               <input
                 type="number"
                 value={port}
@@ -226,11 +226,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 required
                 min={1}
                 max={65535}
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1" htmlFor="add-imap-smtp-host">
+              <label className="block text-xs text-gray-600 mb-1" htmlFor="add-imap-smtp-host">
                 {t('modal:imapAccount.smtpHost')}
               </label>
               <input
@@ -240,11 +240,11 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 onChange={credentialField(setSmtpHost)}
                 required
                 placeholder={'smtp.example.com'} // i18n-ignore: example hostname, not user-facing copy
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.smtpPort')}</label>
+              <label className="block text-xs text-gray-600 mb-1">{t('modal:imapAccount.smtpPort')}</label>
               <input
                 type="number"
                 value={smtpPort}
@@ -252,17 +252,17 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
                 required
                 min={1}
                 max={65535}
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
               />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-neutral-400 mb-1">{t('modal:imapAccount.displayName')}</label>
+              <label className="block text-xs text-gray-600 mb-1">{t('modal:imapAccount.displayName')}</label>
               <input
                 type="text"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder={t('modal:imapAccount.displayNamePlaceholder')}
-                className="w-full bg-neutral-800 border border-neutral-600 rounded px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-white border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
               />
             </div>
           </div>
@@ -273,26 +273,26 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
               type="button"
               onClick={handleTest}
               disabled={!canTest}
-              className="px-4 py-2 rounded bg-neutral-700 border border-neutral-600 text-neutral-200 text-sm hover:bg-neutral-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 rounded bg-white border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {testStatus === 'testing' ? 'Testing…' : 'Test Connection'}
             </button>
             {testStatus === 'ok' && (
-              <span className="text-green-400 text-sm">{t('modal:imapAccount.testSuccess')}</span>
+              <span className="text-green-600 text-sm">{t('modal:imapAccount.testSuccess')}</span>
             )}
             {testStatus === 'error' && (
-              <span className="text-red-400 text-sm">{t('modal:imapAccount.testFailedShort')}</span>
+              <span className="text-red-600 text-sm">{t('modal:imapAccount.testFailedShort')}</span>
             )}
           </div>
 
           {testError && (
-            <p className="text-red-400 text-xs bg-red-950/40 border border-red-900/50 rounded px-3 py-2">{testError}</p>
+            <p className="text-red-700 text-xs bg-red-50 border border-red-200 rounded px-3 py-2">{testError}</p>
           )}
 
-          {submitError && <p className="text-red-400 text-xs mt-1">{submitError}</p>}
+          {submitError && <p className="text-red-600 text-xs mt-1">{submitError}</p>}
 
           {testStatus !== 'ok' && testStatus !== 'error' && (
-            <p className="text-neutral-500 text-xs">{t('modal:imapAccount.testHint')}</p>
+            <p className="text-gray-500 text-xs">{t('modal:imapAccount.testHint')}</p>
           )}
 
           <div className="flex gap-3 pt-1">
@@ -300,7 +300,7 @@ export function AddImapAccountModal({ onSuccess, onCancel }: Props) {
               type="button"
               onClick={onCancel}
               disabled={submitting}
-              className="flex-1 px-4 py-2 rounded bg-neutral-700 text-neutral-300 text-sm hover:bg-neutral-600 transition-colors disabled:opacity-50"
+              className="flex-1 px-4 py-2 rounded bg-gray-100 text-gray-700 text-sm hover:bg-gray-200 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>

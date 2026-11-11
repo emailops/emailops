@@ -255,8 +255,12 @@ impl SyncScheduler {
         let mut handles = vec![spawn_watcher(account.clone(), deps, sync_flag.clone())];
         let mut stop_flags = vec![sync_flag];
 
-        // Calendar poll loop — OAuth providers only (IMAP has no calendar).
-        if !plan_calendar_accounts(std::slice::from_ref(account)).is_empty() {
+        // Calendar poll loop for every account. Whether there is a calendar to
+        // poll (OAuth API, or an IMAP account's ICS feeds) is decided per tick
+        // in `make_calendar_sync_fn`, so the first feed a user adds starts
+        // syncing without a restart and without re-watching the account (which
+        // would drop its IMAP IDLE connection).
+        {
             let flag = Arc::new(AtomicBool::new(false));
             let sync_fn = make_calendar_sync_fn(deps.db.clone(), account.clone(), deps.app.clone());
             handles.push(tauri::async_runtime::spawn(calendar_poll_loop(
@@ -521,44 +525,25 @@ pub(crate) async fn gmail_poll_loop(
 /// How often each OAuth account's calendar window is re-fetched.
 const CALENDAR_POLL_INTERVAL: Duration = Duration::from_secs(300);
 
-/// Pure planner: the subset of accounts that get a calendar poll loop.
-/// Capability only (Gmail/Outlook) — loops spawn for every capable account so
-/// the Settings toggle takes effect without an app restart; each tick then
-/// checks the per-account opt-in via [`plan_calendar_enabled_accounts`] /
-/// `calendar_enabled_or_log`.
-pub(crate) fn plan_calendar_accounts(accounts: &[Account]) -> Vec<Account> {
-    accounts
-        .iter()
-        .filter(|a| crate::sync::calendar_provider::provider_supports_calendar(&a.provider))
-        .cloned()
-        .collect()
+/// Pure planner: the accounts that have a calendar at all (an OAuth API, or
+/// subscribed ICS feeds). `has_calendar` is injected — in prod it is
+/// `capability::calendar_capability`, which reads the feeds table — so the
+/// filter is unit-testable without a DB.
+pub(crate) fn plan_calendar_accounts(accounts: &[Account], has_calendar: &dyn Fn(&Account) -> bool) -> Vec<Account> {
+    accounts.iter().filter(|a| has_calendar(a)).cloned().collect()
 }
 
-/// Pure planner: capable accounts whose calendar integration the user opted
-/// into (`calendar.enabled:<account_id>` pref). `is_enabled` is injected so
-/// the filter is unit-testable without a DB.
-pub(crate) fn plan_calendar_enabled_accounts(accounts: &[Account], is_enabled: &dyn Fn(&str) -> bool) -> Vec<Account> {
-    plan_calendar_accounts(accounts)
+/// Pure planner: accounts with a calendar whose integration the user opted
+/// into (`calendar.enabled:<account_id>` pref).
+pub(crate) fn plan_calendar_enabled_accounts(
+    accounts: &[Account],
+    has_calendar: &dyn Fn(&Account) -> bool,
+    is_enabled: &dyn Fn(&str) -> bool,
+) -> Vec<Account> {
+    plan_calendar_accounts(accounts, has_calendar)
         .into_iter()
         .filter(|a| is_enabled(&a.id))
         .collect()
-}
-
-/// Read the per-account calendar opt-in, logging (once per tick) instead of
-/// discarding a pref-read failure. A failed read counts as disabled — never
-/// sync or notify on an account the user may not have opted in.
-fn calendar_enabled_or_log(db: &Database, account_id: &str) -> bool {
-    match db.calendar_enabled(account_id) {
-        Ok(enabled) => enabled,
-        Err(e) => {
-            crate::services::logger::log(
-                "error",
-                "sync",
-                format!("calendar: failed to read calendar.enabled pref for {account_id}: {e}"),
-            );
-            false
-        }
-    }
 }
 
 /// Poll the account's calendar every `interval`. The first tick fires
@@ -587,18 +572,27 @@ fn make_calendar_sync_fn(db: Arc<Database>, account: Account, app: AppHandle) ->
         let account = account.clone();
         let app = app.clone();
         Box::pin(async move {
-            // Per-tick opt-in check (not at spawn time) so flipping the
-            // Settings toggle starts/stops syncing without an app restart.
-            if !calendar_enabled_or_log(&db, &account.id) {
+            // Per-tick capability + opt-in check (not at spawn time) so adding
+            // a first ICS feed or flipping the Settings toggle starts/stops
+            // syncing without an app restart.
+            if !crate::services::calendar::capability::calendar_available(&db, &account) {
                 return;
             }
             let dedup_key = format!("calendar:{}", account.id);
             let now = chrono::Utc::now().timestamp();
-            let result = match crate::services::calendar::sync::build_calendar_provider(&account.id, &account.provider)
-            {
+            let result = match crate::services::calendar::sync::build_calendar_provider(&db, &account) {
+                // A panic is this tick's error, not the end of the poll loop.
                 Ok(provider) => {
-                    crate::services::calendar::sync::sync_account_calendar(&db, &account.id, provider.as_ref(), now)
-                        .await
+                    crate::util::panic_guard::run_isolated(
+                        &format!("Calendar sync of {}", account.id),
+                        crate::services::calendar::sync::sync_account_calendar(
+                            &db,
+                            &account.id,
+                            provider.as_ref(),
+                            now,
+                        ),
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             };
@@ -736,10 +730,11 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
         });
 
         let now = chrono::Utc::now().timestamp();
-        let accounts =
-            plan_calendar_enabled_accounts(&enabled_accounts(db.list_accounts().unwrap_or_default()), &|id| {
-                calendar_enabled_or_log(&db, id)
-            });
+        let accounts = plan_calendar_enabled_accounts(
+            &enabled_accounts(db.list_accounts().unwrap_or_default()),
+            &|a| crate::services::calendar::capability::calendar_available(&db, a),
+            &|_| true, // calendar_available already applied the opt-in pref
+        );
         for account in accounts {
             let events = match db.list_visible_calendar_events(&account.id, now, now + lead_secs + 60) {
                 Ok(events) => events,
@@ -752,7 +747,9 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
                     continue;
                 }
             };
-            for event in crate::services::calendar::notify::plan_meeting_notifications(&events, now, lead_secs) {
+            for event in
+                crate::services::calendar::notify::plan_meeting_notifications(&events, now, lead_secs, &account.email)
+            {
                 let minutes_left = ((event.start_time - now) as f64 / 60.0).ceil() as i64;
                 let (title, body) =
                     crate::services::calendar::notify::notification_text(event, minutes_left, show_title);
@@ -844,6 +841,7 @@ async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<
         );
     }
     let providers = AppOutboxProviders { app: app.clone() };
+    let mut doc_retries = crate::services::shared_docs::FlushRetries::default();
     let mut ticker = tokio::time::interval(OUTBOX_DISPATCH_INTERVAL);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -869,11 +867,15 @@ async fn outbox_dispatch_loop(db: Arc<Database>, app: AppHandle, stop_flag: Arc<
             Err(e) => crate::services::logger::log("error", "sync", format!("Queued messages could not be sent: {e}")),
         }
         // Shared documents whose edits have paused go out on the same tick.
-        crate::services::shared_docs::flush_due(&db, now, &providers).await;
+        crate::services::shared_docs::flush_due(&db, now, &providers, &mut doc_retries).await;
     }
 }
 
 // ── IMAP IDLE watcher ─────────────────────────────────────────────────────────
+
+/// How often an IMAP account syncs with no IDLE signal: IDLE watches INBOX
+/// alone, and a signal that lands during another sync is dropped.
+const IMAP_PERIODIC_SYNC: Duration = Duration::from_secs(5 * 60);
 
 /// Manages an IMAP IDLE connection for one account.
 /// The blocking IDLE loop runs on a thread-pool thread and signals via a channel.
@@ -954,12 +956,25 @@ pub(crate) async fn imap_idle_watcher(
 /// would otherwise wait for the next change in the mailbox.
 pub(crate) async fn imap_idle_drain(mut rx: tokio::sync::mpsc::Receiver<bool>, sync_fn: &SyncFn) -> bool {
     let mut established = false;
-    while let Some(new_mail) = rx.recv().await {
-        // false = server-side keepalive timeout; re-enter IDLE without syncing
-        if new_mail || !established {
-            sync_fn().await;
+    let mut periodic = tokio::time::interval_at(tokio::time::Instant::now() + IMAP_PERIODIC_SYNC, IMAP_PERIODIC_SYNC);
+    periodic.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            signal = rx.recv() => {
+                let Some(new_mail) = signal else { break };
+                // false = server-side keepalive timeout; re-enter IDLE without syncing
+                if new_mail || !established {
+                    sync_fn().await;
+                }
+                established = true;
+            }
+            _ = periodic.tick() => sync_fn().await,
         }
-        established = true;
+    }
+    // A server without working IDLE ends every session here: each reconnect is
+    // its only chance to get mail.
+    if !established {
+        sync_fn().await;
     }
     established
 }
@@ -1190,6 +1205,7 @@ mod tests {
             sort_order: 0,
             enabled,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -1345,7 +1361,36 @@ mod tests {
         let established = imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
 
         assert!(!established);
-        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    /// A server without working IDLE never raises a signal: each attempt to
+    /// reach IDLE is its only chance to get mail.
+    #[tokio::test]
+    async fn imap_idle_drain_syncs_once_when_the_session_never_connected() {
+        let count = Arc::new(AtomicU32::new(0));
+        let (tx, rx) = tokio::sync::mpsc::channel::<bool>(4);
+        drop(tx);
+
+        imap_idle_drain(rx, &counter_sync_fn(count.clone())).await;
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    /// IDLE watches INBOX alone and a signal can land while another sync runs,
+    /// so a quiet session still syncs on a timer.
+    #[tokio::test(start_paused = true)]
+    async fn imap_idle_drain_syncs_on_a_timer_while_the_session_is_quiet() {
+        let count = Arc::new(AtomicU32::new(0));
+        let (tx, rx) = tokio::sync::mpsc::channel::<bool>(4);
+        tx.send(false).await.unwrap();
+        let sync_fn = counter_sync_fn(count.clone());
+        let drain = tokio::spawn(async move { imap_idle_drain(rx, &sync_fn).await });
+
+        tokio::time::sleep(IMAP_PERIODIC_SYNC * 2 + Duration::from_secs(1)).await;
+        drop(tx);
+        drain.await.unwrap();
+
+        assert_eq!(count.load(Ordering::SeqCst), 3, "the first signal plus two ticks");
     }
 
     // ── plan_idle_reconnect ───────────────────────────────────────────────────
@@ -1438,15 +1483,21 @@ mod tests {
     // ── plan_calendar_accounts ────────────────────────────────────────────────
 
     #[test]
-    fn calendar_accounts_are_oauth_only() {
+    fn calendar_accounts_include_imap_only_when_it_has_a_calendar() {
         let accounts = vec![
             make_account("g", "gmail", true),
             make_account("o", "outlook", true),
-            make_account("i", "imap", true),
+            make_account("i-feed", "imap", true),
+            make_account("i-none", "imap", true),
         ];
-        let planned = plan_calendar_accounts(&accounts);
+        // The capability check is injected (it reads the feeds table in prod).
+        let planned = plan_calendar_accounts(&accounts, &|a| a.provider != "imap" || a.id == "i-feed");
         let ids: Vec<&str> = planned.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["g", "o"], "IMAP accounts have no calendar to poll");
+        assert_eq!(
+            ids,
+            vec!["g", "o", "i-feed"],
+            "IMAP polls only once it has a feed calendar"
+        );
     }
 
     #[test]
@@ -1456,10 +1507,15 @@ mod tests {
             make_account("g-off", "gmail", true),
             make_account("i", "imap", true),
         ];
-        // IMAP is excluded even if a stray pref claims it's enabled.
-        let planned = plan_calendar_enabled_accounts(&accounts, &|id| id == "g-on" || id == "i");
+        // An account without a calendar is excluded even if a stray pref claims it's enabled.
+        let planned =
+            plan_calendar_enabled_accounts(&accounts, &|a| a.provider != "imap", &|id| id == "g-on" || id == "i");
         let ids: Vec<&str> = planned.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["g-on"], "only opted-in OAuth accounts get calendar work");
+        assert_eq!(
+            ids,
+            vec!["g-on"],
+            "only opted-in accounts with a calendar get calendar work"
+        );
     }
 
     // ── gmail_poll_loop ───────────────────────────────────────────────────────

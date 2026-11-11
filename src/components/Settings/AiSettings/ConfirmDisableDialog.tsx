@@ -14,17 +14,17 @@ export function ConfirmDisableDialog({ onCancel, onConfirm }: ConfirmDisableDial
   const { t } = useTranslation(['common', 'settings']);
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60">
-      <div className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
-        <h3 className="text-base font-semibold text-gray-100 mb-2">{t('settings:confirmDisable.title')}</h3>
-        <p className="text-sm text-gray-300 mb-3">{t('settings:confirmDisable.body')}</p>
-        <p className="text-sm text-gray-400 mb-5">
-          <span className="text-gray-200 font-medium">{t('settings:confirmDisable.preserved')}</span>{' '}
+      <div className="bg-white border border-gray-300 rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
+        <h3 className="text-base font-semibold text-gray-900 mb-2">{t('settings:confirmDisable.title')}</h3>
+        <p className="text-sm text-gray-700 mb-3">{t('settings:confirmDisable.body')}</p>
+        <p className="text-sm text-gray-500 mb-5">
+          <span className="text-gray-800 font-medium">{t('settings:confirmDisable.preserved')}</span>{' '}
           {t('settings:confirmDisable.preservedDetail')}
         </p>
         <div className="flex gap-2 justify-end">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
           >
             {t('common:actions.cancel')}
           </button>

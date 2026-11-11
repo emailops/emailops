@@ -6,8 +6,10 @@ pub mod gmail_calendar;
 pub mod header_capture;
 pub(crate) mod http_client;
 pub(crate) mod http_retry;
+pub mod ics_feed_calendar;
 pub mod imap;
 pub mod imap_search;
+mod imap_session;
 pub mod mime_builder;
 #[cfg(any(test, debug_assertions))]
 pub mod mock;

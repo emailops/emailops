@@ -56,3 +56,25 @@ pub async fn create_skill(state: State<'_, AppState>, name: String) -> Result<()
 pub async fn delete_skill(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
     skills::delete_skill(&state.db, &name)
 }
+
+/// Switch one bundled skill on or off for the chat.
+#[tauri::command]
+pub async fn set_bundled_skill_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<(), AppError> {
+    skills::set_bundled_skill_enabled(&state.db, &name, enabled)
+}
+
+/// The full text of a bundled skill, for reading it in the Skills view.
+#[tauri::command]
+pub async fn read_bundled_skill(name: String) -> Result<String, AppError> {
+    skills::read_bundled_source(&name).map(str::to_string)
+}
+
+/// Create an editable user skill from a bundled one.
+#[tauri::command]
+pub async fn copy_bundled_skill(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
+    skills::copy_bundled_skill(&state.db, &name)
+}

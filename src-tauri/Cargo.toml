@@ -1,6 +1,6 @@
 [package]
 name = "emailops"
-version = "0.6.15"
+version = "0.6.18"
 description = "Privacy-first, AI-native email client"
 authors = ["Gero DP"]
 edition = "2021"
@@ -44,14 +44,18 @@ tauri-plugin-notification = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full", "test-util"] }
-# Still on 0.39: `refinery` 0.9 capped its rusqlite range at <=0.39. Since
-# refinery 0.10 allows <=0.40, the rusqlite bump is unblocked but not done yet.
-rusqlite = { version = "0.39", features = ["bundled", "backup"] }
+# Must stay within the rusqlite range `refinery-core` accepts (one rusqlite /
+# libsqlite3-sys in the tree); refinery-core 0.10.1 accepts 0.41.
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 refinery = { version = "0.10", features = ["rusqlite"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+# RFC 5545 recurrence expansion for ICS-feed calendars (sync::ics_feed_calendar).
+rrule = "0.14"
+# Text of an open PDF attachment for the chat (services::pdf_text).
+pdf_oxide = { version = "0.3.78", default-features = false, features = ["legacy-crypto"] }
 # Pinned to 0.12 until `oauth2` ships a release whose `AsyncHttpClient`
 # impl is wired against reqwest 0.13 (5.0.0 still requires 0.12).
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -77,7 +81,7 @@ clap = { version = "4", features = ["derive"] }
 dirs = "7"
 # Interactive REPL line editor for `emailops-cli` (cli feature only). Optional
 # so it never touches default/release desktop builds.
-reedline = { version = "0.52", optional = true }
+reedline = { version = "0.53", optional = true }
 # Secure (no-echo) password prompt for `emailops-cli accounts add imap` (cli
 # feature only). Optional so it never touches default/release desktop builds.
 rpassword = { version = "7", optional = true }
@@ -91,7 +95,9 @@ unicode-normalization = "0.1.25"
 regex = "1"
 sqlite-vec = "0.1.9"
 async-trait = "0.1"
-imap = { version = "2", features = ["native-tls"] }
+# Fork of 2.4.1: a server line the parser rejects no longer panics the sync (see
+# docs/DECISIONS.md). Bump `rev` by pinning a commit of its emailops/2.4-panic-free branch.
+imap = { git = "https://github.com/emailops/rust-imap", rev = "baa933d5c37e145499fca1e1cbb779b3f944b6a1", features = ["native-tls"] }
 native-tls = "0.2"
 lettre = { version = "0.11.22", features = ["tokio1", "tokio1-native-tls", "builder"] }
 mailparse = "0.18"
@@ -108,7 +114,7 @@ sys-locale = "0.3"
 fd-lock = "4"
 # Physical RAM probe. Default features pull in disk/network/component/user
 # collectors we never touch, so only `system` is enabled.
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 # Free-space probe (`statvfs` on Unix, `GetDiskFreeSpaceExW` on Windows).
 fs4 = { version = "1.1", default-features = false, features = ["sync"] }
 # Eval harness deps (used by examples/chat_eval.rs)
@@ -131,7 +137,7 @@ opentelemetry      = { version = "0.33", optional = true }
 opentelemetry_sdk  = { version = "0.33", optional = true }
 opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
 yrs = "0.28"
-calamine = { version = "0.36", features = ["dates"] }
+calamine = { version = "0.38", features = ["dates"] }
 
 [features]
 # Enables tauri::test::mock_builder for the eval examples so they can build an

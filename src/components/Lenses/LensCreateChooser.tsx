@@ -31,11 +31,11 @@ export function LensCreateChooser({ open, onClose, onManual, onChat }: LensCreat
     <button
       type="button"
       onClick={onClick}
-      className="flex flex-1 flex-col items-center gap-2 rounded-lg border border-gray-700 bg-[#1e1e1e]/60 p-5 text-center transition-colors hover:border-blue-500/60 hover:bg-blue-900/10"
+      className="flex flex-1 flex-col items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-5 text-center transition-colors hover:border-blue-500/60 hover:bg-blue-50"
     >
       <span className="text-2xl leading-none">{icon}</span>
-      <span className="text-sm font-medium text-gray-100">{label}</span>
-      <span className="text-[11px] leading-snug text-gray-400">{hint}</span>
+      <span className="text-sm font-medium text-gray-900">{label}</span>
+      <span className="text-[11px] leading-snug text-gray-500">{hint}</span>
     </button>
   );
 

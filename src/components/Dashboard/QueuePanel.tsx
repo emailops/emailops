@@ -22,12 +22,12 @@ function HistoryRow({ entry, accounts }: { entry: TaskHistoryEntry; accounts: Ac
   const ok = entry.status === 'ok';
   return (
     <li className="flex items-center justify-between gap-2">
-      <span className="truncate text-gray-300">{formatTaskLabel(entry.name, accounts)}</span>
+      <span className="truncate text-gray-700">{formatTaskLabel(entry.name, accounts)}</span>
       <span className="flex items-center gap-1.5 shrink-0">
-        <span className="text-gray-400">{formatDuration(entry.durationSecs)}</span>
+        <span className="text-gray-500">{formatDuration(entry.durationSecs)}</span>
         <span
           className={`px-1 rounded text-[10px] font-semibold ${
-            ok ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'
+            ok ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
           }`}
         >
           {ok ? 'OK' : 'KO'}
@@ -39,9 +39,9 @@ function HistoryRow({ entry, accounts }: { entry: TaskHistoryEntry; accounts: Ac
 
 function TaskRow({ task, accounts, suffix }: { task: TaskInfo; accounts: Account[]; suffix?: string }) {
   return (
-    <li className="text-gray-200 flex justify-between gap-2">
+    <li className="text-gray-800 flex justify-between gap-2">
       <span className="truncate">{formatTaskLabel(task.name, accounts)}</span>
-      {suffix && <span className="text-gray-400 shrink-0">{suffix}</span>}
+      {suffix && <span className="text-gray-500 shrink-0">{suffix}</span>}
     </li>
   );
 }
@@ -57,13 +57,13 @@ function QueueColumn({
 }) {
   const { t } = useTranslation(['dashboard']);
   return (
-    <div className="border border-gray-800 bg-gray-900 rounded p-3 text-xs font-mono">
+    <div className="border border-gray-200 bg-white rounded p-3 text-xs font-mono">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-gray-200 font-semibold">{label}</div>
-        <div className="text-gray-400">concurrency {snapshot.concurrency}</div>
+        <div className="text-gray-800 font-semibold">{label}</div>
+        <div className="text-gray-500">concurrency {snapshot.concurrency}</div>
       </div>
 
-      <div className="text-gray-400 mb-1">Running ({snapshot.running.length})</div>
+      <div className="text-gray-500 mb-1">Running ({snapshot.running.length})</div>
       {snapshot.running.length === 0 ? (
         <div className="text-gray-500 italic mb-2">{t('dashboard:queues.idle')}</div>
       ) : (
@@ -74,7 +74,7 @@ function QueueColumn({
         </ul>
       )}
 
-      <div className="text-gray-400 mb-1">Pending ({snapshot.pending.length})</div>
+      <div className="text-gray-500 mb-1">Pending ({snapshot.pending.length})</div>
       {snapshot.pending.length === 0 ? (
         <div className="text-gray-500 italic">{t('dashboard:queues.empty')}</div>
       ) : (
@@ -86,7 +86,7 @@ function QueueColumn({
         </ul>
       )}
 
-      <div className="text-gray-400 mb-1 mt-2">Past {snapshot.history.length}</div>
+      <div className="text-gray-500 mb-1 mt-2">Past {snapshot.history.length}</div>
       {snapshot.history.length === 0 ? (
         <div className="text-gray-500 italic">{t('dashboard:queues.noHistory')}</div>
       ) : (

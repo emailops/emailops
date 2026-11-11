@@ -56,20 +56,20 @@ describe('production CSP hardening', () => {
     expect(directive(csp, 'frame-src')).not.toContain('blob:');
   });
 
-  // `data:` however is LOAD-BEARING and must stay. AttachmentViewer builds a
-  // `data:<mime>;base64,…` URI and renders it through `<object>` for PDFs and
-  // `<iframe>` for HTML attachments (AttachmentTabView does the same). Removing
-  // `data:` here silently breaks attachment preview — it looks like a safe
-  // hardening step and is not. Pinned so nobody "tightens" it again.
-  it('keeps data: in object-src and frame-src for the attachment viewer', () => {
+  // Nothing embeds plugins: both attachment viewers draw PDFs in an
+  // `<iframe>`, so `<object>` / `<embed>` are refused outright.
+  it('allows no plugin content at all', () => {
     const csp = tauriConf.app.security.csp;
-    expect(directive(csp, 'object-src')).toContain('data:');
-    expect(directive(csp, 'frame-src')).toContain('data:');
+    expect(directive(csp, 'object-src')).toBe("object-src 'none'");
   });
 
-  it('still allows the asset protocol needed by the attachment viewer', () => {
+  // `data:` in frame-src is LOAD-BEARING and must stay. The attachment viewers
+  // build a `data:<mime>;base64,…` URI and render it in an `<iframe>`.
+  // Removing `data:` here silently breaks attachment preview — it looks like
+  // a safe hardening step and is not. Pinned so nobody "tightens" it again.
+  it('keeps data: and asset: in frame-src for the attachment viewers', () => {
     const csp = tauriConf.app.security.csp;
-    expect(directive(csp, 'object-src')).toContain('asset:');
+    expect(directive(csp, 'frame-src')).toContain('data:');
     expect(directive(csp, 'frame-src')).toContain('asset:');
   });
 

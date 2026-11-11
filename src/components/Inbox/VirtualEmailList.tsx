@@ -1,5 +1,5 @@
 import { observeElementRect, type Rect, useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { allowEmailDragOver, ignoreEmailDrop } from '@/lib/emailDrag';
 import { measuredRowHeight, visibleScrollRect } from '@/lib/rowMeasure';
@@ -29,7 +29,14 @@ interface VirtualEmailListProps {
   isLoadingMore: boolean;
   hasMore: boolean;
   isSyncing: boolean;
+  /** The last page failed: scrolling stops asking and Retry takes over. */
+  pageFailed?: boolean;
+  onRetry?: () => void;
+  /** The list came back from `display: none`. */
+  onVisible?: () => void;
   emptyStateMessage?: string;
+  /** The way out of the empty state, shown under its message. */
+  emptyStateAction?: { label: string; onClick: () => void };
   onSelectEmail: (email: Email) => void;
   onLoadMore: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
@@ -42,6 +49,12 @@ interface VirtualEmailListProps {
   /** Unified ("All accounts") mode: per-account color bar. Returns undefined
    *  outside unified mode so rows render exactly as before. */
   getAccountBadge?: (email: Email) => { colorClass: string; label: string; chip?: boolean } | undefined;
+  /** Address of the account each row belongs to (see `EmailRow.ownerEmail`). */
+  getOwnerEmail?: (email: Email) => string | undefined;
+  /** See `EmailRow.nameOf`. */
+  nameOf?: (accountId: string, address: string) => string | undefined;
+  /** The list is the Sent view (see `rowParty`). */
+  inSentView?: boolean;
 }
 
 /**
@@ -59,7 +72,11 @@ export function VirtualEmailList({
   isLoadingMore,
   hasMore,
   isSyncing,
+  pageFailed = false,
+  onRetry,
+  onVisible,
   emptyStateMessage,
+  emptyStateAction,
   onSelectEmail,
   onLoadMore,
   onAddSenderFilter,
@@ -70,8 +87,11 @@ export function VirtualEmailList({
   onChatAboutThread,
   compact = false,
   getAccountBadge,
+  getOwnerEmail,
+  nameOf,
+  inSentView = false,
 }: VirtualEmailListProps) {
-  const { t } = useTranslation(['inbox']);
+  const { t } = useTranslation(['inbox', 'common']);
 
   // Multi-select. The selection lives in a store (the bulk toolbar and
   // keyboard shortcuts act on it too); rows that leave the list leave it.
@@ -140,6 +160,13 @@ export function VirtualEmailList({
   // because what matters is what the browser actually did to scrollTop.
   const restoreRef = useRef<ScrollRestoreState>(INITIAL_SCROLL_RESTORE);
 
+  // A hidden list must not walk itself page by page, so the load-more below
+  // skips it and needs a nudge once the list is back.
+  const wasHiddenRef = useRef(false);
+  const [shownCount, setShownCount] = useState(0);
+  const onVisibleRef = useRef(onVisible);
+  onVisibleRef.current = onVisible;
+
   // Put the virtualizer back in step with the container whenever the two have
   // drifted apart. Restoring scrollTop is not enough on its own: the write only
   // resyncs the virtualizer through the scroll event it happens to fire, and it
@@ -168,8 +195,15 @@ export function VirtualEmailList({
     let rafId: number | null = null;
 
     const observe = () => {
+      const hidden = el.clientHeight === 0;
+      if (wasHiddenRef.current && !hidden) {
+        setShownCount((count) => count + 1);
+        onVisibleRef.current?.();
+      }
+      wasHiddenRef.current = hidden;
+
       const plan = planScrollRestore(restoreRef.current, {
-        hidden: el.clientHeight === 0,
+        hidden,
         scrollTop: el.scrollTop,
       });
       restoreRef.current = plan.state;
@@ -202,11 +236,19 @@ export function VirtualEmailList({
     };
   }, [scrollContainerRef, resyncVirtualizer]);
 
-  // Scroll focused email into view using the virtualizer (avoids inline ref callbacks)
+  // Scroll focused email into view using the virtualizer (avoids inline ref
+  // callbacks). Once per focus, like the cursor below: the focus outlives a
+  // background refresh, which must not pull the user back to it.
+  const scrolledFocusRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusEmailId) return;
+    if (focusEmailId === scrolledFocusRef.current) return;
+    if (!focusEmailId) {
+      scrolledFocusRef.current = null;
+      return;
+    }
     const index = emails.findIndex((e) => e.id === focusEmailId);
     if (index === -1) return;
+    scrolledFocusRef.current = focusEmailId;
     const raf = requestAnimationFrame(() => {
       virtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
     });
@@ -231,15 +273,27 @@ export function VirtualEmailList({
   // Infinite scroll: load more when near bottom
   const virtualItems = virtualizer.getVirtualItems();
   const lastVirtualItem = virtualItems[virtualItems.length - 1];
+  // biome-ignore lint/correctness/useExhaustiveDependencies: shownCount is the trigger after a hide
   useEffect(() => {
-    if (!lastVirtualItem) return;
+    if (!lastVirtualItem || pageFailed) return;
+    if (!scrollContainerRef.current?.clientHeight) return;
     if (lastVirtualItem.index >= emails.length - 5 && hasMore && !isLoadingMore) {
       onLoadMore();
     }
-  }, [lastVirtualItem?.index, emails.length, hasMore, isLoadingMore, onLoadMore, lastVirtualItem]);
+  }, [
+    lastVirtualItem?.index,
+    emails.length,
+    hasMore,
+    isLoadingMore,
+    onLoadMore,
+    lastVirtualItem,
+    pageFailed,
+    scrollContainerRef,
+    shownCount,
+  ]);
 
   if (emails.length === 0) {
-    const message = emptyStateMessage ?? (isSyncing ? 'Syncing emails...' : 'No emails match the selected filters');
+    const message = emptyStateMessage ?? t(isSyncing ? 'inbox:emptyState.syncing' : 'inbox:emptyState.noFilterResults');
     return (
       <div ref={scrollContainerRef as React.LegacyRef<HTMLDivElement>} className="flex-1 overflow-y-auto">
         <div className="p-8 text-center">
@@ -252,6 +306,15 @@ export function VirtualEmailList({
             />
           </svg>
           <p className="mt-3 text-sm text-gray-500">{message}</p>
+          {emptyStateAction && (
+            <button
+              type="button"
+              onClick={emptyStateAction.onClick}
+              className="mt-3 px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
+            >
+              {emptyStateAction.label}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -277,6 +340,8 @@ export function VirtualEmailList({
           const email = emails[virtualRow.index];
           return (
             <div
+              // `bg-white` as a class (not an inline colour) so the dark theme can remap it.
+              className="bg-white"
               key={virtualRow.key}
               ref={virtualizer.measureElement}
               data-index={virtualRow.index}
@@ -291,7 +356,6 @@ export function VirtualEmailList({
                 top: 0,
                 left: 0,
                 width: '100%',
-                backgroundColor: 'white',
                 overflow: 'hidden',
                 transform: `translateY(${virtualRow.start}px)`,
               }}
@@ -315,6 +379,9 @@ export function VirtualEmailList({
                 onChatAboutThread={onChatAboutThread}
                 compact={compact}
                 accountBadge={getAccountBadge?.(email)}
+                ownerEmail={getOwnerEmail?.(email)}
+                nameOf={nameOf}
+                inSentView={inSentView}
                 isChecked={selectedIds.has(email.id)}
                 selectionActive={selectionActive}
                 onCheck={({ range }) => (range ? selectRange(order, email.id) : toggleSelected(email.id))}
@@ -329,8 +396,23 @@ export function VirtualEmailList({
           <p className="mt-2 text-xs text-gray-500">{t('inbox:loadingMoreEmails')}</p>
         </div>
       )}
+      {pageFailed && (
+        <div className="p-4 text-center">
+          <p className="text-xs text-gray-500">{t('inbox:list.pageFailed')}</p>
+          <button
+            type="button"
+            data-testid="page-retry"
+            onClick={onRetry}
+            className="mt-2 px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
+          >
+            {t('common:actions.retry')}
+          </button>
+        </div>
+      )}
       {!hasMore && emails.length > 0 && (
-        <div className="p-4 text-center text-xs text-gray-400">{t('inbox:noMoreEmails')}</div>
+        <div className="p-4 text-center text-xs text-gray-400">
+          {t(isSyncing ? 'inbox:noMoreEmailsSyncing' : 'inbox:noMoreEmails')}
+        </div>
       )}
     </div>
   );

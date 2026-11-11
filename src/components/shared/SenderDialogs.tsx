@@ -16,7 +16,7 @@ import { useToastStore } from '@/stores/toastStore';
 const PRIMARY =
   'rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50';
 const DANGER = 'rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50';
-const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700';
+const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100';
 
 export function SenderDialogs() {
   const dialog = useSenderStore((s) => s.dialog);
@@ -100,7 +100,7 @@ function UnsubscribeDialog({ request, onClose }: { request: UnsubscribeRequest; 
           </div>
         }
       >
-        <p className="text-sm text-gray-300">
+        <p className="text-sm text-gray-700">
           {option.kind === 'link' ? t('inbox:sender.unsubscribeLinkDone') : t('inbox:sender.unsubscribeDone', { name })}
         </p>
       </Modal>
@@ -132,11 +132,11 @@ function UnsubscribeDialog({ request, onClose }: { request: UnsubscribeRequest; 
       }
     >
       {error && (
-        <p role="alert" className="mb-3 rounded border border-red-800 bg-red-950/50 p-2 text-sm text-red-300">
+        <p role="alert" className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">
           {error}
         </p>
       )}
-      <p className="text-sm text-gray-300">{explanation}</p>
+      <p className="text-sm text-gray-700">{explanation}</p>
     </Modal>
   );
 }
@@ -152,14 +152,14 @@ function BlockDialog({ request, onClose }: { request: BlockRequest; onClose: () 
   // Default on both ways: blocking files their mail in Spam, unblocking
   // brings it back — the two are each other's inverse.
   const [moveMail, setMoveMail] = useState(true);
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const isBlock = request.type === 'block';
   const { address } = request;
 
+  // Moving a sender's mail can take a while (one provider call per message),
+  // so the dialog closes on confirm and the result — or the failure — arrives
+  // as a toast and in the log.
   const handleConfirm = async () => {
-    setWorking(true);
-    setError(null);
+    onClose();
     // What is open now: if the block files it in Spam, the next conversation
     // opens (auto-advance) — unless the user has moved on meanwhile.
     const ticket = beginLeave();
@@ -183,12 +183,10 @@ function BlockDialog({ request, onClose }: { request: BlockRequest; onClose: () 
         const partial = report.failed > 0 ? ` · ${t('inbox:sender.blockPartial', { count: report.failed })}` : '';
         addToast({ message: message + partial, sticky: report.failed > 0 });
       }
-      onClose();
     } catch (err) {
       const message = `${isBlock ? t('inbox:sender.blockFailed') : t('inbox:sender.unblockFailed')}: ${errorText(err)}`;
       addLog('error', 'account', message);
-      setError(message);
-      setWorking(false);
+      addToast({ message, sticky: true });
     }
   };
 
@@ -208,7 +206,6 @@ function BlockDialog({ request, onClose }: { request: BlockRequest; onClose: () 
             type="button"
             className={isBlock ? DANGER : PRIMARY}
             data-testid="sender-block-confirm"
-            disabled={working}
             onClick={() => void handleConfirm()}
           >
             {isBlock ? t('inbox:sender.blockConfirm') : t('inbox:sender.unblockConfirm')}
@@ -216,13 +213,8 @@ function BlockDialog({ request, onClose }: { request: BlockRequest; onClose: () 
         </div>
       }
     >
-      {error && (
-        <p role="alert" className="mb-3 rounded border border-red-800 bg-red-950/50 p-2 text-sm text-red-300">
-          {error}
-        </p>
-      )}
-      <p className="text-sm text-gray-300">{isBlock ? t('inbox:sender.blockBody') : t('inbox:sender.unblockBody')}</p>
-      <label className="mt-3 flex items-center gap-2 text-sm text-gray-300">
+      <p className="text-sm text-gray-700">{isBlock ? t('inbox:sender.blockBody') : t('inbox:sender.unblockBody')}</p>
+      <label className="mt-3 flex items-center gap-2 text-sm text-gray-700">
         <input type="checkbox" checked={moveMail} onChange={(e) => setMoveMail(e.target.checked)} />
         {isBlock ? t('inbox:sender.blockMoveExisting') : t('inbox:sender.unblockRestore')}
       </label>

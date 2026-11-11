@@ -1,11 +1,12 @@
-//! `load_skill` — the model's way into the user's skills (`services::skills`).
+//! `load_skill` — reads a reference file of a skill the user invoked.
 //!
-//! Progressive disclosure: the catalog (`- name: description`, one line per
-//! skill) is the skills index the registry renders after the tool list; the
-//! `name` parameter only carries an `enum` of the names. A skill's body is
-//! returned only when the model calls the tool. The catalog changes only when the skills folder does,
-//! so the system prefix stays byte-identical turn to turn and the KV-prefix
-//! cache keeps working.
+//! A skill runs only through `/name` (`services::skills`): its instructions
+//! reach the model in that turn's final user message, so this tool never
+//! returns them. It exists for the `.md` / `.txt` files some skills keep next to
+//! their `SKILL.md`, which are too long to send on every use. It is hidden unless
+//! an enabled skill has such a file, so an install with none pays nothing in the
+//! prompt, and it depends only on the folder, so the system prefix stays
+//! byte-identical turn to turn and the KV-prefix cache keeps working.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -16,6 +17,16 @@ use crate::services::skills;
 
 pub struct LoadSkillTool;
 
+/// Names of the enabled skills that have reference files, sorted.
+fn names_with_files(catalog: &skills::SkillCatalog) -> Vec<&str> {
+    catalog
+        .skills
+        .iter()
+        .filter(|s| !s.files.is_empty())
+        .map(|s| s.name.as_str())
+        .collect()
+}
+
 #[async_trait]
 impl Tool for LoadSkillTool {
     fn name(&self) -> &'static str {
@@ -23,11 +34,11 @@ impl Tool for LoadSkillTool {
     }
 
     fn description(&self) -> &'static str {
-        "Load the instructions of one of the user's skills (saved procedures such as how to write a weekly summary or reply to a vendor). Call it FIRST when the request matches a skill's description, then follow the instructions it returns, using the other tools as they say."
+        "Read one of the reference files listed by a skill the user invoked in this request. Call it only when the skill's instructions need that file."
     }
 
     fn prompt_summary(&self) -> &'static str {
-        "load one of the user's saved skills when the request matches its description; then follow what it returns."
+        "read a reference file listed by a skill the user invoked in this request."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -36,34 +47,33 @@ impl Tool for LoadSkillTool {
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Name of the skill to load (see Skills in the system prompt)."
+                    "description": "Name of the skill."
                 },
                 "file": {
                     "type": "string",
-                    "description": "Optional: one of the skill's reference files, as listed when the skill was loaded."
+                    "description": "One of the skill's reference files, as listed in its instructions."
                 }
             },
-            "required": ["name"]
+            "required": ["name", "file"]
         })
     }
 
     /// The names become an `enum`, so a model with constrained decoding
-    /// cannot invent one. The descriptions ride once, in the skills index the
-    /// registry renders after the tool list (`render_system_prompt_section`).
+    /// cannot invent one.
     fn parameters_schema_for(&self, db: &Database) -> Value {
         let catalog = skills::catalog_for(db);
-        let (_, names) = skills::render_catalog(&catalog.skills);
         let mut schema = self.parameters_schema();
+        let names = names_with_files(&catalog);
         if !names.is_empty() {
             schema["properties"]["name"]["enum"] = json!(names);
         }
         schema
     }
 
-    /// Hidden unless the feature is on AND at least one valid skill exists: an
-    /// install without skills pays nothing in the prompt.
+    /// Hidden unless the feature is on AND an enabled skill has reference
+    /// files: every other install pays nothing in the prompt.
     fn is_available(&self, db: &Database) -> bool {
-        !skills::catalog_for(db).skills.is_empty()
+        !names_with_files(&skills::catalog_for(db)).is_empty()
     }
 
     async fn execute(&self, ctx: &ToolCtx<'_>, args: Value) -> Result<ToolOutput, ToolError> {
@@ -76,20 +86,19 @@ impl Tool for LoadSkillTool {
             .get("file")
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|f| !f.is_empty());
+            .unwrap_or_default();
         let catalog = skills::catalog_for(ctx.db);
-        Ok(ToolOutput::text(match (catalog.get(&requested), file) {
-            (Some(skill), None) => skills::render_skill_block(skill),
-            (Some(skill), Some(file)) => match skills::read_reference(skill, file) {
+        Ok(ToolOutput::text(match catalog.get(&requested) {
+            Some(skill) => match skills::read_reference(skill, file) {
                 Ok(text) => format!(
                     "<skill-file skill=\"{}\" path=\"{file}\">\n{text}\n</skill-file>",
                     skill.name
                 ),
                 Err(msg) => msg,
             },
-            (None, _) => format!(
-                "No skill named \"{requested}\". Available skills: {}.",
-                catalog.names().join(", ")
+            None => format!(
+                "No skill named \"{requested}\". Skills with reference files: {}.",
+                names_with_files(&catalog).join(", ")
             ),
         }))
     }
@@ -126,6 +135,12 @@ mod tests {
         }
     }
 
+    fn add_reference(tmp: &tempfile::TempDir, skill: &str) {
+        let refs = tmp.path().join(skills::SKILLS_DIR).join(skill).join("references");
+        std::fs::create_dir_all(&refs).unwrap();
+        std::fs::write(refs.join("tone.md"), "Always formal.").unwrap();
+    }
+
     #[test]
     fn hidden_when_there_are_no_skills() {
         let (_tmp, db) = db_with_skills(&[]);
@@ -135,35 +150,50 @@ mod tests {
     }
 
     #[test]
-    fn hidden_when_the_feature_is_off() {
+    fn hidden_while_no_enabled_skill_has_a_reference_file() {
         let (_tmp, db) = db_with_skills(&[("weekly-summary", "Weekly recap.", "Group by client.")]);
+        assert!(!LoadSkillTool.is_available(&db));
+        skills::set_bundled_skill_enabled(&db, "inbox-triage", true).unwrap();
+        assert!(!LoadSkillTool.is_available(&db));
+    }
+
+    #[test]
+    fn available_once_a_skill_has_a_reference_file() {
+        let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "See references.")]);
+        add_reference(&tmp, "vendor-reply");
         assert!(LoadSkillTool.is_available(&db));
         db.set_preference(skills::SKILLS_ENABLED_PREF, "false").unwrap();
         assert!(!LoadSkillTool.is_available(&db));
     }
 
     #[test]
-    fn schema_restricts_names_and_leaves_the_catalog_to_the_index() {
-        let (_tmp, db) = db_with_skills(&[
+    fn hidden_when_the_only_skill_with_files_is_switched_off() {
+        let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "See references.")]);
+        add_reference(&tmp, "vendor-reply");
+        skills::set_skill_enabled(&db, "vendor-reply", false).unwrap();
+        assert!(!LoadSkillTool.is_available(&db));
+    }
+
+    #[test]
+    fn schema_names_only_the_skills_with_reference_files() {
+        let (tmp, db) = db_with_skills(&[
             ("weekly-summary", "Weekly recap by client.", "Group by client."),
             ("vendor-reply", "Reply to vendor quotes.", "Be brief."),
         ]);
+        add_reference(&tmp, "vendor-reply");
         let schema = LoadSkillTool.parameters_schema_for(&db);
-        assert_eq!(
-            schema["properties"]["name"]["enum"],
-            json!(["vendor-reply", "weekly-summary"])
-        );
-        assert_eq!(schema["required"], json!(["name"]));
-        assert!(schema["properties"]["file"].is_object(), "{schema}");
-        // Descriptions ride once, in the system-prompt index, not again here.
-        assert!(!schema.to_string().contains("Weekly recap by client."), "{schema}");
+        assert_eq!(schema["properties"]["name"]["enum"], json!(["vendor-reply"]));
+        assert_eq!(schema["required"], json!(["name", "file"]));
+        assert!(!schema.to_string().contains("Reply to vendor quotes."), "{schema}");
     }
 
     #[test]
     fn schema_is_byte_identical_across_calls() {
         // The schema is part of the cached system prefix: any drift between
         // turns would force a cold prefill.
-        let (_tmp, db) = db_with_skills(&[("b", "Second.", "x"), ("a", "First.", "y")]);
+        let (tmp, db) = db_with_skills(&[("b", "Second.", "x"), ("a", "First.", "y")]);
+        add_reference(&tmp, "a");
+        add_reference(&tmp, "b");
         assert_eq!(
             LoadSkillTool.parameters_schema_for(&db).to_string(),
             LoadSkillTool.parameters_schema_for(&db).to_string()
@@ -171,30 +201,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_the_skill_body_for_a_known_name() {
-        let (_tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Always ask for the PO number.")]);
+    async fn never_returns_a_skills_instructions() {
+        // A skill runs only when the user types `/name`: the model cannot pull
+        // one in by itself.
+        let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Always ask for the PO number.")]);
+        add_reference(&tmp, "vendor-reply");
         let out = LoadSkillTool
             .execute(&ctx(&db), json!({"name": "vendor-reply"}))
             .await
             .unwrap();
-        assert!(out.text.contains("<skill name=\"vendor-reply\">"), "{}", out.text);
-        assert!(out.text.contains("Always ask for the PO number."));
+        assert!(!out.text.contains("Always ask for the PO number."), "{}", out.text);
+        assert!(out.text.contains("references/tone.md"), "{}", out.text);
     }
 
     #[tokio::test]
     async fn tolerates_a_slash_and_case_in_the_name() {
-        let (_tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Body.")]);
+        let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Body.")]);
+        add_reference(&tmp, "vendor-reply");
         let out = LoadSkillTool
-            .execute(&ctx(&db), json!({"name": "/Vendor-Reply"}))
+            .execute(
+                &ctx(&db),
+                json!({"name": "/Vendor-Reply", "file": "references/tone.md"}),
+            )
             .await
             .unwrap();
-        assert!(out.text.contains("Body."), "{}", out.text);
+        assert!(out.text.contains("Always formal."), "{}", out.text);
     }
 
     #[tokio::test]
-    async fn an_unknown_name_lists_the_available_skills() {
-        let (_tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Body.")]);
-        let out = LoadSkillTool.execute(&ctx(&db), json!({"name": "nope"})).await.unwrap();
+    async fn an_unknown_name_lists_the_skills_with_files() {
+        let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "Body.")]);
+        add_reference(&tmp, "vendor-reply");
+        let out = LoadSkillTool
+            .execute(&ctx(&db), json!({"name": "nope", "file": "x.md"}))
+            .await
+            .unwrap();
         assert!(out.text.contains("No skill named \"nope\""), "{}", out.text);
         assert!(out.text.contains("vendor-reply"));
     }
@@ -202,9 +243,7 @@ mod tests {
     #[tokio::test]
     async fn reads_a_listed_reference_file() {
         let (tmp, db) = db_with_skills(&[("vendor-reply", "Reply to vendors.", "See references.")]);
-        let refs = tmp.path().join(skills::SKILLS_DIR).join("vendor-reply/references");
-        std::fs::create_dir_all(&refs).unwrap();
-        std::fs::write(refs.join("tone.md"), "Always formal.").unwrap();
+        add_reference(&tmp, "vendor-reply");
         let out = LoadSkillTool
             .execute(&ctx(&db), json!({"name": "vendor-reply", "file": "references/tone.md"}))
             .await

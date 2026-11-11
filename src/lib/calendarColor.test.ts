@@ -3,6 +3,7 @@ import {
   type CalendarColorSource,
   calendarColor,
   calendarColorMap,
+  calendarKey,
   eventBlockStyle,
   eventChipStyle,
   FALLBACK_CALENDAR_COLORS,
@@ -13,8 +14,8 @@ import {
   withAlpha,
 } from './calendarColor';
 
-function cal(providerCalendarId: string, color: string, isVisible = true): CalendarColorSource {
-  return { providerCalendarId, color, isVisible };
+function cal(providerCalendarId: string, color: string, isVisible = true, accountId = 'acc'): CalendarColorSource {
+  return { accountId, providerCalendarId, color, isVisible };
 }
 
 describe('isHexColor', () => {
@@ -120,20 +121,26 @@ describe('eventChipStyle', () => {
 });
 
 describe('calendarColorMap', () => {
-  it('maps each calendar id to its resolved colour', () => {
+  it("maps each account's calendar to its resolved colour", () => {
     const map = calendarColorMap([cal('primary', '#039be5'), cal('team@g.com', '#33b679')]);
-    expect(map.get('primary')).toBe('#039be5');
-    expect(map.get('team@g.com')).toBe('#33b679');
+    expect(map.get(calendarKey('acc', 'primary'))).toBe('#039be5');
+    expect(map.get(calendarKey('acc', 'team@g.com'))).toBe('#33b679');
+  });
+
+  it('keeps two accounts apart when they use the same calendar id', () => {
+    const map = calendarColorMap([cal('primary', '#039be5', true, 'a'), cal('primary', '#33b679', true, 'b')]);
+    expect(map.get(calendarKey('a', 'primary'))).toBe('#039be5');
+    expect(map.get(calendarKey('b', 'primary'))).toBe('#33b679');
   });
 
   it('resolves a fallback for calendars the provider gave no colour', () => {
     const map = calendarColorMap([cal('team@g.com', '')]);
-    expect(FALLBACK_CALENDAR_COLORS).toContain(map.get('team@g.com'));
+    expect(FALLBACK_CALENDAR_COLORS).toContain(map.get(calendarKey('acc', 'team@g.com')));
   });
 
   it('includes hidden calendars, so re-showing one needs no refetch', () => {
     const map = calendarColorMap([cal('team@g.com', '#33b679', false)]);
-    expect(map.get('team@g.com')).toBe('#33b679');
+    expect(map.get(calendarKey('acc', 'team@g.com'))).toBe('#33b679');
   });
 });
 
@@ -144,7 +151,7 @@ describe('hiddenCalendarIds', () => {
       cal('holidays@g.com', '#0b8043', false),
       cal('team@g.com', '#33b679', false),
     ]);
-    expect(hidden).toEqual(new Set(['holidays@g.com', 'team@g.com']));
+    expect(hidden).toEqual(new Set([calendarKey('acc', 'holidays@g.com'), calendarKey('acc', 'team@g.com')]));
   });
 
   it('is empty when everything is visible', () => {
@@ -154,13 +161,13 @@ describe('hiddenCalendarIds', () => {
 
 describe('visibleEvents', () => {
   const events = [
-    { id: 'a', calendarId: 'primary' },
-    { id: 'b', calendarId: 'team@g.com' },
-    { id: 'c', calendarId: 'primary' },
+    { id: 'a', accountId: 'acc', calendarId: 'primary' },
+    { id: 'b', accountId: 'acc', calendarId: 'team@g.com' },
+    { id: 'c', accountId: 'acc', calendarId: 'primary' },
   ];
 
   it('drops events belonging to hidden calendars', () => {
-    const shown = visibleEvents(events, new Set(['team@g.com']));
+    const shown = visibleEvents(events, new Set([calendarKey('acc', 'team@g.com')]));
     expect(shown.map((e) => e.id)).toEqual(['a', 'c']);
   });
 
@@ -169,18 +176,28 @@ describe('visibleEvents', () => {
   });
 
   it('can hide every event', () => {
-    expect(visibleEvents(events, new Set(['primary', 'team@g.com']))).toEqual([]);
+    expect(visibleEvents(events, new Set([calendarKey('acc', 'primary'), calendarKey('acc', 'team@g.com')]))).toEqual(
+      [],
+    );
   });
 
   it('keeps the same meeting shown via a visible calendar when its copy in a hidden one is dropped', () => {
     // Providers repeat one event id across every calendar it appears in, so
     // hiding one calendar must not hide the copy in another.
     const duplicated = [
-      { id: 'acc:primary:ev', calendarId: 'primary' },
-      { id: 'acc:team@g.com:ev', calendarId: 'team@g.com' },
+      { id: 'acc:primary:ev', accountId: 'acc', calendarId: 'primary' },
+      { id: 'acc:team@g.com:ev', accountId: 'acc', calendarId: 'team@g.com' },
     ];
-    const shown = visibleEvents(duplicated, new Set(['team@g.com']));
+    const shown = visibleEvents(duplicated, new Set([calendarKey('acc', 'team@g.com')]));
     expect(shown).toHaveLength(1);
     expect(shown[0].calendarId).toBe('primary');
+  });
+
+  it("hiding one account's calendar leaves another account's calendar of the same id shown", () => {
+    const mixed = [
+      { id: 'x', accountId: 'a', calendarId: 'primary' },
+      { id: 'y', accountId: 'b', calendarId: 'primary' },
+    ];
+    expect(visibleEvents(mixed, new Set([calendarKey('a', 'primary')])).map((e) => e.id)).toEqual(['y']);
   });
 });

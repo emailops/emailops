@@ -15,7 +15,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeetingLink {
     pub url: String,
-    /// "meet" | "teams" | "webex" | "zoom" | "gotomeeting" | "jitsi" | "other"
+    /// "meet" | "teams" | "webex" | "zoom" | "gotomeeting" | "jitsi" | "proton_meet" | "other"
     pub platform: &'static str,
 }
 
@@ -81,6 +81,8 @@ fn classify_platform(url: &str) -> Option<&'static str> {
         Some("gotomeeting")
     } else if host == "meet.jit.si" {
         Some("jitsi")
+    } else if host == "meet.proton.me" {
+        Some("proton_meet")
     } else {
         None
     }
@@ -187,6 +189,17 @@ mod tests {
         let link = extract_meeting_link(&none(), "", "https://global.gotomeeting.com/join/123456789")
             .expect("gotomeeting link");
         assert_eq!(link.platform, "gotomeeting");
+    }
+
+    #[test]
+    fn extracts_proton_meet_link_from_text_and_structured_urls() {
+        // Proton Meet links carry the meeting id in the path and the password
+        // in the fragment; both must survive extraction.
+        let url = "https://meet.proton.me/id-AAA1A8A1A0#pwd-DDDDDDDDDDDD";
+        let from_text = extract_meeting_link(&none(), "", &format!("Join here: {url}")).expect("link");
+        assert_eq!((from_text.url.as_str(), from_text.platform), (url, "proton_meet"));
+        let structured = extract_meeting_link(&[url.to_string()], "", "").expect("link");
+        assert_eq!(structured.platform, "proton_meet");
     }
 
     #[test]

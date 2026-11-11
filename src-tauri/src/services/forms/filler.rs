@@ -17,6 +17,8 @@
 
 use super::registry::{FieldDef, FieldKind, FormDef};
 use crate::ai::provider::{AIProvider, CompletionOptions};
+use crate::db::Database;
+use crate::services::ai::AiService;
 use serde_json::{Map, Value};
 
 /// What the model produced for a form, after filtering and coercion.
@@ -349,6 +351,7 @@ pub(crate) fn split_fill_prompt(
 /// provider error becomes a `FillRun` with no fill, and the caller opens the
 /// form empty.
 pub async fn fill_form(
+    db: &Database,
     provider: &dyn AIProvider,
     template: &str,
     form: &FormDef,
@@ -367,7 +370,7 @@ pub async fn fill_form(
         think: Some(false),
         json_shape: None,
     };
-    match provider.complete_with_prefix(&prefix, &suffix, opts).await {
+    match AiService::complete_with_prefix_metered(db, provider, &prefix, &suffix, opts, "form_fill").await {
         Ok(result) => match parse_fill_with_current(&result.text, form, current_values) {
             Ok(fill) => FillRun {
                 fill: Some(fill),
@@ -496,7 +499,9 @@ mod tests {
     async fn a_provider_failure_is_reported_as_one_not_as_bad_json() {
         let provider = crate::ai::provider::FakeAiProvider::new();
         provider.fail_completions(Some("model crashed"));
+        let db = Database::new_for_testing().expect("test db");
         let run = fill_form(
+            &db,
             &provider,
             "Form: {{form_id}}",
             &LENS_CREATE,
@@ -733,7 +738,9 @@ mod executor_tests {
         provider.push_completion(
             r#"{"name":"Facturas","promptText":"extrae","columns":[{"key":"a","label":"A","type":"string"}]}"#,
         );
+        let db = Database::new_for_testing().expect("test db");
         let run = fill_form(
+            &db,
             &provider,
             FORMS_FILL,
             &LENS_CREATE,
@@ -752,7 +759,9 @@ mod executor_tests {
     async fn an_unusable_reply_yields_no_fill_instead_of_failing_the_turn() {
         let provider = FakeAiProvider::new();
         provider.push_completion("Lo siento, no puedo.");
+        let db = Database::new_for_testing().expect("test db");
         let run = fill_form(
+            &db,
             &provider,
             FORMS_FILL,
             &LENS_CREATE,
@@ -766,11 +775,75 @@ mod executor_tests {
         assert_eq!(run.error, Some(FillError::NoJsonObject));
     }
 
+    fn paid_provider() -> FakeAiProvider {
+        FakeAiProvider::new().with_provider_type(crate::ai::provider::ProviderType::OpenRouter)
+    }
+
+    fn paid_fill(cost_usd: f64) -> crate::ai::provider::CompletionResult {
+        crate::ai::provider::CompletionResult {
+            text: r#"{"name":"Facturas","promptText":"extrae","columns":[{"key":"a","label":"A","type":"string"}]}"#
+                .to_string(),
+            cost_usd,
+            ..Default::default()
+        }
+    }
+
+    async fn fill_on(db: &Database, provider: &FakeAiProvider) -> FillRun {
+        fill_form(
+            db,
+            provider,
+            FORMS_FILL,
+            &LENS_CREATE,
+            "Spanish",
+            "2026-09-23",
+            &serde_json::json!({}),
+            "facturas",
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_paid_fill_counts_against_the_budget() {
+        let db = Database::new_for_testing().expect("test db");
+        let provider = paid_provider();
+        provider.push_completion_result(paid_fill(0.25));
+
+        let run = fill_on(&db, &provider).await;
+
+        assert!(run.fill.is_some());
+        let usage = crate::services::ai::AiService::usage_summary(&db).expect("usage");
+        assert_eq!(usage.total_calls, 1);
+        assert!((usage.total_cost_usd - 0.25).abs() < 1e-9);
+    }
+
+    /// Out of budget the form still opens, empty, as for any provider failure
+    /// — without a paid call.
+    #[tokio::test]
+    async fn a_spent_budget_yields_no_fill_without_calling_the_provider() {
+        let db = Database::new_for_testing().expect("test db");
+        db.set_preference("ai_monthly_budget", "1.0").expect("budget");
+        let provider = paid_provider();
+        provider.push_completion_result(paid_fill(1.0));
+        fill_on(&db, &provider).await;
+        provider.push_completion_result(paid_fill(1.0));
+
+        let run = fill_on(&db, &provider).await;
+
+        assert!(run.fill.is_none());
+        match run.error {
+            Some(FillError::Provider(message)) => assert!(message.contains("AI budget exceeded"), "{message}"),
+            other => panic!("expected the budget's refusal, got {other:?}"),
+        }
+        assert_eq!(provider.completion_calls().len(), 1, "no paid call past the budget");
+    }
+
     #[tokio::test]
     async fn a_provider_error_yields_no_fill_instead_of_failing_the_turn() {
         let provider = FakeAiProvider::new();
         provider.fail_completions(Some("model unavailable"));
+        let db = Database::new_for_testing().expect("test db");
         let run = fill_form(
+            &db,
             &provider,
             FORMS_FILL,
             &LENS_CREATE,

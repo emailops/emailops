@@ -20,10 +20,10 @@ export function ProviderTab({ active, label, description, onClick, disabled, dis
       title={disabled ? disabledReason : undefined}
       className={`flex-1 text-left px-4 py-3 rounded border transition-colors ${
         disabled
-          ? 'bg-[#242425] border-gray-800 text-gray-600 cursor-not-allowed'
+          ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed'
           : active
-            ? 'bg-primary-900/40 border-primary-600 text-primary-300'
-            : 'bg-[#2a2a2b] border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-300'
+            ? 'bg-primary-50 border-primary-600 text-primary-700'
+            : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
       }`}
     >
       <div className="text-sm font-medium">{label}</div>

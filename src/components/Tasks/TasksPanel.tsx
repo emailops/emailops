@@ -1,7 +1,7 @@
-import { format } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EmailPreviewById } from '@/components/shared/EmailPreviewById';
+import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useMemoryStore } from '@/stores/memoryStore';
@@ -20,15 +20,6 @@ function sectionFor(task: PendingTask, nowSec: number): Section {
   if (task.dueAt < nowSec) return 'overdue';
   if (task.dueAt < nowSec + ONE_DAY) return 'today';
   return 'upcoming';
-}
-
-function formatDue(ts: number | null): string {
-  if (ts == null) return 'No due date';
-  return format(new Date(ts * 1000), 'MMM d, yyyy');
-}
-
-function formatLastTouched(ts: number): string {
-  return format(new Date(ts * 1000), 'MMM d');
 }
 
 export function TasksPanel({ accountId }: TasksPanelProps) {
@@ -356,6 +347,7 @@ interface TaskSectionProps {
 
 function TaskSection({ title, accent, tasks, pendingStatusId, selectedTaskId, onSelect, onStatus }: TaskSectionProps) {
   const { t } = useTranslation(['tasks']);
+  const fmt = useFormatters();
   if (tasks.length === 0) return null;
   return (
     <section>
@@ -387,7 +379,7 @@ function TaskSection({ title, accent, tasks, pendingStatusId, selectedTaskId, on
                 <div className="text-sm text-gray-900 truncate">{task.title}</div>
                 {task.detail && <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{task.detail}</div>}
                 <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
-                  <span>{formatDue(task.dueAt)}</span>
+                  <span>{task.dueAt == null ? t('tasks:panel.sections.noDate') : fmt.date(task.dueAt)}</span>
                   {task.company && (
                     <span
                       className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 uppercase text-[10px] font-semibold"
@@ -471,6 +463,7 @@ interface WaitingSectionProps {
 
 function WaitingOnThemSection({ isLoading, threads, selectedThreadId, onSelect }: WaitingSectionProps) {
   const { t } = useTranslation(['tasks']);
+  const fmt = useFormatters();
   if (isLoading) {
     return <div className="text-sm text-gray-500">{t('tasks:panel.loadingThreads')}</div>;
   }
@@ -494,8 +487,10 @@ function WaitingOnThemSection({ isLoading, threads, selectedThreadId, onSelect }
               <div className="text-sm text-gray-900 truncate">{thread.summary ?? thread.threadId}</div>
               {thread.commitment && <div className="text-xs text-gray-500 mt-0.5">{thread.commitment}</div>}
               <div className="text-xs text-gray-500 mt-1">
-                {t('tasks:panel.lastTouched', { when: formatLastTouched(thread.lastTouchedAt) })}
-                {thread.deadlineAt != null && t('tasks:panel.deadlineSuffix', { date: formatDue(thread.deadlineAt) })}
+                {t('tasks:panel.lastTouched', {
+                  when: fmt.date(thread.lastTouchedAt, { month: 'short', day: 'numeric' }),
+                })}
+                {thread.deadlineAt != null && t('tasks:panel.deadlineSuffix', { date: fmt.date(thread.deadlineAt) })}
               </div>
             </li>
           );

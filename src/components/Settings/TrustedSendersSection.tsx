@@ -72,24 +72,24 @@ export function TrustedSendersSection() {
   }
 
   return (
-    <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
+    <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-200">
       {accounts.map((account) => {
         const senders = sendersByAccount[account.id] ?? [];
         return (
           <div key={account.id} className="px-4 py-3">
-            <p className="text-xs font-medium text-gray-400 mb-2">{account.email}</p>
+            <p className="text-xs font-medium text-gray-500 mb-2">{account.email}</p>
             {senders.length === 0 ? (
               <p className="text-xs text-gray-500">{t('settings:privacy.trustedSenders.none')}</p>
             ) : (
               <ul className="space-y-1">
                 {senders.map((sender) => (
                   <li key={sender} className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-gray-200 truncate font-mono">{sender}</span>
+                    <span className="text-sm text-gray-800 truncate font-mono">{sender}</span>
                     <button
                       type="button"
                       data-sender={sender}
                       onClick={() => handleRevoke(account.id, sender)}
-                      className="text-xs text-primary-400 hover:text-primary-300 transition-colors flex-shrink-0"
+                      className="text-xs text-primary-600 hover:text-primary-700 transition-colors flex-shrink-0"
                     >
                       {t('settings:privacy.trustedSenders.revoke')}
                     </button>

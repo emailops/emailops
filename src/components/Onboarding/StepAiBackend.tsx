@@ -326,14 +326,14 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
       {error && (
         <div
           role="alert"
-          className="sticky top-0 z-10 p-3 bg-[#3b1d1d] border border-red-800 rounded text-red-300 text-sm"
+          className="sticky top-0 z-10 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm"
         >
           {error}
         </div>
       )}
       <div className="space-y-2">
-        <p className="text-sm text-gray-200 font-medium">{t('auth:onboarding.aiBackend.introPrivacy')}</p>
-        <p className="text-xs text-gray-400">{t('auth:onboarding.aiBackend.introModels')}</p>
+        <p className="text-sm text-gray-800 font-medium">{t('auth:onboarding.aiBackend.introPrivacy')}</p>
+        <p className="text-xs text-gray-500">{t('auth:onboarding.aiBackend.introModels')}</p>
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -368,12 +368,12 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
       {backend === 'llamacpp' && (
         <div className="space-y-4">
           <div className="space-y-1">
-            <p className="text-sm text-gray-300">
+            <p className="text-sm text-gray-700">
               {t('auth:onboarding.aiBackend.modelsSourcePrefix')}{' '}
               <button
                 type="button"
                 onClick={handleOpenHuggingFace}
-                className="text-primary-400 hover:text-primary-300 underline underline-offset-2 transition-colors"
+                className="text-primary-600 hover:text-primary-700 underline underline-offset-2 transition-colors"
               >
                 {t('auth:onboarding.aiBackend.modelsSourceLink')}
               </button>
@@ -384,8 +384,8 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
 
           <div>
             <div className="flex items-baseline justify-between mb-1.5">
-              <h3 className="text-sm font-semibold text-gray-200">{t('auth:onboarding.aiBackend.chatModel')}</h3>
-              <span className={`text-xs ${hasLocalChat ? 'text-green-400' : 'text-amber-400'}`}>
+              <h3 className="text-sm font-semibold text-gray-800">{t('auth:onboarding.aiBackend.chatModel')}</h3>
+              <span className={`text-xs ${hasLocalChat ? 'text-green-600' : 'text-amber-600'}`}>
                 {hasLocalChat
                   ? t('auth:onboarding.aiBackend.ready')
                   : t('auth:onboarding.aiBackend.requiredToContinue')}
@@ -414,9 +414,9 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
       )}
 
       {backend === 'ollama' && (
-        <div className="p-3 bg-[#27272a] border border-gray-700 rounded text-xs text-gray-400">
+        <div className="p-3 bg-gray-50 border border-gray-200 rounded text-xs text-gray-500">
           {t('auth:onboarding.aiBackend.ollamaFinishHint')}{' '}
-          <span className="text-gray-200 font-medium">{t('auth:onboarding.aiBackend.ollamaFinishHintOllama')}</span>{' '}
+          <span className="text-gray-800 font-medium">{t('auth:onboarding.aiBackend.ollamaFinishHintOllama')}</span>{' '}
           {t('auth:onboarding.aiBackend.ollamaFinishHintRest')}
         </div>
       )}
@@ -424,7 +424,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
       {backend === 'openrouter' && (
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-300 mb-1">
+            <label className="block text-xs font-medium text-gray-700 mb-1">
               {t('auth:onboarding.aiBackend.apiKey')}
               {orHasSavedKey && (
                 <span className="text-gray-500 font-normal"> {t('auth:onboarding.aiBackend.apiKeySaved')}</span>
@@ -442,20 +442,20 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
                   ? t('auth:onboarding.aiBackend.apiKeyPlaceholderSaved')
                   : t('auth:onboarding.aiBackend.apiKeyPlaceholder')
               }
-              className="w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+              className="w-full bg-white text-gray-900 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
             />
             <p className="text-[11px] text-gray-500 mt-1">
               {t('auth:onboarding.aiBackend.apiKeyHelpPart1', {
                 store: t(credentialStoreKey(api.currentPlatform())),
               })}{' '}
-              <span className="text-gray-400">{t('auth:onboarding.aiBackend.apiKeyHelpUrl')}</span>
+              <span className="text-gray-500">{t('auth:onboarding.aiBackend.apiKeyHelpUrl')}</span>
               {t('auth:onboarding.aiBackend.apiKeyHelpDot')}
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-700 mb-1">
                 {t('auth:onboarding.aiBackend.chatModel')}
               </label>
               <input
@@ -466,11 +466,11 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
                   invalidateTest();
                 }}
                 placeholder={DEFAULT_OPENROUTER_CHAT_MODEL}
-                className="w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+                className="w-full bg-white text-gray-900 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-300 mb-1">
+              <label className="block text-xs font-medium text-gray-700 mb-1">
                 {t('auth:onboarding.aiBackend.embeddingModel')}
               </label>
               <Select
@@ -493,14 +493,14 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
                     invalidateTest();
                   }}
                   placeholder={t('auth:onboarding.aiBackend.embeddingModelPlaceholder')}
-                  className="mt-2 w-full bg-[#27272a] text-gray-200 border border-gray-700 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+                  className="mt-2 w-full bg-white text-gray-900 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
                 />
               )}
             </div>
           </div>
           <p className="text-[11px] text-gray-500">{t('settings:openRouter.embeddingNotice')}</p>
           {orEmbedModel.trim() !== '' && orEmbedModel.trim() !== orValidatedEmbed && (
-            <p className="text-[11px] text-amber-400">{t('auth:onboarding.aiBackend.embeddingNeedsCheck')}</p>
+            <p className="text-[11px] text-amber-600">{t('auth:onboarding.aiBackend.embeddingNeedsCheck')}</p>
           )}
 
           <div className="flex items-center gap-3">
@@ -508,15 +508,15 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
               type="button"
               onClick={() => void handleTestConnection()}
               disabled={testing || !orHasKey || orChatModel.trim() === ''}
-              className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-800 rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {testing ? t('auth:onboarding.aiBackend.testing') : t('auth:onboarding.aiBackend.testConnection')}
             </button>
             {testStatus === 'ok' && (
-              <span className="text-xs text-green-400">{t('auth:onboarding.aiBackend.testOk')}</span>
+              <span className="text-xs text-green-600">{t('auth:onboarding.aiBackend.testOk')}</span>
             )}
             {testStatus === 'fail' && (
-              <span className="text-xs text-red-400 truncate" title={testError ?? undefined}>
+              <span className="text-xs text-red-600 truncate" title={testError ?? undefined}>
                 ✗ {testError || t('auth:onboarding.aiBackend.testFailFallback')}
               </span>
             )}
@@ -530,7 +530,7 @@ export function StepAiBackend({ onBack, onNext }: { onBack: () => void; onNext: 
       <div className="flex justify-between">
         <button
           onClick={onBack}
-          className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+          className="px-4 py-2 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
         >
           {t('auth:onboarding.aiBackend.back')}
         </button>
@@ -579,14 +579,14 @@ function BackendCard({
       title={disabled ? disabledReason : undefined}
       className={`text-left p-3 rounded-lg border-2 transition-colors ${
         disabled
-          ? 'border-gray-800 bg-[#212123] cursor-not-allowed opacity-60'
+          ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-60'
           : selected
-            ? 'border-primary-500 bg-primary-900/15'
-            : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
+            ? 'border-primary-500 bg-primary-50'
+            : 'border-gray-200 bg-white hover:border-gray-300'
       }`}
     >
-      <div className={`text-sm font-semibold ${disabled ? 'text-gray-500' : 'text-gray-100'}`}>{title}</div>
-      <div className={`text-xs mt-0.5 ${selected && !disabled ? 'text-primary-300' : 'text-gray-500'}`}>{subtitle}</div>
+      <div className={`text-sm font-semibold ${disabled ? 'text-gray-500' : 'text-gray-900'}`}>{title}</div>
+      <div className={`text-xs mt-0.5 ${selected && !disabled ? 'text-primary-600' : 'text-gray-500'}`}>{subtitle}</div>
       <div className="text-xs text-gray-500 mt-1">{disabled ? (disabledReason ?? detail) : detail}</div>
     </button>
   );
@@ -626,7 +626,7 @@ function CompactModelRow({
   return (
     <div
       className={`p-2.5 rounded border transition-colors ${
-        isSelected ? 'border-primary-600 bg-primary-900/15' : 'border-gray-700 bg-[#2a2a2b]'
+        isSelected ? 'border-primary-600 bg-primary-50' : 'border-gray-200 bg-white'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -640,7 +640,7 @@ function CompactModelRow({
             >
               <div
                 className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                  isSelected ? 'border-primary-500' : 'border-gray-500'
+                  isSelected ? 'border-primary-500' : 'border-gray-400'
                 }`}
               >
                 {isSelected && <div className="w-2 h-2 rounded-full bg-primary-500" />}
@@ -649,14 +649,14 @@ function CompactModelRow({
           )}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-medium text-gray-200">{model.displayName}</span>
+              <span className="text-xs font-medium text-gray-800">{model.displayName}</span>
               {model.recommended && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-primary-900/50 text-primary-400 rounded border border-primary-800">
+                <span className="text-[10px] px-1.5 py-0.5 bg-primary-50 text-primary-700 rounded border border-primary-200">
                   {t('auth:onboarding.aiBackend.recommendedBadge')}
                 </span>
               )}
               {model.isLocal && (
-                <span className="text-[10px] px-1.5 py-0.5 bg-green-900/40 text-green-400 rounded border border-green-800">
+                <span className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 rounded border border-green-200">
                   {model.isLinked
                     ? t('auth:onboarding.aiBackend.linkedBadge')
                     : t('auth:onboarding.aiBackend.downloadedBadge')}
@@ -677,7 +677,7 @@ function CompactModelRow({
             <button
               type="button"
               onClick={onCancel}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+              className="px-2 py-1 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
             >
               {t('auth:onboarding.aiBackend.cancel')}
             </button>
@@ -686,7 +686,7 @@ function CompactModelRow({
               <button
                 type="button"
                 onClick={onUseExistingFile}
-                className="px-2 py-1 text-xs text-gray-300 hover:text-gray-100 hover:bg-gray-700 rounded border border-gray-600 transition-colors"
+                className="px-2 py-1 text-xs text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded border border-gray-300 transition-colors"
               >
                 {t('auth:onboarding.aiBackend.useExistingFile')}
               </button>
@@ -704,7 +704,7 @@ function CompactModelRow({
 
       {(isDownloading || isVerifying) && progress && (
         <div className="mt-2">
-          <div className="flex items-center justify-between text-[11px] text-gray-400 mb-1">
+          <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
             <span>
               {isVerifying
                 ? t('auth:onboarding.aiBackend.verifying')
@@ -712,7 +712,7 @@ function CompactModelRow({
             </span>
             {isDownloading && <span>{pct}%</span>}
           </div>
-          <div className="h-1 bg-gray-700 rounded-full overflow-hidden">
+          <div className="h-1 bg-gray-200 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${isVerifying ? 'bg-yellow-500' : 'bg-primary-500'}`}
               style={{ width: isVerifying ? '100%' : `${pct}%` }}

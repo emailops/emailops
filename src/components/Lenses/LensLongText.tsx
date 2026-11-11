@@ -31,7 +31,7 @@ export function LongText({ text, className }: { text: string; className: string 
           e.stopPropagation();
           setExpanded((v) => !v);
         }}
-        className="text-[11px] text-blue-400 hover:underline"
+        className="text-[11px] text-blue-600 hover:underline"
       >
         {expanded ? t('lenses:table.showLess') : t('lenses:table.showMore')}
       </button>

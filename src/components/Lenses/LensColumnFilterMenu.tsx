@@ -130,8 +130,8 @@ export function LensColumnFilterMenu({ lensId, column, active, onApply }: LensCo
         aria-label={t('lenses:table.filter.button')}
         aria-pressed={!!active}
         className={`ml-1 rounded p-0.5 align-middle ${
-          active ? 'text-blue-400' : 'text-gray-500 opacity-60 hover:opacity-100'
-        } hover:bg-gray-700`}
+          active ? 'text-blue-600' : 'text-gray-500 opacity-60 hover:opacity-100'
+        } hover:bg-gray-100`}
       >
         <svg className="h-3 w-3" fill={active ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h18l-7 8v6l-4 2v-8L3 5z" />
@@ -141,10 +141,10 @@ export function LensColumnFilterMenu({ lensId, column, active, onApply }: LensCo
       {open && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute left-0 top-full z-30 mt-1 w-64 cursor-default rounded border border-gray-600 bg-[#252526] p-2 text-left font-normal normal-case text-gray-200 shadow-xl"
+          className="absolute left-0 top-full z-30 mt-1 w-64 cursor-default rounded border border-gray-300 bg-white p-2 text-left font-normal normal-case text-gray-800 shadow-xl"
         >
-          {loadError && <p className="text-[11px] text-red-400">{loadError}</p>}
-          {!values && !loadError && <p className="text-[11px] text-gray-400">{t('common:state.loading')}</p>}
+          {loadError && <p className="text-[11px] text-red-600">{loadError}</p>}
+          {!values && !loadError && <p className="text-[11px] text-gray-500">{t('common:state.loading')}</p>}
           {values && (
             <>
               {values.length > SEARCH_THRESHOLD && (
@@ -154,14 +154,14 @@ export function LensColumnFilterMenu({ lensId, column, active, onApply }: LensCo
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t('lenses:table.filter.search')}
                   aria-label={t('lenses:table.filter.search')}
-                  className="mb-2 w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-[11px] text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="mb-2 w-full rounded border border-gray-300 bg-white px-2 py-1 text-[11px] text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
               )}
               {values.length === 0 ? (
-                <p className="text-[11px] text-gray-400">{t('lenses:table.filter.noValues')}</p>
+                <p className="text-[11px] text-gray-500">{t('lenses:table.filter.noValues')}</p>
               ) : (
                 <>
-                  <label className="flex items-center gap-2 border-b border-gray-700 pb-1 text-[11px] font-medium">
+                  <label className="flex items-center gap-2 border-b border-gray-200 pb-1 text-[11px] font-medium">
                     <input type="checkbox" checked={allVisibleTicked} onChange={toggleAllVisible} />
                     {t('lenses:table.filter.selectAll')}
                   </label>
@@ -169,7 +169,7 @@ export function LensColumnFilterMenu({ lensId, column, active, onApply }: LensCo
                     {visible.map((v) => (
                       <label key={v.value ?? '\u0000empty'} className="flex items-center gap-2 text-[11px]">
                         <input type="checkbox" checked={selected.has(v.value)} onChange={() => toggle(v.value)} />
-                        <span className={`min-w-0 flex-1 truncate ${v.value === null ? 'italic text-gray-400' : ''}`}>
+                        <span className={`min-w-0 flex-1 truncate ${v.value === null ? 'italic text-gray-500' : ''}`}>
                           {label(v.value)}
                         </span>
                         <span className="text-gray-500">({v.count})</span>
@@ -178,12 +178,12 @@ export function LensColumnFilterMenu({ lensId, column, active, onApply }: LensCo
                   </div>
                 </>
               )}
-              <div className="mt-2 flex justify-end gap-2 border-t border-gray-700 pt-2">
+              <div className="mt-2 flex justify-end gap-2 border-t border-gray-200 pt-2">
                 <button
                   type="button"
                   onClick={clear}
                   disabled={!active}
-                  className="rounded px-2 py-0.5 text-[11px] text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+                  className="rounded px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100 disabled:opacity-40"
                 >
                   {t('lenses:table.filter.clear')}
                 </button>

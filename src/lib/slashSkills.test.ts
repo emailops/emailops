@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { applySuggestion, matchSkills, slashQuery } from './slashSkills';
+import { applySuggestion, matchSkills, slashCandidates, slashQuery } from './slashSkills';
 
 const skill = (name: string, enabled = true) => ({ name, description: `${name} description`, path: '', enabled });
+
+describe('slashCandidates', () => {
+  it('adds the bundled skills, without the ones a skill of the user replaces', () => {
+    const candidates = slashCandidates({
+      enabled: true,
+      dir: null,
+      skills: [skill('inbox-triage')],
+      bundled: [
+        { name: 'inbox-triage', description: 'bundled', enabled: true, shadowed: true },
+        { name: 'follow-up-check', description: 'bundled', enabled: true, shadowed: false },
+        { name: 'other', description: 'bundled', enabled: false, shadowed: false },
+      ],
+      errors: [],
+    });
+    expect(matchSkills(candidates, '').map((s) => s.name)).toEqual(['follow-up-check', 'inbox-triage']);
+    expect(candidates.find((s) => s.name === 'inbox-triage')?.description).toBe('inbox-triage description');
+  });
+});
 
 describe('slashQuery', () => {
   it('reads the skill name being typed at the start of the message', () => {

@@ -4,7 +4,6 @@
   "emptyHint": "New messages will appear here once your mailbox syncs.",
   "loading": "Loading emails…",
   "loadingMore": "Loading more…",
-  "loadMore": "Load more",
   "noMore": "Up to date",
   "syncing": "Syncing…",
   "syncProgress": "Syncing {{current}} of {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 new email downloaded",
   "loadingEmails": "Loading emails...",
   "loadingMoreEmails": "Loading more...",
-  "noMoreEmails": "No more emails",
+  "noMoreEmails": "No more downloaded emails",
+  "noMoreEmailsSyncing": "No more downloaded emails for now. The sync may bring more.",
   "loadingThread": "Loading thread...",
   "loadingEmail": "Loading email…",
   "categoriesAria": "Email categories",
@@ -23,6 +23,15 @@
     "all": "All",
     "unread": "Unread",
     "empty": "No unread emails"
+  },
+  "emptyState": {
+    "syncing": "Syncing emails...",
+    "noSearchResults": "No emails match your search",
+    "noFilterResults": "No emails match the selected filters",
+    "noEmails": "No emails yet — try syncing or adding an account",
+    "showAll": "Show all emails",
+    "showAllCategories": "Show all categories",
+    "syncNow": "Sync now"
   },
   "noEmailSelected": "No email selected",
   "selectEmailHint": "Select an email from the list to view it here.",
@@ -75,7 +84,12 @@
     "unstar": "Remove star",
     "archive": "Archive",
     "moveArchivedToInbox": "Move to Inbox",
-    "hideFromFilters": "Hide from smart filters"
+    "hideFromFilters": "Hide from smart filters",
+    "toSelf": "you",
+    "noRecipients": "To: (no recipients)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "and {{count}} more",
+    "addRecipientFilter": "Add recipient as smart filter"
   },
   "header": {
     "totalCount": "{{count}} emails",
@@ -124,7 +138,14 @@
     "unstar": "Remove star",
     "archive": "Archive",
     "moveToInbox": "Move to Inbox",
-    "notSpam": "Not spam — move to Inbox"
+    "notSpam": "Not spam — move to Inbox",
+    "noPreview": "(No preview)",
+    "toLine": "To: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Back",
+    "messageCount_one": "{{count}} msg",
+    "messageCount_other": "{{count}} msgs",
+    "messageCount_many": "{{count}} msgs"
   },
   "compose": {
     "open": "Compose",
@@ -140,6 +161,15 @@
     "suggestedSection": "Suggested",
     "noFilters": "No smart filters yet — they appear as your mailbox grows."
   },
+  "list": {
+    "firstPageFailed": "The list could not be loaded.",
+    "pageFailed": "More emails could not be loaded."
+  },
+  "searchPanel": {
+    "firstResults": "First {{count}} results",
+    "results_one": "{{count}} result",
+    "results_other": "{{count}} results"
+  },
   "searchBox": {
     "inlinePlaceholder": "Search… ({{operators}})",
     "fullPlaceholder": "Search emails… ({{operators}})",
@@ -149,11 +179,14 @@
     "title": "Search Tips",
     "senderHint": "sender name/email",
     "recipientHint": "recipient name/email",
+    "ccHint": "copied name/email",
     "subjectHint": "subject text",
+    "attachmentHint": "with files (-has:attachment: without)",
     "unreadHint": "unread emails",
     "afterHint": "YYYY-MM-DD",
     "beforeHint": "YYYY-MM-DD",
-    "tagHint": "classification tag"
+    "tagHint": "classification tag",
+    "booleanHint": "exact phrase, either word, without a word, grouping"
   },
   "translation": {
     "detectedLabel": "This email is in {{language}}",
@@ -164,6 +197,11 @@
     "aiTranslation": "AI translation · {{language}}",
     "truncatedNotice": "This email was too long — only the beginning was translated.",
     "failed": "Translation failed: {{error}}"
+  },
+  "aiMarkup": {
+    "title": "This message contains instructions aimed at your AI assistant",
+    "detail": "Someone wrote it to steer the assistant. EmailOps treats it as content, never as your request.",
+    "checkFailed": "Could not check the message for instructions aimed at the assistant"
   },
   "junk": {
     "kind": {
@@ -185,7 +223,9 @@
       "credential_solicitation": "Asks you to re-enter your password or account details",
       "display_name_contains_address": "The sender name is written to look like a different address",
       "server_spam_flag": "Your mail server marked this as spam",
-      "mixed_script_display_name": "The sender name mixes alphabets to disguise itself"
+      "mixed_script_display_name": "The sender name mixes alphabets to disguise itself",
+      "ai_control_markup": "Contains text addressed to an AI assistant",
+      "markdown_remote_image": "Embeds a remote image an AI chat would load"
     },
     "isJunkHint": "Also file it in the server's Junk folder so your provider's filter learns",
     "confirmedAndFiled": "Confirmed as junk and filed in the server Junk folder",

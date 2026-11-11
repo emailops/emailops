@@ -1,15 +1,18 @@
 mod attachment_backfill;
 mod compose;
+mod draft_files;
 mod drafts;
 mod events;
 mod folders;
 mod history_refresh;
 mod html_sanitizer;
+mod inline_repair;
 mod mailbox_state;
 mod optimistic;
 mod provider;
 mod reconcile;
 mod redownload;
+mod reply_to;
 mod send;
 mod snooze;
 mod spam;
@@ -25,23 +28,27 @@ use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
 
 pub use attachment_backfill::{backfill_attachment_meta, backfill_done_key, BackfillOutcome};
+pub(crate) use compose::draft_attachments_pulled_key;
 pub(crate) use compose::load_attachments as load_draft_attachments;
 pub use compose::{
     check_webview_draft_attachments, compose_draft, delete_draft, plan_compose, pull_provider_drafts,
     refresh_provider_drafts, send_draft, ComposeInput, ComposePlan,
 };
+pub use draft_files::{store_composer_file, sweep_abandoned_draft_files};
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
 pub use folders::{create_folder, delete_folder, move_email, move_emails, rename_folder, MoveFailure, MoveReport};
 pub(crate) use history_refresh::history_cursor_key;
 pub use html_sanitizer::sanitize_outgoing_html;
+pub use inline_repair::body_with_inline_images;
 pub use mailbox_state::{delete_email, delete_email_with_provider, mark_as_read, mark_as_read_with_provider};
 pub use provider::build_provider;
 pub use redownload::{redownload_email, redownload_email_with_provider, redownload_empty_emails};
 pub(crate) use send::validate_new_email;
 pub use send::{
     outgoing_body, send_new_email, send_new_email_with_provider, send_outgoing, send_reply, send_reply_with_provider,
+    APPEND_FOOTER_PREF,
 };
 pub use snooze::{
     due_snoozes, list_thread_snoozes, snooze_threads, unsnooze_threads, wake_due_snoozes, SnoozesWoken,
@@ -54,8 +61,8 @@ pub use sync::{
     sync_account, sync_account_with_contention, sync_account_with_provider, SyncContention,
 };
 pub use thread_actions::{
-    apply_thread_action, apply_to_account, plan_thread_action, widen_stars_to_threads, widen_unread_to_threads,
-    ProviderAccess, ThreadAction, ThreadActionFailure, ThreadActionReport, ThreadRef,
+    apply_thread_action, apply_to_account, plan_thread_action, read_and_archive_message, widen_stars_to_threads,
+    widen_unread_to_threads, ProviderAccess, ThreadAction, ThreadActionFailure, ThreadActionReport, ThreadRef,
 };
 
 /// List emails for one account, or — when `account_id` is `None` — merged
@@ -91,6 +98,8 @@ pub fn get_emails(
 pub fn get_folders(db: &Arc<Database>, account_id: &str) -> Result<Vec<crate::models::Folder>> {
     db.list_folders(account_id, Some(crate::models::FolderRole::Custom))
 }
+
+pub use reply_to::thread_reply_to;
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
     db.get_thread(account_id, thread_id)
@@ -168,11 +177,10 @@ pub fn resolve_participant(db: &Database, account_id: &str, with: &str) -> Vec<S
     participant_terms(with, addresses)
 }
 
-/// Low-level mailbox search with explicit filters. Distinct from the
-/// higher-level `services::search::search_emails` (which does pattern
-/// parsing, AI query parsing, RAG hybrid retrieval, etc.) — this one is the
-/// raw FTS+filter path the chat `search_emails` tool needs. Keeps the SQL
-/// in `db::emails::search`.
+/// Low-level mailbox search with explicit filters. Distinct from
+/// `services::list::list_threads`, which lists conversations for the app —
+/// this one is the raw FTS+filter path the chat `search_emails` tool needs.
+/// Keeps the SQL in `db::emails::search`.
 #[allow(clippy::too_many_arguments)]
 pub fn search_emails_filtered(
     db: &Arc<Database>,

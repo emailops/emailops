@@ -25,7 +25,7 @@ export function OllamaPanel({ config, setConfig, ollamaModels, ollamaEmbedModels
   return (
     <div className="space-y-4">
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.chatModel')}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.chatModel')}</label>
         <Select
           value={config.model}
           options={chatModelOptions}
@@ -35,7 +35,7 @@ export function OllamaPanel({ config, setConfig, ollamaModels, ollamaEmbedModels
         />
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-1">{t('settings:ai.embeddingModel')}</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">{t('settings:ai.embeddingModel')}</label>
         <Select
           value={config.embeddingModel}
           options={embedModelOptions}

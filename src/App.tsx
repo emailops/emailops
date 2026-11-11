@@ -8,10 +8,10 @@ import { AttachmentToolbar } from '@/components/Attachments/AttachmentToolbar';
 import { AttachmentViewer } from '@/components/Attachments/AttachmentViewer';
 import type { RuleFormPrefill } from '@/components/Attachments/RuleManagementModal';
 import { RuleManagementModal } from '@/components/Attachments/RuleManagementModal';
+import { CalendarPanel } from '@/components/Calendar/CalendarPanel';
 import { CalendarView } from '@/components/Calendar/CalendarView';
 import { MeetingReminderBanner } from '@/components/Calendar/MeetingReminderBanner';
-import { ChatPanelDock } from '@/components/Chat/ChatPanelDock';
-import { ChatPanelRail } from '@/components/Chat/ChatPanelRail';
+import { ChatPanel } from '@/components/Chat/ChatPanel';
 import { ChatView } from '@/components/Chat/ChatView';
 import { ResearchExitDialog } from '@/components/Chat/ResearchExitDialog';
 import { ComposeModal } from '@/components/ComposeModal';
@@ -27,11 +27,13 @@ import { ErrorBanner } from '@/components/ErrorBanner/ErrorBanner';
 import type { RulePrefill } from '@/components/Inbox/EmailRow';
 import { Inbox } from '@/components/Inbox/Inbox';
 import { LensesView } from '@/components/Lenses/LensesView';
-import { LockScreen } from '@/components/LockScreen';
+import { LockGate } from '@/components/LockGate';
 import { LogPanel } from '@/components/LogPanel/LogPanel';
 import { MemoryView } from '@/components/Memory/MemoryView';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { OnboardingWizard } from '@/components/Onboarding/OnboardingWizard';
+import { RightDock } from '@/components/RightDock/RightDock';
+import { RightDockRail } from '@/components/RightDock/RightDockRail';
 import { ScheduledView } from '@/components/ScheduledView';
 import { SearchBar } from '@/components/Search/SearchBar';
 import type { ClassificationRulePrefill } from '@/components/Settings/ClassificationSettings';
@@ -57,17 +59,17 @@ import * as api from '@/lib/api';
 import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appUpdate';
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
-import { chatDockMode } from '@/lib/chatPanelLayout';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
-import { appendFilterToken, filterToken, planListSource } from '@/lib/filterQuery';
+import { appendFilterToken, filterToken } from '@/lib/filterQuery';
 import { showGpuRuntimeNotice } from '@/lib/gpuRuntimeNotice';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
 import { createThrottle } from '@/lib/refreshScheduling';
+import { parseRightDockContent, type RightDockContent, railButtons, rightDockMode } from '@/lib/rightDockLayout';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import {
   baseViewToken,
@@ -177,9 +179,6 @@ const UPDATE_TOAST_HOST: UpdateToastHost = {
 };
 
 function App() {
-  const [isLocked, setIsLocked] = useState(false);
-  const [lockChecked, setLockChecked] = useState(false);
-
   // An archive/delete still inside its undo window is sent before the page
   // goes away (reload, window close where the webview fires it). A quit that
   // skips the event drops the action: it simply never happened.
@@ -189,17 +188,11 @@ function App() {
     return () => window.removeEventListener('beforeunload', flush);
   }, []);
 
-  useEffect(() => {
-    api.hasMainPassword().then((has) => {
-      setIsLocked(has);
-      setLockChecked(true);
-    });
-  }, []);
-
-  if (!lockChecked) return null;
-  if (isLocked) return <LockScreen onUnlock={() => setIsLocked(false)} />;
-
-  return <AppInner />;
+  return (
+    <LockGate>
+      <AppInner />
+    </LockGate>
+  );
 }
 
 function AppInner() {
@@ -270,14 +263,27 @@ function AppInner() {
     [setLensesEnabledRaw],
   );
   const [isInboxCollapsed, setIsInboxCollapsed] = useState(false);
-  // Right-docked chat panel. Persisted so the workspace layout survives a
-  // restart, the same way `inbox_layout` does.
+  // Right dock: the chat panel or the calendar agenda, one at a time.
+  // Persisted so the workspace layout survives a restart, the same way
+  // `inbox_layout` does (`chat_panel_open` keeps its historical name).
   // Docked by default: chat is a primary surface, and a panel that starts
   // hidden makes it look absent. Persisted, so closing it sticks.
-  const [isChatPanelOpen, setIsChatPanelOpen] = usePersistedPref<boolean>('chat_panel_open', true, {
+  const [isRightDockOpen, setIsRightDockOpen] = usePersistedPref<boolean>('chat_panel_open', true, {
     parse: (raw) => (raw === 'true' ? true : raw === 'false' ? false : null),
     serialize: (v) => String(v),
   });
+  const [rightDockContent, setRightDockContent] = usePersistedPref<RightDockContent>('right_dock_content', 'chat', {
+    parse: parseRightDockContent,
+    serialize: (v) => v,
+  });
+  const openRightDock = useCallback(
+    (content: RightDockContent) => {
+      setRightDockContent(content);
+      setIsRightDockOpen(true);
+    },
+    [setRightDockContent, setIsRightDockOpen],
+  );
+  const closeRightDock = useCallback(() => setIsRightDockOpen(false), [setIsRightDockOpen]);
   // Account the chat surfaces answer from. Chat is scoped to ONE account; in
   // unified ("All accounts") mode `effectiveAccountId` is merely the first
   // enabled one, so the user can retarget it independently of the list.
@@ -362,6 +368,7 @@ function AppInner() {
       setViewMode('inbox');
       openComposeTab(message.accountId, message.to, message.subject, restoredBodyHtml(message), {
         ccAddresses: message.cc,
+        bccAddresses: message.bcc,
         fileAttachments: message.attachments,
         replyToEmailId: message.replyToEmailId ?? undefined,
       });
@@ -417,10 +424,15 @@ function AppInner() {
   useEffect(() => {
     void loadCalendarIntegration(accounts);
   }, [accounts, loadCalendarIntegration]);
+  const calendarFeeds = useCalendarIntegrationStore((s) => s.feedsByAccount);
+  // The full calendar view needs an account with an enabled calendar; the
+  // sidebar entry and the docked agenda only need an account at all, since
+  // the panel is where an IMAP account learns how to subscribe to a feed.
   const calendarFeatureEnabled = useMemo(
-    () => calendarEnabledAccounts(accounts, calendarIntegrationIds).length > 0,
-    [accounts, calendarIntegrationIds],
+    () => calendarEnabledAccounts(accounts, calendarIntegrationIds, calendarFeeds).length > 0,
+    [accounts, calendarIntegrationIds, calendarFeeds],
   );
+  const calendarPanelAvailable = useMemo(() => accounts.some((a) => a.enabled), [accounts]);
   // Leaving the calendar view when its last account gets switched off.
   useEffect(() => {
     if (viewMode === 'calendar' && calendarIntegrationLoaded && !calendarFeatureEnabled) setViewMode('inbox');
@@ -486,11 +498,11 @@ function AppInner() {
     isLoadingMore,
     isLoadingThread,
     hasMore,
-    totalCount,
     selectedEmail,
     threadEmails,
     selectEmail,
     loadMore,
+    retry: retryEmails,
     refetch: refetchEmails,
     silentRefetch: silentRefetchEmails,
     error: emailError,
@@ -1082,8 +1094,8 @@ function AppInner() {
           // click handler does. `getState()` reads the latest action ref
           // rather than capturing a closure over the not-yet-declared
           // useEmailStore hook above the listener mount.
-          openThreadReply: (accountId, emailId, body) => {
-            setPendingChatDraft({ emailId, body });
+          openThreadReply: (accountId, emailId, body, draftId) => {
+            setPendingChatDraft({ emailId, body, draftId });
             useEmailStore.getState().navigateToEmail(accountId, emailId);
           },
           // Switch away from the chat view so the compose tab the chat just
@@ -1287,9 +1299,13 @@ function AppInner() {
         .join(','),
     [accounts],
   );
+  // A different set of accounts is a different list: merging a refresh into it
+  // would keep the rows of a disabled account below the first page.
+  const lastEnabledAccountsKey = useRef(enabledAccountsKey);
   useEffect(() => {
-    if (!isUnified) return;
-    silentRefetchEmailsRef.current();
+    if (lastEnabledAccountsKey.current === enabledAccountsKey) return;
+    lastEnabledAccountsKey.current = enabledAccountsKey;
+    if (isUnified) refetchEmailsRef.current();
   }, [isUnified, enabledAccountsKey]);
 
   const handleSearchSelect = useCallback(
@@ -1307,27 +1323,8 @@ function AppInner() {
       setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
       // The highlighted smart filter follows the query (filterStore).
       useEmailStore.getState().setSearchQuery(query);
-      addLog('info', 'search', `Filtering inbox: "${query}"`);
     },
     [addLog],
-  );
-
-  const handleApplySearchWithResults = useCallback(
-    (query: string, emails: Email[]) => {
-      // The overlay searched every live mailbox; its results are the list's
-      // only for a plain search outside Sent/Archive/a folder. A one-filter
-      // query pages, and a view narrows — both refetch.
-      const view = isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox';
-      const source = planListSource(query, view);
-      if (source.kind !== 'search' || source.mailbox !== undefined) {
-        handleApplySearch(query);
-        return;
-      }
-      setViewMode((prev) => (isEmailListView(prev) ? prev : 'inbox'));
-      useEmailStore.getState().applySearchResults(query, emails);
-      addLog('info', 'search', `Filtering inbox: "${query}" (reused ${emails.length} results)`);
-    },
-    [addLog, handleApplySearch, viewMode],
   );
 
   // A smart filter writes its query into the search box (DECISIONS
@@ -1348,7 +1345,6 @@ function AppInner() {
       void selectEmail(null);
       if (query) {
         useEmailStore.getState().setSearchQuery(query);
-        addLog('info', 'search', `Filtering inbox: "${query}"`);
       } else {
         clearSearchQuery();
       }
@@ -1433,12 +1429,12 @@ function AppInner() {
     [setSelectedCategories],
   );
 
-  // What the right-hand chat panel offers as ambient context: the thread the
-  // main view is currently showing, or null everywhere else. Pure derivation —
+  // What the right-hand chat panel offers as ambient context: the thread or
+  // PDF the main view is currently showing, or null everywhere else. Pure derivation —
   // see `deriveChatContext` for the precedence rules.
   const chatPanelContext = useMemo(
-    () => deriveChatContext({ viewMode, activeTab, selectedEmail }),
-    [viewMode, activeTab, selectedEmail],
+    () => deriveChatContext({ viewMode, activeTab, selectedEmail, selectedAttachment }),
+    [viewMode, activeTab, selectedEmail, selectedAttachment],
   );
 
   // Header new-chat icon: start a fresh conversation and dock the panel in one
@@ -1471,14 +1467,14 @@ function AppInner() {
 
   const handleNewChat = useCallback(async () => {
     if (viewMode === 'chat') setViewMode('inbox');
-    setIsChatPanelOpen(true);
+    openRightDock('chat');
     if (!effectiveAccountId) return;
     try {
       await useChatStore.getState().createConversation(effectiveAccountId);
     } catch (e) {
       addLog('error', 'ai', `Failed to start a new chat: ${errorText(e)}`);
     }
-  }, [viewMode, effectiveAccountId, setIsChatPanelOpen, addLog]);
+  }, [viewMode, effectiveAccountId, openRightDock, addLog]);
 
   const handleAddAccount = async (syncFromTimestamp: number | null) => {
     const provider = pendingOAuthProvider;
@@ -1531,7 +1527,17 @@ function AppInner() {
     }
   };
 
-  const chatDock = chatDockMode({ aiEnabled, panelOpen: isChatPanelOpen, fullChatView: viewMode === 'chat' });
+  const rightDockState = {
+    aiEnabled,
+    calendarAvailable: calendarPanelAvailable,
+    panelOpen: isRightDockOpen,
+    content: rightDockContent,
+    fullChatView: viewMode === 'chat',
+    fullCalendarView: viewMode === 'calendar',
+  };
+  const rightDock = rightDockMode(rightDockState);
+  const isChatPanelOpen = rightDock.kind === 'panel' && rightDock.content === 'chat';
+  const isCalendarPanelOpen = rightDock.kind === 'panel' && rightDock.content === 'calendar';
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
@@ -1595,7 +1601,9 @@ function AppInner() {
           lensesEnabled={lensesEnabled}
           skillsEnabled={skillsEnabled}
           sharedDocsEnabled={sharedDocsEnabled}
-          calendarEnabled={calendarFeatureEnabled}
+          calendarEntry={calendarPanelAvailable}
+          calendarActive={viewMode === 'calendar' || isCalendarPanelOpen}
+          onOpenCalendarPanel={() => openRightDock('calendar')}
           onSelectLens={(lensId) => {
             // Selecting a lens in the sidebar: fire the store action so the
             // Lenses view picks it up (it already subscribes to activeLensId),
@@ -1651,6 +1659,7 @@ function AppInner() {
                     {
                       draftId: fresh.id,
                       ccAddresses: fresh.ccAddresses,
+                      bccAddresses: fresh.bccAddresses,
                       attachments: fresh.attachments,
                       // A reply draft is sent as a reply, threaded on its message.
                       replyToEmailId: fresh.emailId ?? undefined,
@@ -1754,9 +1763,13 @@ function AppInner() {
           ) : viewMode === 'dashboard' ? (
             <Dashboard accounts={accounts} onOpenAccountSettings={(id) => setAccountSettingsAccountId(id)} />
           ) : viewMode === 'calendar' ? (
-            // Calendar is per-account only (docs/DECISIONS.md) — it renders its
-            // own compact account selector, so no UnifiedScopeBar here.
-            <CalendarView accounts={accounts} defaultAccountId={effectiveAccountId} />
+            // The calendar renders its own account selector (with "All
+            // accounts"), so no UnifiedScopeBar here.
+            <CalendarView
+              accounts={accounts}
+              defaultAccountId={effectiveAccountId}
+              onOpenSettings={() => setSettingsTab('calendar')}
+            />
           ) : isEmailListView(viewMode) ? (
             // biome-ignore lint/complexity/noUselessFragments: IIFE result needs a fragment wrapper for the ternary
             <>
@@ -1812,12 +1825,12 @@ function AppInner() {
                     syncProgress={syncProgress}
                     isLoadingMore={isLoadingMore}
                     hasMore={hasMore}
-                    totalCount={totalCount}
                     selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
                     disableAutoSelect={inboxLayout === 'full-width'}
                     fullWidth={inboxLayout === 'full-width'}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
+                    onRetry={retryEmails}
                     onAddSenderFilter={addSenderAsFilter}
                     onHideSenderFromFilters={handleHideSenderFromFilters}
                     onCreateAttachmentRule={handleCreateAttachmentRule}
@@ -1840,7 +1853,7 @@ function AppInner() {
                       aiEnabled
                         ? isChatPanelOpen
                           ? () => void handleNewChat()
-                          : () => setIsChatPanelOpen(true)
+                          : () => openRightDock('chat')
                         : undefined
                     }
                     onOpenInTab={openTab}
@@ -1854,6 +1867,7 @@ function AppInner() {
                     isChatPanelOpen={isChatPanelOpen}
                     accountId={activeAccountId}
                     onSearch={handleApplySearch}
+                    onSync={() => void handleSync()}
                   />
                 );
 
@@ -1921,25 +1935,42 @@ function AppInner() {
           )}
         </main>
 
-        {/* Right-docked chat. Gated on the master AI switch like every other
-            AI surface, and suppressed while the full-page chat view is open so
-            the same conversation isn't rendered twice side by side. Collapsed,
-            it leaves a rail to reopen it from any view. */}
-        {chatDock === 'rail' && <ChatPanelRail onOpen={() => setIsChatPanelOpen(true)} />}
-        {chatDock === 'panel' && (
-          <ChatPanelDock
-            accountId={chatAccountId}
-            onAccountChange={handleChatAccountChange}
-            context={chatPanelContext}
-            onClose={() => setIsChatPanelOpen(false)}
-            onExpand={() => {
-              setIsChatPanelOpen(false);
-              setViewMode('chat');
-            }}
-            onNavigateToInbox={() => setViewMode('inbox')}
-            onShowEmailsInList={handleShowChatEmailsInList}
-            onOpenAiSettings={() => setSettingsTab('ai')}
-          />
+        {/* Right dock: the chat panel (gated on the master AI switch like
+            every other AI surface, and suppressed while the full-page chat is
+            open so the same conversation isn't rendered twice) or the calendar
+            agenda (suppressed while the full calendar view is open). Collapsed,
+            it leaves a rail — chat button, calendar button below it — to
+            reopen either from any view. */}
+        {rightDock.kind === 'rail' && <RightDockRail buttons={railButtons(rightDockState)} onOpen={openRightDock} />}
+        {rightDock.kind === 'panel' && (
+          <RightDock>
+            {rightDock.content === 'chat' ? (
+              <ChatPanel
+                accountId={chatAccountId}
+                onAccountChange={handleChatAccountChange}
+                context={chatPanelContext}
+                onClose={closeRightDock}
+                onExpand={() => {
+                  closeRightDock();
+                  setViewMode('chat');
+                }}
+                onNavigateToInbox={() => setViewMode('inbox')}
+                onShowEmailsInList={handleShowChatEmailsInList}
+                onOpenAiSettings={() => setSettingsTab('ai')}
+              />
+            ) : (
+              <CalendarPanel
+                accounts={accounts}
+                defaultAccountId={effectiveAccountId}
+                onClose={closeRightDock}
+                onOpenFullCalendar={() => {
+                  closeRightDock();
+                  setViewMode('calendar');
+                }}
+                onOpenSettings={() => setSettingsTab('calendar')}
+              />
+            )}
+          </RightDock>
         )}
       </div>
 
@@ -1952,9 +1983,9 @@ function AppInner() {
       {isSearchOpen && (
         <SearchBar
           accountId={queryAccountId}
+          view={isEmailListView(viewMode) ? viewModeToMailbox(viewMode) : 'inbox'}
           onSelectEmail={handleSearchSelect}
           onApplySearch={handleApplySearch}
-          onApplySearchWithResults={handleApplySearchWithResults}
           onClose={() => setIsSearchOpen(false)}
         />
       )}
@@ -2100,6 +2131,15 @@ function AppInner() {
             openComposeTab(state.accountId, state.toAddresses, state.subject, state.bodyHtml, {
               draftId: state.draftId,
               ccAddresses: state.ccAddresses,
+              bccAddresses: state.bccAddresses,
+              // Files the modal stored for the draft: the tab keeps saving them.
+              attachments: state.draftFiles.map((file) => ({
+                id: '',
+                draftId: state.draftId ?? '',
+                filePath: file.filePath,
+                filename: file.filename ?? '',
+                mimeType: file.mimeType ?? '',
+              })),
               fileAttachments: state.attachments,
             });
           }}

@@ -1,6 +1,6 @@
-import { format } from 'date-fns';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
@@ -8,9 +8,14 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useDraftFiles } from '@/hooks/useDraftFiles';
+import { useFileDrop } from '@/hooks/useFileDrop';
+import { useFormatters } from '@/hooks/useFormatters';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
+  type ComposeDraftState,
+  canSend,
   createDebouncedDraftSaver,
   createDraftAutosaver,
   type DebouncedDraftSaver,
@@ -28,6 +33,7 @@ import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Draft, Email } from '@/types';
 import { AiInstructionBar } from './AiInstructionBar';
+import { forwardSubject } from './forward';
 import { SendWarningBanner } from './SendWarningBanner';
 
 interface ReplyComposeProps {
@@ -39,10 +45,17 @@ interface ReplyComposeProps {
     fromAccountId: string;
     toEmails: string[];
     ccEmails: string[];
+    bccEmails: string[];
+    /** As shown in the panel: "Re: …" or "Fwd: …", possibly edited. */
+    subject: string;
     body: string;
     bodyHtml?: string;
     inlineImages?: EmailAttachment[];
+    /** Files held only here (EO Docs); the draft holds the rest. */
     attachments?: EmailAttachment[];
+    /** The draft holds files that must go with the message: it is queued
+     *  from the draft, which adds them. */
+    draftHoldsFiles: boolean;
     /** Set when the user picked "Schedule send": the message goes out then. */
     scheduleAt: Date | null;
     /** The saved reply draft this send replaces; the caller deletes it. */
@@ -52,14 +65,22 @@ interface ReplyComposeProps {
   /** A reply draft saved earlier for this thread: the panel opens with its
    *  recipients and text, and keeps saving into the same draft. */
   restoredDraft?: Draft | null;
+  /** The draft the chat saved for this reply. The panel takes it over: edits
+   *  save into it, and sending or cancelling removes it. */
+  adoptDraftId?: string;
   /** Called with the draft after every successful save. */
   onDraftSaved?: (draft: Draft) => void;
   initialBody: string;
   mode: 'reply' | 'reply-all' | 'forward';
+  /** Email id → its `Reply-To` addresses, where a reply to it goes instead of
+   *  its sender. */
+  replyTo?: Record<string, string[]>;
   /** Attachments carried over from the message being forwarded. Pre-attached
    *  rather than offered, because a forward that silently drops the boarding
    *  pass is worse than useless. */
   initialAttachments?: EmailAttachment[];
+  /** True while `initialAttachments` are on their way: Send waits for them. */
+  attachmentsLoading?: boolean;
   /** True while an AI draft is being generated for this reply. Disables the
    *  textarea and shows a spinner inline so the user knows the draft is
    *  being produced on the AI queue. */
@@ -72,6 +93,8 @@ interface ReplyComposeProps {
    *  editor. */
   onGenerateDraft?: (instructions: string) => void;
 }
+
+const NO_REPLY_TO: Record<string, string[]> = {};
 
 function getDomain(email: string): string {
   return extractEmail(email).split('@')[1]?.toLowerCase() || '';
@@ -94,12 +117,20 @@ function extractEmail(raw: string): string {
  * Falls back to the most recent other party in the thread when my message has
  * no usable recipients. Only a note the user only ever sent to themselves is
  * addressed back to them.
+ *
+ * `replyTo` maps an email id to its `Reply-To` addresses: a message that has
+ * one is answered there, not at its sender.
  */
-export function computeReplyRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
+export function computeReplyRecipients(
+  email: Email,
+  threadEmails: Email[],
+  selfEmails: string[],
+  replyTo: Record<string, string[]> = {},
+): string[] {
   const self = new Set(selfEmails.map((e) => e.trim().toLowerCase()));
   const sender = extractEmail(email.senderEmail);
 
-  if (!self.has(sender)) return [sender];
+  if (!self.has(sender)) return replyTo[email.id]?.length ? replyTo[email.id] : [sender];
 
   // My own message: reply to whoever it was addressed to.
   const mine = [...email.recipients, ...email.cc].map(extractEmail).filter((r) => r.includes('@') && !self.has(r));
@@ -119,16 +150,24 @@ export function computeReplyRecipients(email: Email, threadEmails: Email[], self
 }
 
 /**
- * Recipients for Reply All: the senders and recipients of every message in
- * the thread, minus the user's own addresses. Only the latest email misses
- * participants from earlier in the thread. A note only ever sent to myself
- * leaves nobody, and goes back to its recipients as Reply does.
+ * Recipients for Reply All: the senders (or their `Reply-To`) and recipients
+ * of every message in the thread, minus the user's own addresses. Only the
+ * latest email misses participants from earlier in the thread. A note only
+ * ever sent to myself leaves nobody, and goes back to its recipients as Reply
+ * does.
  */
-export function computeReplyAllRecipients(email: Email, threadEmails: Email[], selfEmails: string[]): string[] {
+export function computeReplyAllRecipients(
+  email: Email,
+  threadEmails: Email[],
+  selfEmails: string[],
+  replyTo: Record<string, string[]> = {},
+): string[] {
   const all = new Set<string>();
   // The latest email too, in case threadEmails is empty.
   for (const msg of [...threadEmails, email]) {
-    all.add(extractEmail(msg.senderEmail));
+    for (const answerTo of replyTo[msg.id]?.length ? replyTo[msg.id] : [msg.senderEmail]) {
+      all.add(extractEmail(answerTo));
+    }
     for (const r of [...msg.recipients, ...msg.cc]) {
       const clean = extractEmail(r);
       if (clean.includes('@')) all.add(clean);
@@ -137,8 +176,10 @@ export function computeReplyAllRecipients(email: Email, threadEmails: Email[], s
   for (const self of selfEmails) {
     all.delete(self);
   }
-  return all.size > 0 ? [...all] : computeReplyRecipients(email, threadEmails, selfEmails);
+  return all.size > 0 ? [...all] : computeReplyRecipients(email, threadEmails, selfEmails, replyTo);
 }
+
+type RecipientField = 'to' | 'cc' | 'bcc';
 
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
@@ -177,9 +218,12 @@ export function ReplyCompose({
   defaultAccountId,
   onSend,
   onCancel,
+  adoptDraftId,
   initialBody,
   mode,
+  replyTo = NO_REPLY_TO,
   initialAttachments = [],
+  attachmentsLoading = false,
   isLoadingDraft = false,
   draftSources = [],
   onGenerateDraft,
@@ -187,7 +231,7 @@ export function ReplyCompose({
   onDraftSaved,
 }: ReplyComposeProps) {
   const addLog = useLogStore((s) => s.addLog);
-  const { t } = useTranslation(['compose']);
+  const { t } = useTranslation(['compose', 'common']);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
   // Editor holds HTML. AI drafts and the initial empty state are plain text;
@@ -239,19 +283,33 @@ export function ReplyCompose({
       return [];
     }
     if (mode === 'reply') {
-      return computeReplyRecipients(email, threadEmails, selfEmails);
+      return computeReplyRecipients(email, threadEmails, selfEmails, replyTo);
     }
-    return computeReplyAllRecipients(email, threadEmails, selfEmails);
+    return computeReplyAllRecipients(email, threadEmails, selfEmails, replyTo);
   })();
 
   const [toRecipients, setToRecipients] = useState<string[]>(() => restoredDraft?.toAddresses ?? initialTo);
   const [ccRecipients, setCcRecipients] = useState<string[]>(() => restoredDraft?.ccAddresses ?? []);
   const [showCc, setShowCc] = useState(() => (restoredDraft?.ccAddresses.length ?? 0) > 0);
+  const [bccRecipients, setBccRecipients] = useState<string[]>(() => restoredDraft?.bccAddresses ?? []);
+  const [showBcc, setShowBcc] = useState(() => (restoredDraft?.bccAddresses?.length ?? 0) > 0);
+  // Prefilled as it will go out; the user may edit it. The threading headers
+  // still tie a reply to its thread.
+  const [subject, setSubject] = useState(
+    () => restoredDraft?.subject ?? (mode === 'forward' ? forwardSubject(email.subject) : replySubject(email.subject)),
+  );
 
-  // A reply (not a forward, which is a new message) is kept as a draft tied to
-  // the email it answers, in that email's account, so reopening the thread
-  // brings it back and a later send still goes out as a reply.
-  const keepsDraft = mode !== 'forward';
+  // A reply is kept as a draft tied to the email it answers, in that email's
+  // account, so reopening the thread brings it back and a later send still
+  // goes out as a reply. A forward is a new message: its draft belongs to the
+  // sending account and to no thread, and is found in Drafts.
+  const isForward = mode === 'forward';
+  const draftAccountId = isForward ? fromAccountId : (restoredDraft?.accountId ?? email.accountId);
+  // Files are stored for the draft as they are attached, so it keeps them.
+  const draftFiles = useDraftFiles(
+    draftAccountId,
+    restoredDraft?.attachments?.map(({ filePath, filename, mimeType }) => ({ filePath, filename, mimeType })) ?? [],
+  );
   const onDraftSavedRef = useRef(onDraftSaved);
   onDraftSavedRef.current = onDraftSaved;
   const autosaverRef = useRef<DraftAutosaver | null>(null);
@@ -269,38 +327,84 @@ export function ReplyCompose({
   const debouncedRef = useRef<DebouncedDraftSaver>(
     createDebouncedDraftSaver((state) => autosaverRef.current?.save(state) ?? Promise.resolve(), 800),
   );
+  useEffect(() => {
+    if (adoptDraftId) autosaverRef.current?.adopt(adoptDraftId);
+  }, [adoptDraftId]);
   // What the panel opened with. Opening Reply prefills the recipients (and an
   // AI draft may fill the body), so only a change from this is the user
   // writing something worth keeping.
-  const openedWith = useRef({ to: toRecipients, cc: ccRecipients, body: typedText(bodyHtml) });
+  const openedWith = useRef({
+    to: toRecipients,
+    cc: ccRecipients,
+    bcc: bccRecipients,
+    subject,
+    body: typedText(bodyHtml),
+    // A forward's own files arrive after it opens; they are part of what it
+    // opened with, not an edit (counted in when they arrive, below).
+    files: draftFiles.files.length,
+  });
   const sentRef = useRef(false);
 
+  // Reply and Reply All share this panel: moving between them readdresses it,
+  // unless the user already chose the recipients.
+  const addressedMode = useRef(mode);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: on a change of mode only
   useEffect(() => {
-    if (!keepsDraft || isLoadingDraft) return;
+    if (addressedMode.current === mode) return;
+    addressedMode.current = mode;
+    const opened = openedWith.current;
+    if (toRecipients.join() !== opened.to.join() || ccRecipients.join() !== opened.cc.join()) return;
+    openedWith.current = { ...opened, to: initialTo };
+    setToRecipients(initialTo);
+  }, [mode]);
+
+  /** The draft as the panel holds it now. */
+  const draftState = (): ComposeDraftState => ({
+    emailId: isForward ? undefined : (restoredDraft?.emailId ?? email.id),
+    accountId: draftAccountId,
+    toAddresses: toRecipients,
+    ccAddresses: ccRecipients,
+    bccAddresses: bccRecipients,
+    subject,
+    plainBody: htmlToPlainText(bodyHtml),
+    bodyHtml,
+    attachments: draftFiles.forSave,
+    isSending,
+    sent: sentRef.current,
+  });
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftState reads exactly these
+  useEffect(() => {
+    if (isLoadingDraft) return;
     const opened = openedWith.current;
     const edited =
       typedText(bodyHtml) !== opened.body ||
       toRecipients.join() !== opened.to.join() ||
-      ccRecipients.join() !== opened.cc.join();
+      ccRecipients.join() !== opened.cc.join() ||
+      bccRecipients.join() !== opened.bcc.join() ||
+      subject !== opened.subject ||
+      draftFiles.files.length !== opened.files;
     if (!edited) return;
-    const state = {
-      emailId: restoredDraft?.emailId ?? email.id,
-      accountId: restoredDraft?.accountId ?? email.accountId,
-      toAddresses: toRecipients,
-      ccAddresses: ccRecipients,
-      subject: restoredDraft?.subject ?? replySubject(email.subject),
-      plainBody: htmlToPlainText(bodyHtml),
-      bodyHtml,
-      isSending,
-      sent: sentRef.current,
-    };
+    const state = draftState();
     if (!shouldAutosaveDraft(state)) {
       // Sending / sent: a save still waiting must not resurrect the draft.
       debouncedRef.current.cancel();
       return;
     }
     debouncedRef.current.schedule(state);
-  }, [keepsDraft, isLoadingDraft, bodyHtml, toRecipients, ccRecipients, isSending, email, restoredDraft]);
+  }, [
+    isLoadingDraft,
+    bodyHtml,
+    toRecipients,
+    ccRecipients,
+    bccRecipients,
+    subject,
+    draftFiles.forSave,
+    draftAccountId,
+    isSending,
+    email,
+    restoredDraft,
+  ]);
 
   // Leaving the thread must not drop the edit still inside the quiet period.
   useEffect(() => {
@@ -320,14 +424,14 @@ export function ReplyCompose({
     sentRef.current = true;
     const draftId = await settleDraft();
     if (draftId) {
-      const accountId = restoredDraft?.accountId ?? email.accountId;
       await api
-        .deleteDraft(draftId, accountId)
+        .deleteDraft(draftId, draftAccountId)
         .catch((err) => addLog('error', 'sync', `Could not delete the reply draft: ${errorText(err)}`));
     }
     onCancel();
   };
-  const [attachments, setAttachments] = useState<EmailAttachment[]>(initialAttachments);
+  // Files held only here: EO Docs, which are shared rather than attached.
+  const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
   // Pre-send warnings awaiting "send anyway"; any edit dismisses them.
   const [sendWarnings, setSendWarnings] = useState<SendWarning[] | null>(null);
   // The schedule time the warnings interrupted, so "send anyway" keeps it.
@@ -335,29 +439,32 @@ export function ReplyCompose({
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset on every edit of the body or attachments
   useEffect(() => {
     setSendWarnings(null);
-  }, [bodyHtml, attachments]);
+  }, [bodyHtml, attachments, draftFiles.files]);
   // The forwarded files are fetched and base64-encoded AFTER this panel opens,
-  // so they arrive as a prop change rather than as an initial value. Applied
-  // once, by identity, and appended — anything the user attached in the
+  // so they arrive as a prop change rather than as an initial value. Stored
+  // once, by identity, for the draft — anything the user attached in the
   // meantime survives.
-  const appliedInitialAttachments = useRef(initialAttachments);
+  const appliedInitialAttachments = useRef<EmailAttachment[]>([]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per set of forwarded files
   useEffect(() => {
     if (appliedInitialAttachments.current === initialAttachments || initialAttachments.length === 0) return;
     appliedInitialAttachments.current = initialAttachments;
-    setAttachments((existing) => [...initialAttachments, ...existing]);
+    openedWith.current = { ...openedWith.current, files: openedWith.current.files + initialAttachments.length };
+    draftFiles.addAttachments(initialAttachments);
   }, [initialAttachments]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Autocomplete state
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
-  const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
+  const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
 
   // Unusual recipient detection
-  const allRecipients = [...toRecipients, ...ccRecipients];
+  const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
 
   // Context domain for autocomplete boosting
@@ -382,52 +489,44 @@ export function ReplyCompose({
         const results = await api.autocompleteRecipients(account.id, prefix, contextDomain, 8);
         if (suggestionsRef.current !== reqId) return;
         // Filter out already-added recipients
-        const existing = new Set([...toRecipients, ...ccRecipients].map((r) => r.toLowerCase()));
+        const existing = new Set([...toRecipients, ...ccRecipients, ...bccRecipients].map((r) => r.toLowerCase()));
         setSuggestions(results.filter((r) => !existing.has(r.email.toLowerCase())));
         setSelectedIdx(0);
       } catch {
         setSuggestions([]);
       }
     },
-    [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
+    [fromAccountId, accounts, toRecipients, ccRecipients, bccRecipients, contextDomain],
   );
 
-  const addRecipient = (field: 'to' | 'cc', email: string) => {
+  const recipientFields = {
+    to: { list: toRecipients, setList: setToRecipients, setInput: setToInput },
+    cc: { list: ccRecipients, setList: setCcRecipients, setInput: setCcInput },
+    bcc: { list: bccRecipients, setList: setBccRecipients, setInput: setBccInput },
+  };
+
+  const addRecipient = (field: RecipientField, email: string) => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed.includes('@')) return;
-    if (field === 'to') {
-      if (!toRecipients.includes(trimmed)) setToRecipients([...toRecipients, trimmed]);
-      setToInput('');
-    } else {
-      if (!ccRecipients.includes(trimmed)) setCcRecipients([...ccRecipients, trimmed]);
-      setCcInput('');
-    }
+    const { list, setList, setInput } = recipientFields[field];
+    if (!list.includes(trimmed)) setList([...list, trimmed]);
+    setInput('');
     setSuggestions([]);
   };
 
-  const removeRecipient = (field: 'to' | 'cc', email: string) => {
-    if (field === 'to') setToRecipients(toRecipients.filter((r) => r !== email));
-    else setCcRecipients(ccRecipients.filter((r) => r !== email));
+  const removeRecipient = (field: RecipientField, email: string) => {
+    const { list, setList } = recipientFields[field];
+    setList(list.filter((r) => r !== email));
   };
 
-  const handleFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        const data = result.split(',')[1] ?? '';
-        setAttachments((prev) => [
-          ...prev,
-          { filename: file.name, mimeType: file.type || 'application/octet-stream', data },
-        ]);
-      };
-      reader.readAsDataURL(file);
-    });
+  const handleFiles = (files: FileList | null) => {
+    draftFiles.addFiles(files);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
+  };
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
-  const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
+  const handleKeyDown = (field: RecipientField, e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1));
@@ -442,7 +541,7 @@ export function ReplyCompose({
       addRecipient(field, input);
     } else if (e.key === 'Backspace' && input === '') {
       e.preventDefault();
-      const list = field === 'to' ? toRecipients : ccRecipients;
+      const { list } = recipientFields[field];
       if (list.length > 0) removeRecipient(field, list[list.length - 1]);
     }
   };
@@ -456,12 +555,23 @@ export function ReplyCompose({
     // recipient the user means — it must not be dropped from the send.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
-    if (to.length === 0 || !plain) return;
+    const bcc = mergePendingRecipient(bccRecipients, bccInput);
+    const ready = canSend({
+      to,
+      cc,
+      bcc,
+      subject: '',
+      requireSubject: false,
+      plainBody: plain,
+      inlineImages: prepared.inlineImages.length,
+      attachments: attachments.length + draftFiles.files.length,
+    });
+    if (!ready || attachmentsLoading || draftFiles.isStoring) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
       // The signature is not the user's text: "attached" in it is no promise.
       const typed = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText;
-      const warnings = findSendWarnings(typed, attachments.length);
+      const warnings = findSendWarnings(typed, attachments.length + draftFiles.files.length);
       if (warnings.length > 0) {
         warnedScheduleAt.current = scheduleAt;
         setSendWarnings(warnings);
@@ -470,18 +580,29 @@ export function ReplyCompose({
     }
     setSendWarnings(null);
     setSendError(null);
+    const draftHoldsFiles = draftFiles.files.length > 0;
+    // The files go out from the draft: save it now, edited or not (a forward
+    // nobody typed in has not been saved yet).
+    if (draftHoldsFiles) debouncedRef.current.schedule(draftState());
     setIsSending(true);
     try {
-      const draftId = keepsDraft ? await settleDraft() : undefined;
+      const draftId = await settleDraft();
+      if (draftHoldsFiles && !draftId) {
+        setSendError(t('compose:draftFilesNotSaved'));
+        return;
+      }
       sentRef.current = true;
       await onSend({
         fromAccountId,
         toEmails: to,
         ccEmails: cc,
+        bccEmails: bcc,
+        subject,
         body: plain,
         bodyHtml: prepared.bodyHtml,
         inlineImages: prepared.inlineImages,
         attachments,
+        draftHoldsFiles,
         scheduleAt,
         draftId,
       });
@@ -495,10 +616,24 @@ export function ReplyCompose({
     }
   };
 
-  const handleSendKey = useComposerSendKey(() => void handleSend(), isSending || isLoadingDraft);
+  const handleSendKey = useComposerSendKey(
+    () => void handleSend(),
+    isSending || isLoadingDraft || attachmentsLoading || draftFiles.isStoring,
+  );
+  const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  const readyToSend = canSend({
+    to: mergePendingRecipient(toRecipients, toInput),
+    cc: mergePendingRecipient(ccRecipients, ccInput),
+    bcc: mergePendingRecipient(bccRecipients, bccInput),
+    subject: '',
+    requireSubject: false,
+    plainBody: outgoing.plainText,
+    inlineImages: outgoing.inlineImages.length,
+    attachments: attachments.length + draftFiles.files.length,
+  });
 
   const renderTokenInput = (
-    field: 'to' | 'cc',
+    field: RecipientField,
     label: string,
     recipients: string[],
     input: string,
@@ -583,7 +718,15 @@ export function ReplyCompose({
   );
 
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4" onKeyDownCapture={handleSendKey}>
+    <div
+      className={`mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 ${fileOver ? 'ring-2 ring-primary-500' : ''}`}
+      onKeyDownCapture={handleSendKey}
+      {...dropProps}
+    >
+      {/* Pinned while the panel scrolls: with a long draft the Send button and
+          what comes after it can be far from what is on screen. */}
+      <InlineError message={sendError} className="sticky top-0 z-10 mb-3" />
+
       {/* From selector */}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm text-gray-500 w-8 flex-shrink-0">{t('compose:from')}</span>
@@ -594,25 +737,52 @@ export function ReplyCompose({
             options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
             ariaLabel={t('compose:from')}
             fullWidth
-            variant="light"
           />
         </div>
       </div>
 
       {/* To field */}
-      {renderTokenInput('to', 'To', toRecipients, toInput, setToInput)}
+      {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
-      {/* Cc toggle + field */}
-      {!showCc && (
-        <button
-          type="button"
-          onClick={() => setShowCc(true)}
-          className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-10"
-        >
-          + Cc
-        </button>
+      {/* Cc / Bcc toggles + fields */}
+      {(!showCc || !showBcc) && (
+        <div className="flex gap-3 mb-2 ml-10">
+          {!showCc && (
+            <button
+              type="button"
+              onClick={() => setShowCc(true)}
+              className="text-xs text-primary-500 hover:text-primary-600"
+            >
+              + {t('compose:cc')}
+            </button>
+          )}
+          {!showBcc && (
+            <button
+              type="button"
+              onClick={() => setShowBcc(true)}
+              className="text-xs text-primary-500 hover:text-primary-600"
+            >
+              + {t('compose:bcc')}
+            </button>
+          )}
+        </div>
       )}
-      {showCc && renderTokenInput('cc', 'Cc', ccRecipients, ccInput, setCcInput)}
+      {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
+      {showBcc && renderTokenInput('bcc', t('compose:bcc'), bccRecipients, bccInput, setBccInput)}
+
+      {/* Subject */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="w-8 flex-shrink-0" />
+        <input
+          type="text"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder={t('compose:subject')}
+          aria-label={t('compose:subject')}
+          data-testid="reply-subject"
+          className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+        />
+      </div>
 
       {/* Unusual recipient warning */}
       {unusualRecipients.length > 0 && (
@@ -625,8 +795,8 @@ export function ReplyCompose({
             />
           </svg>
           <div className="text-xs text-amber-700">
-            <strong>{t('compose:unusualRecipients')}</strong> {unusualRecipients.join(', ')} — different domain than the
-            other recipients. Double-check before sending.
+            <strong>{t('compose:unusualRecipients')}</strong>{' '}
+            {t('compose:unusualRecipientsHint', { recipients: unusualRecipients.join(', ') })}
           </div>
         </div>
       )}
@@ -662,9 +832,28 @@ export function ReplyCompose({
         )}
       </div>
 
-      {/* Attachments */}
-      {attachments.length > 0 && (
+      {/* Attachments: the draft's files, then EO Docs */}
+      <InlineError message={draftFiles.error} className="mt-2" />
+      {draftFiles.files.length + attachments.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
+          {draftFiles.files.map((file, i) => (
+            <div
+              key={file.filePath}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700"
+            >
+              <span className="max-w-[180px] truncate" title={file.filename ?? undefined}>
+                {file.filename}
+              </span>
+              <button
+                type="button"
+                onClick={() => draftFiles.remove(i)}
+                aria-label={t('compose:removeAttachment', { name: file.filename ?? '' })}
+                className="ml-0.5 text-gray-400 hover:text-red-500"
+              >
+                ×
+              </button>
+            </div>
+          ))}
           {attachments.map((att, i) => (
             <div
               key={att.filename}
@@ -724,24 +913,24 @@ export function ReplyCompose({
           disabled={isSending}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
         >
-          Cancel
+          {t('common:actions.cancel')}
         </button>
         <SendSplitButton
           testId="reply-send"
           label={
             isSending
               ? t('compose:sending')
-              : mode === 'forward'
-                ? t('compose:forward')
-                : mode === 'reply-all'
-                  ? 'Reply All'
-                  : 'Send Reply'
+              : attachmentsLoading || draftFiles.isStoring
+                ? t('compose:loadingFiles')
+                : mode === 'forward'
+                  ? t('compose:forward')
+                  : mode === 'reply-all'
+                    ? t('compose:sendReplyAll')
+                    : t('compose:sendReply')
           }
           onSend={() => void handleSend()}
           onSchedule={(at) => void handleSend(false, at)}
-          disabled={
-            isSending || isLoadingDraft || mergePendingRecipient(toRecipients, toInput).length === 0 || !bodyHtml.trim()
-          }
+          disabled={isSending || isLoadingDraft || attachmentsLoading || draftFiles.isStoring || !readyToSend}
         />
       </div>
 
@@ -755,12 +944,6 @@ export function ReplyCompose({
         </div>
       )}
 
-      {sendError && (
-        <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-          {sendError}
-        </div>
-      )}
-
       {/* RAG sources — past threads the AI used as precedent. Collapsed by
           default so they don't push the action buttons off-screen; the user
           opens individual cards to audit retrieval quality. */}
@@ -770,10 +953,11 @@ export function ReplyCompose({
 }
 
 function DraftSourcesPanel({ sources }: { sources: DraftSource[] }) {
+  const { t } = useTranslation(['compose']);
   return (
     <div className="mt-4 pt-3 border-t border-gray-200">
       <div className="text-xs font-medium text-gray-500 mb-2">
-        Similar past threads used for context ({sources.length})
+        {t('compose:draftSources', { total: sources.length })}
       </div>
       <div className="flex flex-col gap-1.5">
         {sources.map((src) => (
@@ -785,9 +969,10 @@ function DraftSourcesPanel({ sources }: { sources: DraftSource[] }) {
 }
 
 function DraftSourceCard({ source }: { source: DraftSource }) {
-  const { t } = useTranslation(['compose']);
+  const { t } = useTranslation(['compose', 'common']);
+  const fmt = useFormatters();
   const [open, setOpen] = useState(false);
-  const dateStr = format(new Date(source.timestamp * 1000), 'PP');
+  const dateStr = fmt.date(source.timestamp);
   return (
     <div className="rounded border border-gray-200 bg-white">
       <button
@@ -803,7 +988,9 @@ function DraftSourceCard({ source }: { source: DraftSource }) {
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        <span className="flex-1 min-w-0 truncate font-medium text-gray-800">{source.subject || '(No subject)'}</span>
+        <span className="flex-1 min-w-0 truncate font-medium text-gray-800">
+          {source.subject || t('common:labels.noSubject')}
+        </span>
         {source.sentByUser && (
           <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-primary-50 text-primary-700 border border-primary-100">
             {t('compose:yourReply')}

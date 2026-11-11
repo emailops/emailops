@@ -343,6 +343,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
         }
     }
 
@@ -506,6 +507,7 @@ mod tests {
                 _n: Option<&str>,
                 _t: &[String],
                 _c: &[String],
+                _bcc: &[String],
                 _rt: &crate::sync::provider::ReplyTarget<'_>,
                 _s: &str,
                 _b: &crate::sync::provider::EmailBody,
@@ -519,6 +521,7 @@ mod tests {
                 _n: Option<&str>,
                 _t: &[String],
                 _c: &[String],
+                _bcc: &[String],
                 _s: &str,
                 _b: &crate::sync::provider::EmailBody,
                 _a: &[crate::sync::provider::EmailAttachment],

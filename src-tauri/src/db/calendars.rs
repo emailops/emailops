@@ -8,8 +8,9 @@ use crate::models::error::Result;
 use crate::models::Calendar;
 use rusqlite::params;
 
-const CALENDAR_COLUMNS: &str = "id, account_id, provider_calendar_id, name, color, is_primary, \
-     access_role, is_visible, sort_order, created_at, updated_at";
+/// `c.` is the `calendars` row; `f.host` comes from the optional feed behind it.
+const CALENDAR_COLUMNS: &str = "c.id, c.account_id, c.provider_calendar_id, c.name, c.color, c.is_primary, \
+     c.access_role, c.is_visible, c.sort_order, c.created_at, c.updated_at, f.host";
 
 /// Stable row id for a calendar. Opaque — never parsed apart.
 pub fn calendar_row_id(account_id: &str, provider_calendar_id: &str) -> String {
@@ -27,6 +28,7 @@ fn row_to_calendar(row: &rusqlite::Row) -> rusqlite::Result<Calendar> {
         access_role: row.get(6)?,
         is_visible: row.get::<_, i32>(7)? != 0,
         sort_order: row.get(8)?,
+        feed_host: row.get::<_, Option<String>>(11)?.filter(|h| !h.is_empty()),
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
     })
@@ -79,9 +81,10 @@ impl Database {
     pub fn list_calendars(&self, account_id: &str) -> Result<Vec<Calendar>> {
         let conn = self.reader();
         let sql = format!(
-            "SELECT {CALENDAR_COLUMNS} FROM calendars
-             WHERE account_id = ?1
-             ORDER BY is_primary DESC, sort_order ASC, name ASC"
+            "SELECT {CALENDAR_COLUMNS} FROM calendars c
+             LEFT JOIN calendar_feeds f ON f.account_id = c.account_id AND f.id = c.provider_calendar_id
+             WHERE c.account_id = ?1
+             ORDER BY c.is_primary DESC, c.sort_order ASC, c.name ASC"
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![account_id], row_to_calendar)?;
@@ -294,6 +297,7 @@ mod tests {
             access_role: "owner".to_string(),
             is_visible: true,
             sort_order: 0,
+            feed_host: None,
             created_at: 1_000,
             updated_at: 1_000,
         }

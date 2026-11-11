@@ -121,7 +121,9 @@ pub enum ProviderAccess<'a> {
 /// - **Move to inbox** brings back every archived message, and on IMAP every
 ///   message filed in a folder (the archive folder is one).
 /// - **Not spam** brings back every message filed in Spam.
-/// - **Delete** trashes every message, as deleting a conversation always has.
+/// - **Delete** trashes every message, as deleting a conversation always has
+///   (on IMAP, copies of one message go to Trash once:
+///   [`copies_deleted_locally`]).
 pub fn plan_thread_action(action: ThreadAction, messages: &[Email]) -> Vec<String> {
     let ids = |pred: &dyn Fn(&Email) -> bool| -> Vec<String> {
         messages.iter().filter(|m| pred(m)).map(|m| m.id.clone()).collect()
@@ -150,6 +152,38 @@ pub fn plan_thread_action(action: ThreadAction, messages: &[Email]) -> Vec<Strin
         ThreadAction::NotSpam => ids(&|m| m.mailbox == "spam"),
         ThreadAction::Delete => ids(&|_| true),
     }
+}
+
+/// Pure: the messages a Delete takes out of the list without moving them to
+/// Trash at the provider, because they are copies (same Message-ID) of a
+/// message already in Trash or that another copy takes there.
+///
+/// A message sent to yourself is listed in Inbox and in Sent, as two UIDs on
+/// IMAP. Proton Mail Bridge keeps them as one message, and moving the second
+/// copy to a Trash that already holds it deletes the message for good (issue
+/// #277). So one copy per Message-ID is moved, the received one when there is
+/// a choice; on a server that stores two real copies, the other one stays
+/// where it is. Messages without a Message-ID are each moved.
+pub fn copies_deleted_locally(messages: &[Email]) -> Vec<String> {
+    fn header(m: &Email) -> Option<&str> {
+        m.message_id.as_deref().map(str::trim).filter(|h| !h.is_empty())
+    }
+    let mut local = Vec::new();
+    for m in messages {
+        let Some(h) = header(m) else {
+            continue;
+        };
+        let copies: Vec<&Email> = messages.iter().filter(|c| header(c) == Some(h)).collect();
+        let moved = copies
+            .iter()
+            .find(|c| c.mailbox == "trash")
+            .or_else(|| copies.iter().find(|c| c.mailbox != "sent"))
+            .or_else(|| copies.first());
+        if moved.is_some_and(|c| c.id != m.id) {
+            local.push(m.id.clone());
+        }
+    }
+    local
 }
 
 fn in_spam_or_trash(m: &Email) -> bool {
@@ -250,7 +284,7 @@ pub async fn apply_to_account(
     let mut done = 0usize;
     let mut failed = 0usize;
     for thread in threads {
-        match apply_to_thread(db, &thread.account_id, &thread.thread_id, action, &access).await {
+        match apply_to_thread(db, account, &thread.thread_id, action, &access).await {
             Ok(()) => done += 1,
             Err(e) => {
                 failed += 1;
@@ -312,17 +346,28 @@ fn past_tense(action: ThreadAction) -> &'static str {
 /// messages before it keep their change (each one is complete on its own).
 pub async fn apply_to_thread(
     db: &Arc<Database>,
-    account_id: &str,
+    account: &Account,
     thread_id: &str,
     action: ThreadAction,
     access: &ProviderAccess<'_>,
 ) -> Result<()> {
+    let account_id = account.id.as_str();
     let messages = db.get_thread(account_id, thread_id)?;
     if messages.is_empty() {
         return Err(AppError::NotFound(format!("Conversation {thread_id} not found")));
     }
     let targets = plan_thread_action(action, &messages);
+    // Deleted after the copies that go to Trash, so a refused move leaves
+    // every copy listed.
+    let local_copies = if action == ThreadAction::Delete && account.provider == "imap" {
+        copies_deleted_locally(&messages)
+    } else {
+        Vec::new()
+    };
     for id in &targets {
+        if local_copies.contains(id) {
+            continue;
+        }
         let id = id.as_str();
         let Some(email) = messages.iter().find(|m| m.id == id) else {
             continue;
@@ -346,6 +391,9 @@ pub async fn apply_to_thread(
             ThreadAction::NotSpam => not_spam_message(db, email, writable(access)?).await?,
             ThreadAction::Delete => delete_email_with_provider(db, id, writable(access)?).await?,
         }
+    }
+    for id in &local_copies {
+        delete_email_with_provider(db, id, None).await?;
     }
     // A conversation the user archives or deletes is done with: its snooze
     // ends too (as in Gmail), so it neither lingers in the Snoozed view nor
@@ -374,6 +422,27 @@ pub async fn apply_to_thread(
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Mark one message read and take it out of the inbox: the rest of its
+/// conversation and any snooze on it stay as they are. A message that has left
+/// the inbox since it was fetched stays where it went. Records the read and
+/// archive signals [`apply_to_thread`] records, which the chat's memory header
+/// shows.
+pub async fn read_and_archive_message(db: &Arc<Database>, email_id: &str, access: &ProviderAccess<'_>) -> Result<()> {
+    let Some(email) = db.get_email(email_id)?.filter(|e| e.mailbox == "inbox") else {
+        return Ok(());
+    };
+    if !email.is_read {
+        set_flag(db, email_id, PushedFlag::Read, true, push_via(access)).await?;
+        crate::services::tasks::on_email_read(db, email_id);
+    }
+    archive_message(db, &email, writable(access)?).await?;
+    // Through the thread: IMAP and Graph re-key the row it just moved.
+    if let Some(latest) = db.get_thread(&email.account_id, &email.thread_id)?.last() {
+        crate::services::tasks::on_archived(db, &latest.id);
     }
     Ok(())
 }
@@ -642,6 +711,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn copies_of_one_message_are_trashed_once_and_the_received_copy_goes() {
+        let header = |h: &str| Some(format!("<{h}@example.com>"));
+        let thread = [
+            with(message("SENT::7", 1, "sent"), |m| m.message_id = header("self")),
+            with(message("a", 1, "inbox"), |m| m.message_id = header("self")),
+            message("reply", 2, "sent"),
+            with(message("b", 3, "inbox"), |m| m.message_id = None),
+            with(message("c", 4, "inbox"), |m| m.message_id = None),
+        ];
+        assert_eq!(copies_deleted_locally(&thread), ids(&["SENT::7"]));
+    }
+
+    #[test]
+    fn a_message_already_in_trash_is_not_moved_there_again() {
+        let header = || Some("<self@example.com>".to_string());
+        let thread = [
+            with(message("a", 1, "inbox"), |m| m.message_id = header()),
+            with(message("TRASH::3", 1, "trash"), |m| m.message_id = header()),
+            with(message("SENT::7", 1, "sent"), |m| m.message_id = header()),
+        ];
+        assert_eq!(copies_deleted_locally(&thread), ids(&["a", "SENT::7"]));
+    }
+
     // ── executor ──────────────────────────────────────────────────────────
 
     fn test_db(rows: &[Email]) -> Arc<Database> {
@@ -656,7 +749,8 @@ mod tests {
     }
 
     async fn run(db: &Arc<Database>, action: ThreadAction, access: ProviderAccess<'_>) -> Result<()> {
-        apply_to_thread(db, "acc-1", "t-1", action, &access).await
+        let account = db.get_account("acc-1").unwrap().unwrap();
+        apply_to_thread(db, &account, "t-1", action, &access).await
     }
 
     #[tokio::test]
@@ -1173,6 +1267,90 @@ mod tests {
         run(&db, ThreadAction::Delete, ProviderAccess::LocalOnly).await.unwrap();
 
         assert!(live_thread(&db).is_empty());
+    }
+
+    /// A message sent to yourself is listed in Inbox and Sent: on IMAP, two
+    /// UIDs with one Message-ID.
+    fn sent_to_self() -> [Email; 2] {
+        let header = || Some("<self@example.com>".to_string());
+        [
+            with(message("SENT::7", 1, "sent"), |m| m.message_id = header()),
+            with(message("a", 1, "inbox"), |m| m.message_id = header()),
+        ]
+    }
+
+    fn imap_db(rows: &[Email]) -> Arc<Database> {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account_with_provider("acc-1", "imap");
+        db.insert_emails_batch(rows).unwrap();
+        Arc::new(db)
+    }
+
+    fn trashed(provider: &FakeEmailProvider) -> Vec<String> {
+        provider
+            .mailbox_ops()
+            .into_iter()
+            .filter_map(|op| match op {
+                FakeMailboxOp::Trash { message_id, .. } => Some(message_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn delete_on_imap_moves_a_message_listed_in_inbox_and_sent_to_trash_once() {
+        // Issue #277: Proton Mail Bridge deletes a message for good when a
+        // second copy of it is moved to a Trash that already holds it.
+        let db = imap_db(&sent_to_self());
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        run(&db, ThreadAction::Delete, ProviderAccess::Ready(&provider))
+            .await
+            .unwrap();
+
+        assert_eq!(trashed(&provider), ids(&["a"]), "the received copy goes, once");
+        assert!(live_thread(&db).is_empty(), "both copies leave the list");
+    }
+
+    #[tokio::test]
+    async fn delete_on_imap_does_not_move_a_copy_whose_message_is_already_in_trash() {
+        let header = || Some("<self@example.com>".to_string());
+        let db = imap_db(&[
+            with(message("TRASH::3", 1, "trash"), |m| m.message_id = header()),
+            with(message("SENT::7", 1, "sent"), |m| m.message_id = header()),
+        ]);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        run(&db, ThreadAction::Delete, ProviderAccess::Ready(&provider))
+            .await
+            .unwrap();
+
+        assert_eq!(trashed(&provider), ids(&["TRASH::3"]), "the Sent copy is not moved");
+        assert!(live_thread(&db).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refused_imap_delete_keeps_every_copy_of_the_message() {
+        let db = imap_db(&sent_to_self());
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.fail_mailbox_writes("503");
+
+        assert!(run(&db, ThreadAction::Delete, ProviderAccess::Ready(&provider))
+            .await
+            .is_err());
+        assert_eq!(live_thread(&db), ids(&["SENT::7", "a"]));
+    }
+
+    #[tokio::test]
+    async fn delete_on_gmail_still_trashes_every_copy() {
+        let db = test_db(&sent_to_self());
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+
+        run(&db, ThreadAction::Delete, ProviderAccess::Ready(&provider))
+            .await
+            .unwrap();
+
+        assert_eq!(trashed(&provider), ids(&["SENT::7", "a"]));
     }
 
     #[tokio::test]

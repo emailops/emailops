@@ -157,25 +157,16 @@ describe('Select', () => {
     });
   });
 
-  describe('variant', () => {
-    it('defaults to the dark surface palette', () => {
+  describe('palette', () => {
+    // Every screen shares the inbox's surfaces now, so there is one palette:
+    // white on light, and the dark theme's remap turns it navy.
+    it('uses the inbox palette', () => {
       act(() => {
         root.render(<Select value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" />);
       });
       const button = container.querySelector('button[aria-haspopup="listbox"]');
-      expect(button?.className).toContain('bg-[#333]');
-      expect(button?.className).not.toContain('bg-white');
-    });
-
-    it('uses the light surface palette when variant="light"', () => {
-      act(() => {
-        root.render(
-          <Select value="apple" options={FRUIT_OPTIONS} onChange={vi.fn()} ariaLabel="Fruit" variant="light" />,
-        );
-      });
-      const button = container.querySelector('button[aria-haspopup="listbox"]');
       expect(button?.className).toContain('bg-white');
-      expect(button?.className).not.toContain('bg-[#333]');
+      expect(button?.className).toContain('border-gray-300');
       clickTrigger();
       const listbox = container.querySelector('[role="listbox"]');
       expect(listbox?.className).toContain('bg-white');

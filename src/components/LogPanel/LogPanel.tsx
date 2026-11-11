@@ -38,31 +38,31 @@ function LevelIcon({ level }: { level: LogLevel }) {
   const { t } = useTranslation(['dashboard']);
   switch (level) {
     case 'error':
-      return <span className="text-red-400 text-xs font-bold">{t('dashboard:log.levels.error')}</span>;
+      return <span className="text-red-600 text-xs font-bold">{t('dashboard:log.levels.error')}</span>;
     case 'warn':
-      return <span className="text-yellow-400 text-xs font-bold">{t('dashboard:log.levels.warn')}</span>;
+      return <span className="text-yellow-700 text-xs font-bold">{t('dashboard:log.levels.warn')}</span>;
     case 'success':
-      return <span className="text-green-400 text-xs font-bold">{t('dashboard:log.levels.success')}</span>;
+      return <span className="text-green-600 text-xs font-bold">{t('dashboard:log.levels.success')}</span>;
     case 'debug':
       return <span className="text-gray-500 text-xs font-bold">{t('dashboard:log.levels.debug')}</span>;
     default:
-      return <span className="text-blue-400 text-xs font-bold">{t('dashboard:log.levels.info')}</span>;
+      return <span className="text-blue-600 text-xs font-bold">{t('dashboard:log.levels.info')}</span>;
   }
 }
 
 function SourceBadge({ source }: { source: LogSource }) {
   const colors: Record<LogSource, string> = {
-    sync: 'bg-indigo-900/50 text-indigo-300',
-    ai: 'bg-purple-900/50 text-purple-300',
-    search: 'bg-cyan-900/50 text-cyan-300',
-    account: 'bg-amber-900/50 text-amber-300',
-    system: 'bg-gray-700/50 text-gray-300',
-    embeddings: 'bg-emerald-900/50 text-emerald-300',
-    attachments: 'bg-orange-900/50 text-orange-300',
-    chat: 'bg-sky-900/50 text-sky-300',
-    memory: 'bg-pink-900/50 text-pink-300',
-    tasks: 'bg-rose-900/50 text-rose-300',
-    lens: 'bg-violet-900/50 text-violet-300',
+    sync: 'bg-indigo-50 text-indigo-700',
+    ai: 'bg-purple-50 text-purple-700',
+    search: 'bg-cyan-50 text-cyan-700',
+    account: 'bg-amber-50 text-amber-700',
+    system: 'bg-gray-100 text-gray-700',
+    embeddings: 'bg-emerald-50 text-emerald-700',
+    attachments: 'bg-orange-50 text-orange-700',
+    chat: 'bg-sky-50 text-sky-700',
+    memory: 'bg-pink-50 text-pink-700',
+    tasks: 'bg-rose-50 text-rose-700',
+    lens: 'bg-violet-50 text-violet-700',
   };
 
   return (
@@ -72,12 +72,13 @@ function SourceBadge({ source }: { source: LogSource }) {
   );
 }
 
-type Provider = 'llamacpp' | 'ollama' | 'openrouter';
+type Provider = 'llamacpp' | 'ollama' | 'openrouter' | 'openai_compatible';
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   llamacpp: 'Embedded',
   ollama: 'Ollama',
   openrouter: 'OpenRouter',
+  openai_compatible: 'OpenAI-compatible',
 };
 
 export function ModelSelector() {
@@ -103,7 +104,7 @@ export function ModelSelector() {
       const catalog = await api.listCatalogModels().catch(() => [] as CatalogModel[]);
       return catalog.filter((m) => m.kind === 'chat' && m.isLocal).map((m) => m.id);
     }
-    // openrouter: no fixed list — model is a free-form string configured in AI Settings.
+    // openrouter, openai_compatible: the model is configured in AI Settings.
     return [];
   };
 
@@ -172,12 +173,12 @@ export function ModelSelector() {
     <div className="flex items-center gap-1">
       {/* The backend in use. It is changed in AI Settings only: a backend
           change can replace the Embeddings and needs the checks done there. */}
-      <span data-testid="ai-backend" title={t('dashboard:log.aiBackend')} className="text-[11px] text-gray-400 px-1">
+      <span data-testid="ai-backend" title={t('dashboard:log.aiBackend')} className="text-[11px] text-gray-500 px-1">
         {PROVIDER_LABELS[provider]}
       </span>
 
       {/* Model selector — hidden for openrouter (free-form model configured in AI Settings). */}
-      {provider !== 'openrouter' && models.length > 0 && (
+      {provider !== 'openrouter' && provider !== 'openai_compatible' && models.length > 0 && (
         <Select
           value={currentModel}
           onChange={(value) => void handleModelChange(value)}
@@ -234,11 +235,14 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
   }, [visibleEntries.length]);
 
   return (
-    <div ref={panelRef} className="flex flex-col border-t border-gray-700 bg-[#1e1e1e] text-gray-300 text-xs font-mono">
+    <div
+      ref={panelRef}
+      className="theme-chrome flex flex-col border-t border-gray-200 bg-white text-gray-700 text-xs font-mono"
+    >
       {/* Header bar */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[#252526] border-b border-gray-700 select-none">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 border-b border-gray-200 select-none">
         <div className="flex min-w-0 items-center gap-3">
-          <button onClick={toggle} className="flex items-center gap-1.5 hover:text-white transition-colors">
+          <button onClick={toggle} className="flex items-center gap-1.5 hover:text-gray-900 transition-colors">
             <svg
               className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`}
               fill="currentColor"
@@ -276,7 +280,7 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
           <ModelSelector />
           <button
             onClick={onOpenAiSettings}
-            className="p-1 hover:bg-gray-600/50 rounded transition-colors"
+            className="p-1 hover:bg-gray-200 rounded transition-colors"
             title={t('dashboard:log.aiSettings')}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -292,7 +296,7 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
           {/* Clear button */}
           <button
             onClick={clear}
-            className="p-1 hover:bg-gray-600/50 rounded transition-colors"
+            className="p-1 hover:bg-gray-200 rounded transition-colors"
             title={t('dashboard:log.clearLogs')}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -308,7 +312,7 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
           {/* Toggle button */}
           <button
             onClick={toggle}
-            className="p-1 hover:bg-gray-600/50 rounded transition-colors"
+            className="p-1 hover:bg-gray-200 rounded transition-colors"
             title={isOpen ? t('dashboard:log.minimizePanel') : t('dashboard:log.expandPanel')}
           >
             {isOpen ? (
@@ -328,13 +332,13 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
       {isOpen && (
         <div ref={scrollRef} className="overflow-y-auto h-44 px-1 py-1">
           {visibleEntries.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-600">
+            <div className="flex items-center justify-center h-full text-gray-400">
               {entries.length === 0 ? 'No log entries yet' : `No entries for module "${sourceFilter}"`}
             </div>
           ) : (
             visibleEntries.map((entry) => (
-              <div key={entry.id} className="flex items-start gap-2 px-2 py-0.5 hover:bg-white/[0.03] leading-5">
-                <span className="text-gray-400 shrink-0">{fmt.time(entry.timestamp / 1000, LOG_TIME_OPTIONS)}</span>
+              <div key={entry.id} className="flex items-start gap-2 px-2 py-0.5 hover:bg-gray-50 leading-5">
+                <span className="text-gray-500 shrink-0">{fmt.time(entry.timestamp / 1000, LOG_TIME_OPTIONS)}</span>
                 <span className="shrink-0 w-7 text-center">
                   <LevelIcon level={entry.level} />
                 </span>
@@ -344,10 +348,10 @@ export function LogPanel({ onOpenAiSettings }: { onOpenAiSettings?: () => void }
                 <span
                   className={
                     entry.level === 'error'
-                      ? 'text-red-300'
+                      ? 'text-red-700'
                       : entry.level === 'warn'
-                        ? 'text-yellow-200'
-                        : 'text-gray-300'
+                        ? 'text-yellow-800'
+                        : 'text-gray-700'
                   }
                 >
                   {entry.message}

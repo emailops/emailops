@@ -64,7 +64,8 @@ impl Database {
         excluded_senders: &[String],
     ) -> Result<QuickFilterStats> {
         let conn = self.reader();
-        let live = crate::db::live_mailboxes_sql!();
+        // The mail a filter lists, so a suggestion's number matches its rows.
+        let filterable = Self::filterable_mailbox("emails");
 
         // Scope-dependent SQL fragments. The account id (when present) binds
         // as ?1; exclusion placeholders start after it.
@@ -106,7 +107,7 @@ impl Database {
              FROM emails WHERE {scope_cond}
                AND sender_domain != ''
                AND is_deleted = 0
-               AND mailbox IN {live} {domain_exclude_clause}
+               AND {filterable} {domain_exclude_clause}
              GROUP BY domain
              ORDER BY cnt DESC LIMIT 10"
         );
@@ -149,7 +150,7 @@ impl Database {
             "SELECT MIN(sender_email), {thread_cnt} AS cnt
              FROM emails WHERE {scope_cond}
                AND is_deleted = 0
-               AND mailbox IN {live}
+               AND {filterable}
                AND {own_address_cond} {sender_exclude_clause}
              GROUP BY sender_email COLLATE NOCASE
              ORDER BY cnt DESC LIMIT 10"
@@ -199,7 +200,7 @@ impl Database {
     /// Mailboxes a smart filter reaches: the live ones plus custom folders,
     /// never Spam or Trash. The same list the search box uses, so a filter
     /// and its `tag:` / `from:` token list the same mail.
-    fn filterable_mailbox(alias: &str) -> String {
+    pub(crate) fn filterable_mailbox(alias: &str) -> String {
         format!(
             "({alias}.mailbox IN {live} OR {alias}.mailbox LIKE 'folder:%')",
             live = crate::db::live_mailboxes_sql!()
@@ -207,7 +208,7 @@ impl Database {
     }
 
     /// Everything after the `matched (aid, tid, mid, mts)` CTE both
-    /// `get_filtered_emails` branches build: one row per thread — its newest
+    /// tag and list queries build: one row per thread — its newest
     /// MATCHING email — sorted by the thread's newest email of any kind, so an
     /// old thread that got a reply today sorts as today.
     ///
@@ -226,6 +227,17 @@ impl Database {
     /// the probe drives from the small `thread_latest` set into the emails
     /// primary key, never the reverse. The thread timestamp is the last column.
     fn representative_tail(limit_idx: usize, offset_idx: usize) -> String {
+        Self::thread_tail(
+            &format!("e3.is_deleted = 0 AND {}", Self::filterable_mailbox("e3")),
+            "",
+            &format!("LIMIT ?{limit_idx} OFFSET ?{offset_idx}"),
+        )
+    }
+
+    /// [`Self::representative_tail`] for a caller that names what counts as the
+    /// conversation's activity (`thread_sql`, on alias `e3`), where the page
+    /// starts (`after`, a condition on `l.thread_ts` and `e`) and its size.
+    pub(super) fn thread_tail(thread_sql: &str, after: &str, page: &str) -> String {
         format!(
             "picked AS (
                  SELECT aid, tid, mid,
@@ -237,7 +249,7 @@ impl Database {
                         (SELECT e3.timestamp
                          FROM emails e3 INDEXED BY idx_emails_thread_latest
                          WHERE e3.account_id = p.aid AND e3.thread_id = p.tid
-                           AND e3.is_deleted = 0 AND {filterable}
+                           AND {thread_sql}
                          ORDER BY e3.timestamp DESC, e3.id DESC
                          LIMIT 1) AS thread_ts
                  FROM picked p
@@ -246,16 +258,15 @@ impl Database {
              SELECT {cols}, l.thread_ts
              FROM thread_latest l
              CROSS JOIN emails e
-             WHERE e.id = l.rep_id
+             WHERE e.id = l.rep_id{after}
              ORDER BY l.thread_ts DESC, e.timestamp DESC, e.id DESC
-             LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
-            filterable = Self::filterable_mailbox("e3"),
+             {page}",
             cols = EMAIL_COLUMNS,
         )
     }
 
     /// Read the rows [`Self::representative_tail`] returns.
-    fn read_representatives(rows: &mut rusqlite::Rows<'_>) -> Result<FilteredEmailsResult> {
+    pub(super) fn read_representatives(rows: &mut rusqlite::Rows<'_>) -> Result<FilteredEmailsResult> {
         let thread_ts_idx = EMAIL_COLUMNS.split(',').count();
         let mut emails = Vec::new();
         let mut thread_latest_at = std::collections::HashMap::new();
@@ -272,27 +283,19 @@ impl Database {
         })
     }
 
-    /// Get emails filtered by domain or sender, with total count for pagination.
+    /// One tag's conversations, for the Tag Board: thread dedup keys on
+    /// `(account_id, thread_id)` in both scopes — a no-op for one account, and
+    /// required under `AllEnabled`, where two accounts CC'd on one provider
+    /// thread share its id and must each keep their own row. Searches and
+    /// smart filters use [`Self::list_threads`].
     ///
-    /// Uses subquery-based approach to avoid both:
-    ///   - O(N²) NOT EXISTS correlated subquery
-    ///   - SQLite parameter limit (32,766) for large thread_id sets
-    ///
-    /// The matching thread_ids stay inside a CTE subquery; only the scope's
-    /// account id (when single-account) and the filter value are parameters.
-    ///
-    /// Thread dedup keys on `(account_id, thread_id)` in BOTH scopes — a no-op
-    /// for single-account queries (account is constant) and required under
-    /// `AllEnabled`, where two accounts CC'd on one provider thread share the
-    /// same thread_id string and must each keep their own representative row.
+    /// Tags are selective, so this drives from `email_tags`: fast even with 0
+    /// matches.
     pub fn get_filtered_emails(
         &self,
         scope: crate::db::AccountScope<'_>,
-        domain: Option<&str>,
-        sender_email: Option<&str>,
-        tag_type: Option<&str>,
-        tag_value: Option<&str>,
-        attachment_ext: Option<&str>,
+        tag_type: &str,
+        tag_value: &str,
         window: &crate::models::EmailWindow,
         limit: i32,
         offset: i32,
@@ -314,137 +317,58 @@ impl Database {
             crate::db::AccountScope::AllEnabled => None,
         };
 
-        // ── Tag filter: drive from email_tags (small result set) ─────────────
-        // Tags are selective — few emails match. Drive from the tag index, find
-        // matching threads, GROUP BY for latest-per-thread. Fast even with 0 matches.
-        if let (Some(tt), Some(tv)) = (tag_type, tag_value) {
-            // Semantics (user-confirmed): a thread matches the filter if ANY email
-            // in the thread carries the tag, so replying to "Globex" doesn't make
-            // the thread disappear from the Globex filter. The row shown is the
-            // thread's newest email that carries the tag; the thread sorts by its
-            // newest email of any kind (see `representative_tail`).
-            //
-            // `filterable_mailbox` keeps Spam/Trash copies out of the filtered
-            // views while reaching archived mail and custom folders.
-            // `INDEXED BY idx_email_tags_type_value` is critical: without it SQLite
-            // picks the inverted plan — scan all ~87k emails of the account and
-            // probe email_tags by email_id — instead of starting from the tag
-            // (which yields ~hundreds of rows). With the hint, matched_threads
-            // costs O(emails_tagged_with_this_value), not O(account_emails).
-            let first_idx = if account_param.is_some() { 2 } else { 1 };
-            // Window binds land after limit/offset so the fixed indices above
-            // keep their positions.
-            let junk_sql = crate::db::exclude_junk_sql("e2", window.hide_graymail);
-            // The board asks for `latest_tag_only`; the sidebar filter never
-            // does, so the "ANY email in the thread" rule above is untouched.
-            let latest_sql = crate::db::latest_tagged_in_thread_sql("e2", first_idx, window.latest_tag_only);
-            let mut window_idx = first_idx + 4;
-            let (window_sql, window_binds) = window.sql("e2", &mut window_idx);
-            let select_sql = format!(
-                "WITH matched AS (
-                     SELECT e2.account_id AS aid, e2.thread_id AS tid, e2.id AS mid, e2.timestamp AS mts
-                     FROM email_tags et INDEXED BY idx_email_tags_type_value
-                     JOIN emails e2 ON e2.id = et.email_id
-                     WHERE et.tag_type = ?{tt_idx} AND et.tag_value = ?{tv_idx}
-                       AND {scope_e2} AND e2.is_deleted = 0
-                       AND {filterable}
-                       {junk_sql}
-                       {latest_sql}
-                       {window_sql}
-                 ),
-                 {tail}",
-                tt_idx = first_idx,
-                tv_idx = first_idx + 1,
-                scope_e2 = scope_cond("e2"),
-                filterable = Self::filterable_mailbox("e2"),
-                tail = Self::representative_tail(first_idx + 2, first_idx + 3),
-            );
-
-            let mut stmt = conn.prepare(&select_sql)?;
-            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            if let Some(id) = account_param {
-                params_vec.push(Box::new(id.to_string()));
-            }
-            params_vec.push(Box::new(tt.to_string()));
-            params_vec.push(Box::new(tv.to_string()));
-            params_vec.push(Box::new(limit));
-            params_vec.push(Box::new(offset));
-            params_vec.extend(window_binds);
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-            let mut rows = stmt.query(params_refs.as_slice())?;
-            return Self::read_representatives(&mut rows);
-        }
-
-        // ── Domain/sender filter: three-step CTE ───────────────────────────────
-        // Step 1: find matching (account_id, thread_id) pairs via
-        //         idx_emails_domain_filter or idx_emails_sender_filter
-        //         (covering, no table access needed).
-        // Step 2: pick each thread's newest match and its latest timestamp —
-        //         O(matching_threads) (see `representative_tail`).
-        // Step 3: join back to emails to fetch the representative row.
-        // This is O(emails_from_domain) rather than O(all_emails) and avoids
-        // scanning the full inbox in timestamp order.
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        let mut param_idx = 1usize;
-
-        // Inbox-level filtered view: exclude Spam/Trash copies and junk so they
-        // don't leak into the main filter UI. Soft-deleted rows are also excluded.
-        let mut match_conditions = vec![
-            "is_deleted = 0".to_string(),
-            Self::filterable_mailbox("emails"),
-            Self::junk_condition_with("emails", window.hide_graymail),
-        ];
-        match scope {
-            crate::db::AccountScope::Account(id) => {
-                match_conditions.push(format!("account_id = ?{param_idx}"));
-                params_vec.push(Box::new(id.to_string()));
-                param_idx += 1;
-            }
-            crate::db::AccountScope::AllEnabled => {
-                match_conditions.push("account_id IN (SELECT id FROM accounts WHERE enabled = 1)".to_string());
-            }
-        }
-        if let Some(d) = domain {
-            match_conditions.push(format!("sender_domain = ?{}", param_idx));
-            params_vec.push(Box::new(d.to_lowercase()));
-            param_idx += 1;
-        }
-        if let Some(s) = sender_email {
-            // NOCASE: the clicked suggestion (or a blocked header address) may
-            // differ in case from the stored rows. Served by
-            // idx_emails_sender_email_nocase.
-            match_conditions.push(format!("sender_email = ?{} COLLATE NOCASE", param_idx));
-            params_vec.push(Box::new(s.to_string()));
-            param_idx += 1;
-        }
-        if let Some(ext) = attachment_ext {
-            // `emails.id` must be qualified: a bare `id` binds to the
-            // innermost table (`am.id`) and the filter would never match.
-            match_conditions.push(format!(
-                "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = emails.id AND LOWER(am.filename) LIKE ?{})",
-                param_idx
-            ));
-            params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
-            param_idx += 1;
-        }
-
-        let (window_sql, window_binds) = window.sql("emails", &mut param_idx);
+        // Semantics (user-confirmed): a thread matches the filter if ANY email
+        // in the thread carries the tag, so replying to "Globex" doesn't make
+        // the thread disappear from the Globex filter. The row shown is the
+        // thread's newest email that carries the tag; the thread sorts by its
+        // newest email of any kind (see `representative_tail`).
+        //
+        // `filterable_mailbox` keeps Spam/Trash copies out of the filtered
+        // views while reaching archived mail and custom folders.
+        // `INDEXED BY idx_email_tags_type_value` is critical: without it SQLite
+        // picks the inverted plan — scan all ~87k emails of the account and
+        // probe email_tags by email_id — instead of starting from the tag
+        // (which yields ~hundreds of rows). With the hint, matched_threads
+        // costs O(emails_tagged_with_this_value), not O(account_emails).
+        let first_idx = if account_param.is_some() { 2 } else { 1 };
+        // Window binds land after limit/offset so the fixed indices above
+        // keep their positions.
+        let junk_sql = crate::db::exclude_junk_sql("e2", window.hide_graymail);
+        // The board asks for `latest_tag_only`; the sidebar filter never
+        // does, so the "ANY email in the thread" rule above is untouched.
+        let latest_sql = crate::db::latest_tagged_in_thread_sql("e2", first_idx, window.latest_tag_only);
+        let mut window_idx = first_idx + 4;
+        let (window_sql, window_binds) = window.sql("e2", &mut window_idx);
         let select_sql = format!(
             "WITH matched AS (
-                 SELECT account_id AS aid, thread_id AS tid, id AS mid, timestamp AS mts
-                 FROM emails
-                 WHERE {match_cond}{window_sql}
+                 SELECT e2.account_id AS aid, e2.thread_id AS tid, e2.id AS mid, e2.timestamp AS mts
+                 FROM email_tags et INDEXED BY idx_email_tags_type_value
+                 JOIN emails e2 ON e2.id = et.email_id
+                 WHERE et.tag_type = ?{tt_idx} AND et.tag_value = ?{tv_idx}
+                   AND {scope_e2} AND e2.is_deleted = 0
+                   AND {filterable}
+                   {junk_sql}
+                   {latest_sql}
+                   {window_sql}
              ),
              {tail}",
-            match_cond = match_conditions.join(" AND "),
-            tail = Self::representative_tail(param_idx, param_idx + 1),
+            tt_idx = first_idx,
+            tv_idx = first_idx + 1,
+            scope_e2 = scope_cond("e2"),
+            filterable = Self::filterable_mailbox("e2"),
+            tail = Self::representative_tail(first_idx + 2, first_idx + 3),
         );
 
-        params_vec.extend(window_binds);
+        let mut stmt = conn.prepare(&select_sql)?;
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(id) = account_param {
+            params_vec.push(Box::new(id.to_string()));
+        }
+        params_vec.push(Box::new(tag_type.to_string()));
+        params_vec.push(Box::new(tag_value.to_string()));
         params_vec.push(Box::new(limit));
         params_vec.push(Box::new(offset));
-
-        let mut stmt = conn.prepare(&select_sql)?;
+        params_vec.extend(window_binds);
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let mut rows = stmt.query(params_refs.as_slice())?;
         Self::read_representatives(&mut rows)
@@ -455,7 +379,7 @@ impl Database {
     ///
     /// Returns `(display_name, address)` pairs — the caller dedupes by address
     /// and decides which name to show. Kept as a separate query rather than
-    /// bolted onto `get_filtered_emails`: that one is shared with the sidebar,
+    /// bolted onto `get_filtered_emails`: that one is shared with the Tag Board,
     /// and its join order is load-bearing (see the CROSS JOIN note in
     /// `db::tags`).
     pub fn read_thread_people(
@@ -623,7 +547,6 @@ impl Database {
             false,
             false,
             None,
-            SearchShape::Lookup,
         )
         .map(drop_sort_keys)
     }
@@ -679,52 +602,8 @@ impl Database {
             unread_only,
             received_only,
             participants,
-            SearchShape::Lookup,
         )
         .map(drop_sort_keys)
-    }
-
-    /// The app's search box: the same match as [`Self::search_emails`], listed
-    /// the way a smart filter lists it — one row per thread (its newest
-    /// matching email), threads sorted by their newest email of any kind (the
-    /// returned timestamp), reaching every live mailbox and custom folder but
-    /// never Spam or Trash, narrowed by `scope` (the view the search runs in
-    /// and the search box's own operators). Junk is left out only when there
-    /// are no typed words (`query` empty): a query of filter tokens alone is
-    /// what a smart filter writes and lists like it, while typing words is the
-    /// documented way back to mail hidden as junk.
-    #[allow(clippy::too_many_arguments)]
-    pub fn search_box_emails(
-        &self,
-        account_id: &str,
-        query: &str,
-        from_filter: Option<&str>,
-        to_filter: Option<&str>,
-        subject_filter: Option<&str>,
-        after_timestamp: Option<i64>,
-        before_timestamp: Option<i64>,
-        tag_filters: Option<&[TagQuery]>,
-        scope: SearchBoxScope<'_>,
-        limit: i32,
-    ) -> Result<Vec<(Email, i64)>> {
-        self.search_emails_inner(
-            account_id,
-            query,
-            None,
-            from_filter,
-            to_filter,
-            subject_filter,
-            after_timestamp,
-            before_timestamp,
-            tag_filters,
-            limit,
-            false,
-            query.trim().is_empty(),
-            false,
-            false,
-            None,
-            SearchShape::SearchBox(scope),
-        )
     }
 
     /// The addresses a person has written from, found by name or address
@@ -769,7 +648,6 @@ impl Database {
         unread_only: bool,
         received_only: bool,
         participants: Option<&[String]>,
-        shape: SearchShape<'_>,
     ) -> Result<Vec<(Email, i64)>> {
         let participants: Vec<String> = participants
             .unwrap_or_default()
@@ -789,8 +667,7 @@ impl Database {
             || !participants.is_empty()
             || tag_filters.map(|t| !t.is_empty()).unwrap_or(false);
 
-        // The search box lists threads even for a date-only query.
-        if !has_text_filter && matches!(shape, SearchShape::Lookup) {
+        if !has_text_filter {
             return self
                 .search_emails_by_date(
                     account_id,
@@ -806,395 +683,27 @@ impl Database {
                 .map(with_own_timestamps);
         }
 
+        let Some((sql, params_vec)) = build_search_sql(&SearchSqlArgs {
+            account_id,
+            query,
+            categories,
+            from_filter,
+            to_filter,
+            subject_filter,
+            after_timestamp,
+            before_timestamp,
+            tag_filters,
+            limit,
+            ascending,
+            exclude_spam,
+            unread_only,
+            received_only,
+            participants: &participants,
+        }) else {
+            return Ok(Vec::new());
+        };
+
         let conn = self.reader();
-        let order_clause = match shape {
-            SearchShape::Lookup => thread_order_clause("e", ascending),
-            SearchShape::SearchBox(_) => "thread_ts DESC, e.timestamp DESC, e.id DESC".to_string(),
-        };
-        // Each thread is represented by one matching email: the latest one
-        // newest-first, the earliest one oldest-first — otherwise a thread the
-        // user started long ago and replied to yesterday sorts by yesterday.
-        let thread_pick = if ascending { "MIN" } else { "MAX" };
-
-        // ── CTE: find thread_ids that contain a matching email ────────────────────
-        // All filter conditions apply to the same email row (`match_e`) so that
-        // `from:alice subject:meeting` requires a single message to satisfy both.
-        let mut cte_conditions: Vec<String> = Vec::new();
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        let mut param_idx = 1usize;
-        // Optional pre-CTE for the from filter — populated when both email-prefix
-        // and FTS-sender branches are needed so each can use its own index.
-        let mut from_match_cte: Option<String> = None;
-
-        // account_id is ?1 — used in both the CTE and outer query.
-        params_vec.push(Box::new(account_id.to_string()));
-        cte_conditions.push(format!("match_e.account_id = ?{}", param_idx));
-        cte_conditions.push("match_e.is_deleted = 0".to_string());
-        // Spam/trash never surface in search — a spam email classified
-        // `primary` must not sail through the category filter.
-        match shape {
-            SearchShape::Lookup => cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string()),
-            SearchShape::SearchBox(_) => cte_conditions.push(Self::filterable_mailbox("match_e")),
-        }
-        if exclude_spam {
-            cte_conditions.push(Self::junk_condition("match_e"));
-        }
-        // Read state rides with the other per-email conditions, so the thread
-        // representative is the latest UNREAD matching email of the thread.
-        if unread_only {
-            cte_conditions.push("match_e.is_read = 0".to_string());
-        }
-        if received_only {
-            cte_conditions.push("match_e.is_sent = 0".to_string());
-        }
-        param_idx += 1;
-
-        if let SearchShape::SearchBox(scope) = shape {
-            fn present(v: Option<&str>) -> Option<&str> {
-                v.map(str::trim).filter(|v| !v.is_empty())
-            }
-            // The view a search-box query runs in: only that mailbox's mail.
-            if let Some(mailbox) = present(scope.mailbox) {
-                cte_conditions.push(format!("match_e.mailbox = ?{param_idx}"));
-                params_vec.push(Box::new(mailbox.to_string()));
-                param_idx += 1;
-            }
-            // Same match as the sidebar's domain filter (`get_filtered_emails`).
-            if let Some(domain) = present(scope.domain) {
-                cte_conditions.push(format!("match_e.sender_domain = ?{param_idx}"));
-                params_vec.push(Box::new(domain.to_lowercase()));
-                param_idx += 1;
-            }
-            // Same match as the sidebar's attachment filter.
-            if let Some(ext) = present(scope.attachment_ext) {
-                cte_conditions.push(format!(
-                    "EXISTS (SELECT 1 FROM email_attachment_meta am WHERE am.email_id = match_e.id AND LOWER(am.filename) LIKE ?{param_idx})"
-                ));
-                params_vec.push(Box::new(format!("%.{}", ext.to_lowercase())));
-                param_idx += 1;
-            }
-        }
-
-        // Category filter
-        if let Some(cats) = categories.filter(|c| !c.is_empty()) {
-            let placeholders: Vec<String> = (0..cats.len()).map(|i| format!("?{}", param_idx + i)).collect();
-            cte_conditions.push(format!("match_e.category IN ({})", placeholders.join(", ")));
-            for cat in cats {
-                params_vec.push(Box::new(cat.clone()));
-            }
-            param_idx += cats.len();
-        }
-
-        // Keyword search via FTS5 (already indexed — no change needed here)
-        if !query.is_empty() {
-            let fts_query = sanitize_fts_query(query);
-            // A keyword of only symbols ("?!") can match nothing; dropping
-            // the condition instead would match every thread.
-            if fts_query.is_empty() {
-                return Ok(Vec::new());
-            }
-            cte_conditions.push(format!(
-                "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
-                param_idx
-            ));
-            params_vec.push(Box::new(fts_query));
-            param_idx += 1;
-        }
-
-        // From filter — two-pronged:
-        //   1. Prefix match on `sender_email` (uses idx_emails_sender_email_nocase).
-        //      A case-folded range scan so mixed-case stored addresses still match
-        //      the lowercased needle (the porter/unicode FTS branch is already
-        //      case-insensitive; this keeps the address branch consistent).
-        //   2. FTS5 sender-column search for display-name matches (e.g. "from:Alice").
-        //
-        // When both branches are needed we materialise a separate `from_match` CTE
-        // with UNION so each branch can use its own index independently.  The old
-        // approach (OR in a single WHERE clause) prevented SQLite from using either
-        // index, causing a full table scan on every from: query.
-        if let Some(from) = from_filter {
-            let from_lower = from.to_lowercase();
-            // Build an FTS5 sender-column query: "sender:word1* sender:word2* ..."
-            let fts_sender: String = from
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|t| t.len() >= 2)
-                .map(|t| format!("sender:\"{}\"*", t))
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            // Convert prefix to explicit >= / < range bounds so SQLite can use
-            // idx_emails_sender_email as a B-tree range scan.  Parameterised
-            // LIKE ? prevents the optimiser from knowing there is no leading
-            // wildcard, so it falls back to a full table scan.
-            let upper_bound = prefix_upper_bound(&from_lower);
-
-            if fts_sender.is_empty() {
-                // Very short or symbol-only input — range scan only.
-                // COLLATE NOCASE so a mixed-case stored address still falls in
-                // range against the lowercased needle (idx_emails_sender_email_nocase).
-                if let Some(ref ub) = upper_bound {
-                    cte_conditions.push(format!(
-                        "(match_e.sender_email >= ?{lo} COLLATE NOCASE AND match_e.sender_email < ?{hi} COLLATE NOCASE)",
-                        lo = param_idx,
-                        hi = param_idx + 1,
-                    ));
-                    params_vec.push(Box::new(from_lower.clone()));
-                    params_vec.push(Box::new(ub.clone()));
-                    param_idx += 2;
-                } else {
-                    cte_conditions.push(format!("match_e.sender_email >= ?{} COLLATE NOCASE", param_idx));
-                    params_vec.push(Box::new(from_lower.clone()));
-                    param_idx += 1;
-                }
-            } else {
-                // UNION CTE: each branch uses its own index independently.
-                //   Branch 1 (>= / <) → idx_emails_sender_email_nocase B-tree range scan.
-                //   Branch 2 (MATCH)   → emails_fts inverted index (display-name hits).
-                //
-                // is_deleted is intentionally omitted — filter_match enforces it.
-                // COLLATE NOCASE on both bounds so a mixed-case stored address
-                // still falls in range against the lowercased needle; the
-                // idx_emails_sender_email_nocase index serves the case-folded scan.
-                let range_clause = if let Some(ref _ub) = upper_bound {
-                    format!(
-                        "sender_email >= ?{lo} COLLATE NOCASE AND sender_email < ?{hi} COLLATE NOCASE",
-                        lo = param_idx,
-                        hi = param_idx + 1,
-                    )
-                } else {
-                    format!("sender_email >= ?{} COLLATE NOCASE", param_idx)
-                };
-                let range_params = if upper_bound.is_some() { 2 } else { 1 };
-
-                // Branch 3 (relaxed, multi-token needles only): every
-                // meaningful token must appear SOMEWHERE in "display name +
-                // address". Neither indexed branch can span the two fields —
-                // the FTS `sender` column holds only the display name, and the
-                // address branch is a prefix scan pinned to the local part — so
-                // a needle like "nadia de northwind" (a person AND their
-                // company) matched nothing at all. This branch is a scan, which
-                // is why it is gated on a multi-token needle: single-token
-                // lookups (the overwhelming majority) keep the pure index path.
-                let relaxed_tokens = relaxed_sender_tokens(from);
-                let relaxed_branch = if relaxed_tokens.is_empty() {
-                    String::new()
-                } else {
-                    let first = param_idx + range_params + 1;
-                    let conds: Vec<String> = (0..relaxed_tokens.len())
-                        .map(|i| format!("haystack LIKE ?{}", first + i))
-                        .collect();
-                    format!(
-                        "
-                         UNION
-                         SELECT email_id FROM (
-                             SELECT id AS email_id,
-                                    lower(sender || ' ' || sender_email) AS haystack
-                             FROM emails
-                             WHERE account_id = ?1
-                         ) WHERE {}",
-                        conds.join(" AND "),
-                    )
-                };
-
-                // Branch 4 (company / domain needles): the user names the
-                // COMPANY, not the person — "northwind", "de northwind". The domain
-                // is in no display name, and it is not a prefix of the address
-                // (that starts with the local part), so branches 1-2 find only
-                // the few senders who spell the company into their display
-                // name. Prefix-matched against the indexed `sender_domain`
-                // column, so this is a B-tree range scan, not a table scan.
-                let domain_needle = sender_domain_needle(from);
-                let domain_branch = match domain_needle {
-                    None => String::new(),
-                    Some(ref d) => {
-                        let lo = param_idx + range_params + 1 + relaxed_tokens.len();
-                        match prefix_upper_bound(d) {
-                            Some(_) => format!(
-                                "
-                         UNION
-                         SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_domain
-                         WHERE account_id = ?1
-                           AND sender_domain >= ?{lo} AND sender_domain < ?{hi}",
-                                lo = lo,
-                                hi = lo + 1,
-                            ),
-                            None => format!(
-                                "
-                         UNION
-                         SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_domain
-                         WHERE account_id = ?1
-                           AND sender_domain >= ?{lo}",
-                                lo = lo,
-                            ),
-                        }
-                    }
-                };
-
-                from_match_cte = Some(format!(
-                    "from_match AS (
-                         SELECT id AS email_id
-                         FROM emails INDEXED BY idx_emails_sender_email_nocase
-                         WHERE account_id = ?1
-                           AND {range}
-                         UNION
-                         SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{fts_idx}{relaxed}{domain}
-                     )",
-                    range = range_clause,
-                    fts_idx = param_idx + range_params,
-                    relaxed = relaxed_branch,
-                    domain = domain_branch,
-                ));
-                params_vec.push(Box::new(from_lower));
-                if let Some(ub) = upper_bound {
-                    params_vec.push(Box::new(ub));
-                }
-                params_vec.push(Box::new(fts_sender));
-                param_idx += range_params + 1;
-                for tok in &relaxed_tokens {
-                    params_vec.push(Box::new(format!("%{}%", tok)));
-                    param_idx += 1;
-                }
-                if let Some(d) = domain_needle {
-                    let ub = prefix_upper_bound(&d);
-                    params_vec.push(Box::new(d));
-                    param_idx += 1;
-                    if let Some(ub) = ub {
-                        params_vec.push(Box::new(ub));
-                        param_idx += 1;
-                    }
-                }
-                // The JOIN into from_match is handled in query assembly below.
-            }
-        }
-
-        // To filter — recipients are stored as a JSON array; LIKE is unavoidable
-        // without a separate recipients table.  Run it in the CTE (once) rather than
-        // inside a correlated subquery (once per representative email).
-        if let Some(to) = to_filter {
-            let to_pattern = format!("%{}%", to);
-            cte_conditions.push(format!("match_e.recipients_json LIKE ?{}", param_idx));
-            params_vec.push(Box::new(to_pattern));
-            param_idx += 1;
-        }
-
-        // Participants: any term in the sender (name or address), recipients
-        // or cc. JSON arrays again, so LIKE — same cost as the `to` filter.
-        if !participants.is_empty() {
-            let mut any_term = Vec::with_capacity(participants.len());
-            for term in &participants {
-                any_term.push(format!(
-                    "(lower(match_e.sender) LIKE ?{i} OR lower(match_e.sender_email) LIKE ?{i} \
-                     OR lower(match_e.recipients_json) LIKE ?{i} OR lower(match_e.cc_json) LIKE ?{i})",
-                    i = param_idx
-                ));
-                params_vec.push(Box::new(format!("%{term}%")));
-                param_idx += 1;
-            }
-            cte_conditions.push(format!("({})", any_term.join(" OR ")));
-        }
-
-        // Subject filter — route through FTS5 subject column instead of LIKE '%…%'.
-        // FTS5 `subject:{term}*` uses the inverted index on the subject field.
-        if let Some(subj) = subject_filter {
-            let fts_subject: String = subj
-                .split(|c: char| !c.is_alphanumeric())
-                .filter(|t| t.len() >= 2)
-                .map(|t| format!("subject:\"{}\"*", t))
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            if fts_subject.is_empty() {
-                // Fallback for very short subjects
-                let subj_pattern = format!("%{}%", subj);
-                cte_conditions.push(format!("match_e.subject LIKE ?{}", param_idx));
-                params_vec.push(Box::new(subj_pattern));
-                param_idx += 1;
-            } else {
-                cte_conditions.push(format!(
-                    "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
-                    param_idx
-                ));
-                params_vec.push(Box::new(fts_subject));
-                param_idx += 1;
-            }
-        }
-
-        // Date range filters
-        if let Some(after) = after_timestamp {
-            cte_conditions.push(format!("match_e.timestamp >= ?{}", param_idx));
-            params_vec.push(Box::new(after));
-            param_idx += 1;
-        }
-        if let Some(before) = before_timestamp {
-            cte_conditions.push(format!("match_e.timestamp <= ?{}", param_idx));
-            params_vec.push(Box::new(before));
-            param_idx += 1;
-        }
-
-        // Tag filters. A typed filter also binds `tag_type`, which keeps
-        // `intent=billing` from matching the company tag "billing" and lets
-        // SQLite use idx_email_tags_type_value instead of scanning by value.
-        if let Some(tags) = tag_filters.filter(|t| !t.is_empty()) {
-            for tag in tags {
-                let type_clause = match &tag.tag_type {
-                    Some(_) => format!(" AND et.tag_type = ?{}", param_idx + 1),
-                    None => String::new(),
-                };
-                cte_conditions.push(format!(
-                    "EXISTS (SELECT 1 FROM email_tags et WHERE et.email_id = match_e.id AND et.tag_value = ?{}{})",
-                    param_idx, type_clause
-                ));
-                params_vec.push(Box::new(tag.value.clone()));
-                param_idx += 1;
-                if let Some(tag_type) = &tag.tag_type {
-                    params_vec.push(Box::new(tag_type.clone()));
-                    param_idx += 1;
-                }
-            }
-        }
-
-        // ── Assemble and execute ─────────────────────────────────────────────────
-        let cte_where = cte_conditions.join(" AND ");
-
-        // GROUP BY + MAX(timestamp) is ~250x faster than the scalar subquery
-        // for finding the latest email per thread (benchmarked on 47k emails).
-        // `filter_match` emits id/thread_id/timestamp for matching emails,
-        // so the dedup groups by thread over ONLY the matching rows — not all
-        // emails in those threads, and the representative id always comes
-        // from `filter_match`. See the regression test
-        // `search_emails_from_filter_returns_matching_email_not_reply`.
-        //
-        // With a `from_match` CTE, `filter_match` drives from it (CROSS JOIN
-        // pins the order): the sender index + FTS produce the candidate ids,
-        // and each is a PK lookup that must pass every other filter. The ids
-        // stay inside SQL — binding them one parameter each broke past
-        // SQLite's 32,766-variable limit on a prolific sender.
-        let (from_cte, filter_source) = match &from_match_cte {
-            Some(cte) => (
-                format!("{cte},"),
-                "from_match fm CROSS JOIN emails match_e ON match_e.id = fm.email_id",
-            ),
-            None => (String::new(), "emails match_e"),
-        };
-        let sql = format!(
-            "WITH {from_cte}
-             filter_match AS (
-                 SELECT match_e.id, match_e.thread_id, match_e.timestamp
-                 FROM {filter_source}
-                 WHERE {cte_where}
-             ),
-             {dedup}
-             ORDER BY {order}
-             LIMIT ?{limit_idx}",
-            dedup = thread_representative_sql(thread_pick, &sort_key_sql(shape)),
-            order = order_clause,
-            limit_idx = param_idx,
-        );
-
-        params_vec.push(Box::new(limit));
-
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
@@ -1210,6 +719,441 @@ impl Database {
 
         Ok(result)
     }
+}
+
+/// How a `from:` needle narrows the matches.
+pub(super) enum FromMatch {
+    /// A `from_match (email_id)` CTE, each of whose branches uses its own index.
+    Cte(String),
+    /// A needle too short to tokenize: one condition on the aliased `emails`.
+    Condition(String),
+}
+
+/// The `from:` match shared by the chat's search and the list. `account_cond`
+/// scopes the branches (`account_id = ?1`, or the enabled accounts) and `alias`
+/// names the `emails` row a plain condition applies to. Binds continue from
+/// `next_index`, which is left past them.
+///
+/// Two-pronged:
+///   1. Prefix match on `sender_email` (uses idx_emails_sender_email_nocase).
+///      A case-folded range scan so mixed-case stored addresses still match
+///      the lowercased needle (the porter/unicode FTS branch is already
+///      case-insensitive; this keeps the address branch consistent).
+///   2. FTS5 sender-column search for display-name matches (e.g. "from:Alice").
+///
+/// When both branches are needed we materialise a separate `from_match` CTE
+/// with UNION so each branch can use its own index independently.  The old
+/// approach (OR in a single WHERE clause) prevented SQLite from using either
+/// index, causing a full table scan on every from: query.
+pub(super) fn from_match_sql(
+    from: &str,
+    account_cond: &str,
+    alias: &str,
+    next_index: &mut usize,
+) -> (FromMatch, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut param_idx = *next_index;
+    let mut condition = None;
+    let mut cte = None;
+    let from_lower = from.to_lowercase();
+    // Build an FTS5 sender-column query: "sender:word1* sender:word2* ..."
+    let fts_sender: String = from
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 2)
+        .map(|t| format!("sender:\"{}\"*", t))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Convert prefix to explicit >= / < range bounds so SQLite can use
+    // idx_emails_sender_email as a B-tree range scan.  Parameterised
+    // LIKE ? prevents the optimiser from knowing there is no leading
+    // wildcard, so it falls back to a full table scan.
+    let upper_bound = prefix_upper_bound(&from_lower);
+
+    if fts_sender.is_empty() {
+        // Very short or symbol-only input — range scan only.
+        // COLLATE NOCASE so a mixed-case stored address still falls in
+        // range against the lowercased needle (idx_emails_sender_email_nocase).
+        if let Some(ref ub) = upper_bound {
+            condition = Some(format!(
+                "({alias}.sender_email >= ?{lo} COLLATE NOCASE AND {alias}.sender_email < ?{hi} COLLATE NOCASE)",
+                lo = param_idx,
+                hi = param_idx + 1,
+            ));
+            params_vec.push(Box::new(from_lower.clone()));
+            params_vec.push(Box::new(ub.clone()));
+            param_idx += 2;
+        } else {
+            condition = Some(format!("{alias}.sender_email >= ?{} COLLATE NOCASE", param_idx));
+            params_vec.push(Box::new(from_lower.clone()));
+            param_idx += 1;
+        }
+    } else {
+        // UNION CTE: each branch uses its own index independently.
+        //   Branch 1 (>= / <) → idx_emails_sender_email_nocase B-tree range scan.
+        //   Branch 2 (MATCH)   → emails_fts inverted index (display-name hits).
+        //
+        // is_deleted is intentionally omitted — filter_match enforces it.
+        // COLLATE NOCASE on both bounds so a mixed-case stored address
+        // still falls in range against the lowercased needle; the
+        // idx_emails_sender_email_nocase index serves the case-folded scan.
+        let range_clause = if let Some(ref _ub) = upper_bound {
+            format!(
+                "sender_email >= ?{lo} COLLATE NOCASE AND sender_email < ?{hi} COLLATE NOCASE",
+                lo = param_idx,
+                hi = param_idx + 1,
+            )
+        } else {
+            format!("sender_email >= ?{} COLLATE NOCASE", param_idx)
+        };
+        let range_params = if upper_bound.is_some() { 2 } else { 1 };
+
+        // Branch 3 (relaxed, multi-token needles only): every
+        // meaningful token must appear SOMEWHERE in "display name +
+        // address". Neither indexed branch can span the two fields —
+        // the FTS `sender` column holds only the display name, and the
+        // address branch is a prefix scan pinned to the local part — so
+        // a needle like "nadia de northwind" (a person AND their
+        // company) matched nothing at all. This branch is a scan, which
+        // is why it is gated on a multi-token needle: single-token
+        // lookups (the overwhelming majority) keep the pure index path.
+        let relaxed_tokens = relaxed_sender_tokens(from);
+        let relaxed_branch = if relaxed_tokens.is_empty() {
+            String::new()
+        } else {
+            let first = param_idx + range_params + 1;
+            let conds: Vec<String> = (0..relaxed_tokens.len())
+                .map(|i| format!("haystack LIKE ?{}", first + i))
+                .collect();
+            format!(
+                "
+                 UNION
+                 SELECT email_id FROM (
+                     SELECT id AS email_id,
+                            lower(sender || ' ' || sender_email) AS haystack
+                     FROM emails
+                     WHERE {account_cond}
+                 ) WHERE {}",
+                conds.join(" AND "),
+            )
+        };
+
+        // Branch 4 (company / domain needles): the user names the
+        // COMPANY, not the person — "northwind", "de northwind". The domain
+        // is in no display name, and it is not a prefix of the address
+        // (that starts with the local part), so branches 1-2 find only
+        // the few senders who spell the company into their display
+        // name. Prefix-matched against the indexed `sender_domain`
+        // column, so this is a B-tree range scan, not a table scan.
+        let domain_needle = sender_domain_needle(from);
+        let domain_branch = match domain_needle {
+            None => String::new(),
+            Some(ref d) => {
+                let lo = param_idx + range_params + 1 + relaxed_tokens.len();
+                match prefix_upper_bound(d) {
+                    Some(_) => format!(
+                        "
+                 UNION
+                 SELECT id AS email_id
+                 FROM emails INDEXED BY idx_emails_sender_domain
+                 WHERE {account_cond}
+                   AND sender_domain >= ?{lo} AND sender_domain < ?{hi}",
+                        lo = lo,
+                        hi = lo + 1,
+                    ),
+                    None => format!(
+                        "
+                 UNION
+                 SELECT id AS email_id
+                 FROM emails INDEXED BY idx_emails_sender_domain
+                 WHERE {account_cond}
+                   AND sender_domain >= ?{lo}",
+                        lo = lo,
+                    ),
+                }
+            }
+        };
+
+        cte = Some(format!(
+            "from_match AS (
+                 SELECT id AS email_id
+                 FROM emails INDEXED BY idx_emails_sender_email_nocase
+                 WHERE {account_cond}
+                   AND {range}
+                 UNION
+                 SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{fts_idx}{relaxed}{domain}
+             )",
+            range = range_clause,
+            fts_idx = param_idx + range_params,
+            relaxed = relaxed_branch,
+            domain = domain_branch,
+        ));
+        params_vec.push(Box::new(from_lower));
+        if let Some(ub) = upper_bound {
+            params_vec.push(Box::new(ub));
+        }
+        params_vec.push(Box::new(fts_sender));
+        param_idx += range_params + 1;
+        for tok in &relaxed_tokens {
+            params_vec.push(Box::new(format!("%{}%", tok)));
+            param_idx += 1;
+        }
+        if let Some(d) = domain_needle {
+            let ub = prefix_upper_bound(&d);
+            params_vec.push(Box::new(d));
+            param_idx += 1;
+            if let Some(ub) = ub {
+                params_vec.push(Box::new(ub));
+                param_idx += 1;
+            }
+        }
+    }
+
+    *next_index = param_idx;
+    match (cte, condition) {
+        (Some(sql), _) => (FromMatch::Cte(sql), params_vec),
+        (None, condition) => (FromMatch::Condition(condition.unwrap_or_default()), params_vec),
+    }
+}
+
+/// Everything `search_emails_inner` varies its query by.
+#[derive(Clone, Copy)]
+struct SearchSqlArgs<'a> {
+    account_id: &'a str,
+    query: &'a str,
+    categories: Option<&'a [String]>,
+    from_filter: Option<&'a str>,
+    to_filter: Option<&'a str>,
+    subject_filter: Option<&'a str>,
+    after_timestamp: Option<i64>,
+    before_timestamp: Option<i64>,
+    tag_filters: Option<&'a [TagQuery]>,
+    limit: i32,
+    ascending: bool,
+    exclude_spam: bool,
+    unread_only: bool,
+    received_only: bool,
+    participants: &'a [String],
+}
+
+/// The SQL and binds of a text search, or `None` when the query cannot match
+/// anything. Pure, so the chat's query can be pinned (`lookup_sql_is_pinned`).
+fn build_search_sql(args: &SearchSqlArgs<'_>) -> Option<(String, Vec<Box<dyn rusqlite::ToSql>>)> {
+    let SearchSqlArgs {
+        account_id,
+        query,
+        categories,
+        from_filter,
+        to_filter,
+        subject_filter,
+        after_timestamp,
+        before_timestamp,
+        tag_filters,
+        limit,
+        ascending,
+        exclude_spam,
+        unread_only,
+        received_only,
+        participants,
+    } = *args;
+    let order_clause = thread_order_clause("e", ascending);
+    // Each thread is represented by one matching email: the latest one
+    // newest-first, the earliest one oldest-first — otherwise a thread the
+    // user started long ago and replied to yesterday sorts by yesterday.
+    let thread_pick = if ascending { "MIN" } else { "MAX" };
+
+    // ── CTE: find thread_ids that contain a matching email ────────────────────
+    // All filter conditions apply to the same email row (`match_e`) so that
+    // `from:alice subject:meeting` requires a single message to satisfy both.
+    let mut cte_conditions: Vec<String> = Vec::new();
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut param_idx = 1usize;
+    // Optional pre-CTE for the from filter — populated when both email-prefix
+    // and FTS-sender branches are needed so each can use its own index.
+    let mut from_match_cte: Option<String> = None;
+
+    // account_id is ?1 — used in both the CTE and outer query.
+    params_vec.push(Box::new(account_id.to_string()));
+    cte_conditions.push(format!("match_e.account_id = ?{}", param_idx));
+    cte_conditions.push("match_e.is_deleted = 0".to_string());
+    // Spam/trash never surface in search — a spam email classified
+    // `primary` must not sail through the category filter.
+    cte_conditions.push("match_e.mailbox NOT IN ('spam', 'trash')".to_string());
+    if exclude_spam {
+        cte_conditions.push(Database::junk_condition("match_e"));
+    }
+    // Read state rides with the other per-email conditions, so the thread
+    // representative is the latest UNREAD matching email of the thread.
+    if unread_only {
+        cte_conditions.push("match_e.is_read = 0".to_string());
+    }
+    if received_only {
+        cte_conditions.push("match_e.is_sent = 0".to_string());
+    }
+    param_idx += 1;
+
+    // Category filter
+    if let Some(cats) = categories.filter(|c| !c.is_empty()) {
+        let placeholders: Vec<String> = (0..cats.len()).map(|i| format!("?{}", param_idx + i)).collect();
+        cte_conditions.push(format!("match_e.category IN ({})", placeholders.join(", ")));
+        for cat in cats {
+            params_vec.push(Box::new(cat.clone()));
+        }
+        param_idx += cats.len();
+    }
+
+    // Keyword search via FTS5 (already indexed — no change needed here)
+    if !query.is_empty() {
+        let fts_query = sanitize_fts_query(query);
+        // A keyword of only symbols ("?!") can match nothing; dropping
+        // the condition instead would match every thread.
+        if fts_query.is_empty() {
+            return None;
+        }
+        cte_conditions.push(format!(
+            "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
+            param_idx
+        ));
+        params_vec.push(Box::new(fts_query));
+        param_idx += 1;
+    }
+
+    if let Some(from) = from_filter {
+        let (from_match, binds) = from_match_sql(from, "account_id = ?1", "match_e", &mut param_idx);
+        params_vec.extend(binds);
+        match from_match {
+            FromMatch::Cte(sql) => from_match_cte = Some(sql),
+            FromMatch::Condition(sql) => cte_conditions.push(sql),
+        }
+    }
+
+    // To filter — recipients are stored as a JSON array; LIKE is unavoidable
+    // without a separate recipients table.  Run it in the CTE (once) rather than
+    // inside a correlated subquery (once per representative email).
+    if let Some(to) = to_filter {
+        let to_pattern = format!("%{}%", to);
+        cte_conditions.push(format!("match_e.recipients_json LIKE ?{}", param_idx));
+        params_vec.push(Box::new(to_pattern));
+        param_idx += 1;
+    }
+
+    // Participants: any term in the sender (name or address), recipients
+    // or cc. JSON arrays again, so LIKE — same cost as the `to` filter.
+    if !participants.is_empty() {
+        let mut any_term = Vec::with_capacity(participants.len());
+        for term in participants {
+            any_term.push(format!(
+                "(lower(match_e.sender) LIKE ?{i} OR lower(match_e.sender_email) LIKE ?{i} \
+                 OR lower(match_e.recipients_json) LIKE ?{i} OR lower(match_e.cc_json) LIKE ?{i})",
+                i = param_idx
+            ));
+            params_vec.push(Box::new(format!("%{term}%")));
+            param_idx += 1;
+        }
+        cte_conditions.push(format!("({})", any_term.join(" OR ")));
+    }
+
+    // Subject filter — route through FTS5 subject column instead of LIKE '%…%'.
+    // FTS5 `subject:{term}*` uses the inverted index on the subject field.
+    if let Some(subj) = subject_filter {
+        let fts_subject: String = subj
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|t| t.len() >= 2)
+            .map(|t| format!("subject:\"{}\"*", t))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if fts_subject.is_empty() {
+            // Fallback for very short subjects
+            let subj_pattern = format!("%{}%", subj);
+            cte_conditions.push(format!("match_e.subject LIKE ?{}", param_idx));
+            params_vec.push(Box::new(subj_pattern));
+            param_idx += 1;
+        } else {
+            cte_conditions.push(format!(
+                "match_e.id IN (SELECT email_id FROM emails_fts WHERE emails_fts MATCH ?{})",
+                param_idx
+            ));
+            params_vec.push(Box::new(fts_subject));
+            param_idx += 1;
+        }
+    }
+
+    // Date range filters
+    if let Some(after) = after_timestamp {
+        cte_conditions.push(format!("match_e.timestamp >= ?{}", param_idx));
+        params_vec.push(Box::new(after));
+        param_idx += 1;
+    }
+    if let Some(before) = before_timestamp {
+        cte_conditions.push(format!("match_e.timestamp <= ?{}", param_idx));
+        params_vec.push(Box::new(before));
+        param_idx += 1;
+    }
+
+    // Tag filters. A typed filter also binds `tag_type`, which keeps
+    // `intent=billing` from matching the company tag "billing" and lets
+    // SQLite use idx_email_tags_type_value instead of scanning by value.
+    if let Some(tags) = tag_filters.filter(|t| !t.is_empty()) {
+        for tag in tags {
+            let type_clause = match &tag.tag_type {
+                Some(_) => format!(" AND et.tag_type = ?{}", param_idx + 1),
+                None => String::new(),
+            };
+            cte_conditions.push(format!(
+                "EXISTS (SELECT 1 FROM email_tags et WHERE et.email_id = match_e.id AND et.tag_value = ?{}{})",
+                param_idx, type_clause
+            ));
+            params_vec.push(Box::new(tag.value.clone()));
+            param_idx += 1;
+            if let Some(tag_type) = &tag.tag_type {
+                params_vec.push(Box::new(tag_type.clone()));
+                param_idx += 1;
+            }
+        }
+    }
+
+    // ── Assemble and execute ─────────────────────────────────────────────────
+    let cte_where = cte_conditions.join(" AND ");
+
+    // GROUP BY + MAX(timestamp) is ~250x faster than the scalar subquery
+    // for finding the latest email per thread (benchmarked on 47k emails).
+    // `filter_match` emits id/thread_id/timestamp for matching emails,
+    // so the dedup groups by thread over ONLY the matching rows — not all
+    // emails in those threads, and the representative id always comes
+    // from `filter_match`. See the regression test
+    // `search_emails_from_filter_returns_matching_email_not_reply`.
+    //
+    // With a `from_match` CTE, `filter_match` drives from it (CROSS JOIN
+    // pins the order): the sender index + FTS produce the candidate ids,
+    // and each is a PK lookup that must pass every other filter. The ids
+    // stay inside SQL — binding them one parameter each broke past
+    // SQLite's 32,766-variable limit on a prolific sender.
+    let (from_cte, filter_source) = match &from_match_cte {
+        Some(cte) => (
+            format!("{cte},"),
+            "from_match fm CROSS JOIN emails match_e ON match_e.id = fm.email_id",
+        ),
+        None => (String::new(), "emails match_e"),
+    };
+    let sql = format!(
+        "WITH {from_cte}
+         filter_match AS (
+             SELECT match_e.id, match_e.thread_id, match_e.timestamp
+             FROM {filter_source}
+             WHERE {cte_where}
+         ),
+         {dedup}
+         ORDER BY {order}
+         LIMIT ?{limit_idx}",
+        dedup = thread_representative_sql(thread_pick, "e.timestamp"),
+        order = order_clause,
+        limit_idx = param_idx,
+    );
+
+    params_vec.push(Box::new(limit));
+
+    Some((sql, params_vec))
 }
 
 /// Thread dedup tail for `search_emails_inner`, run over a preceding
@@ -1239,47 +1183,6 @@ fn thread_representative_sql(thread_pick: &str, sort_key: &str) -> String {
     )
 }
 
-/// How `search_emails_inner` lists its matches.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum SearchShape<'a> {
-    /// Programmatic lookups (chat tools, research, agent search): rows sorted
-    /// by the matching email; the caller's own spam/category choices apply.
-    Lookup,
-    /// The app's search box: listed like a smart filter (see
-    /// [`Database::search_box_emails`]).
-    SearchBox(SearchBoxScope<'a>),
-}
-
-/// What only the search box narrows by: the view it runs in and the
-/// operators the sender-domain and attachment smart filters write.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SearchBoxScope<'a> {
-    /// `inbox`, `sent`, `archive` or `folder:<path>`; `None` = every live mailbox.
-    pub mailbox: Option<&'a str>,
-    /// `domain:` — the sender's domain, exactly.
-    pub domain: Option<&'a str>,
-    /// `ext:` — an attachment file extension, without the dot.
-    pub attachment_ext: Option<&'a str>,
-}
-
-/// The column a shape sorts threads by: the matching email itself, or — in
-/// the search box — the thread's newest email of any kind, one indexed seek
-/// per thread (see `representative_tail` for why the hint is load-bearing).
-fn sort_key_sql(shape: SearchShape<'_>) -> String {
-    match shape {
-        SearchShape::Lookup => "e.timestamp".to_string(),
-        SearchShape::SearchBox(_) => format!(
-            "(SELECT e3.timestamp
-              FROM emails e3 INDEXED BY idx_emails_thread_latest
-              WHERE e3.account_id = e.account_id AND e3.thread_id = e.thread_id
-                AND e3.is_deleted = 0 AND {filterable}
-              ORDER BY e3.timestamp DESC, e3.id DESC
-              LIMIT 1)",
-            filterable = Database::filterable_mailbox("e3"),
-        ),
-    }
-}
-
 fn drop_sort_keys(rows: Vec<(Email, i64)>) -> Vec<Email> {
     rows.into_iter().map(|(email, _)| email).collect()
 }
@@ -1296,6 +1199,8 @@ fn with_own_timestamps(emails: Vec<Email>) -> Vec<(Email, i64)> {
 
 #[cfg(test)]
 mod tests {
+    use super::{build_search_sql, SearchSqlArgs, TagQuery};
+
     use super::super::test_helpers::*;
     use super::super::*;
     use crate::db::Database;
@@ -1326,11 +1231,8 @@ mod tests {
         let result = db
             .get_filtered_emails(
                 crate::db::AccountScope::Account(account),
-                None,
-                None,
-                Some("priority"),
-                Some("urgent"),
-                None,
+                "priority",
+                "urgent",
                 &crate::models::EmailWindow::default(),
                 50,
                 0,
@@ -1654,193 +1556,7 @@ mod tests {
         );
     }
 
-    // Clicking a sender suggestion (or blocking from an email whose header casing
-    // differs from the stored rows) must still match the stored address.
-    #[test]
-    fn filtered_emails_sender_filter_is_case_insensitive() {
-        let db = Database::new_for_testing().unwrap();
-        let account = "acc1";
-        insert_account(&db, account, "me@mymail.com");
-
-        insert_contact_email(
-            &db,
-            "e1",
-            account,
-            "t1",
-            "Billing",
-            "EMEA_Billing@Ex.com",
-            "[]",
-            "inbox",
-            100,
-        );
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account(account),
-                None,
-                Some("emea_billing@ex.com"),
-                None,
-                None,
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-
-        assert_eq!(
-            result.emails.len(),
-            1,
-            "sender filter must match the stored mixed-case address"
-        );
-    }
-
-    #[test]
-    fn an_unread_filter_lists_threads_with_any_unread_message() {
-        let db = Database::new_for_testing().unwrap();
-        insert_account(&db, "acc1", "me@mymail.com");
-        // t-reply: Bob's message is read, a later reply from someone else is not.
-        insert_contact_email(&db, "b1", "acc1", "t-reply", "Bob", "bob@acme.com", "[]", "inbox", 100);
-        insert_contact_email(&db, "c1", "acc1", "t-reply", "Cy", "cy@other.com", "[]", "inbox", 200);
-        // t-read: Bob's thread, all read.
-        insert_contact_email(&db, "b2", "acc1", "t-read", "Bob", "bob@acme.com", "[]", "inbox", 300);
-        db.set_read_local("b1", true).unwrap();
-        db.set_read_local("b2", true).unwrap();
-        let window = crate::models::EmailWindow {
-            unread_only: true,
-            ..Default::default()
-        };
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account("acc1"),
-                None,
-                Some("bob@acme.com"),
-                None,
-                None,
-                None,
-                &window,
-                50,
-                0,
-            )
-            .unwrap();
-
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["b1"]);
-    }
-
-    #[test]
-    fn an_unread_tag_filter_lists_threads_with_any_unread_message() {
-        let db = Database::new_for_testing().unwrap();
-        insert_account(&db, "acc1", "me@mymail.com");
-        insert_contact_email(&db, "t1", "acc1", "t-unread", "Bob", "bob@acme.com", "[]", "inbox", 100);
-        insert_contact_email(&db, "t2", "acc1", "t-read", "Bob", "bob@acme.com", "[]", "inbox", 200);
-        for id in ["t1", "t2"] {
-            db.connection()
-                .execute(
-                    "INSERT INTO email_tags (email_id, tag_type, tag_value, created_at) VALUES (?1, 'company', 'Acme', 0)",
-                    rusqlite::params![id],
-                )
-                .unwrap();
-        }
-        db.set_read_local("t2", true).unwrap();
-        let window = crate::models::EmailWindow {
-            unread_only: true,
-            ..Default::default()
-        };
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account("acc1"),
-                None,
-                None,
-                Some("company"),
-                Some("Acme"),
-                None,
-                &window,
-                50,
-                0,
-            )
-            .unwrap();
-
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["t1"]);
-    }
-
     // ── AllEnabled (unified) scope ───────────────────────────────────────────────
-
-    fn set_enabled(db: &Database, account: &str, enabled: bool) {
-        db.connection()
-            .execute(
-                "UPDATE accounts SET enabled = ?2 WHERE id = ?1",
-                rusqlite::params![account, enabled as i32],
-            )
-            .unwrap();
-    }
-
-    #[test]
-    fn filtered_emails_all_enabled_sender_filter_spans_accounts() {
-        let db = Database::new_for_testing().unwrap();
-        insert_account(&db, "acc1", "me1@my.com");
-        insert_account(&db, "acc2", "me2@my.com");
-        insert_account(&db, "acc3", "me3@my.com");
-
-        insert_contact_email(&db, "e1", "acc1", "t1", "Bob", "bob@acme.com", "[]", "inbox", 100);
-        insert_contact_email(&db, "e2", "acc2", "t2", "Bob", "bob@acme.com", "[]", "inbox", 200);
-        // Disabled account must not contribute rows.
-        insert_contact_email(&db, "e3", "acc3", "t3", "Bob", "bob@acme.com", "[]", "inbox", 300);
-        set_enabled(&db, "acc3", false);
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::AllEnabled,
-                None,
-                Some("bob@acme.com"),
-                None,
-                None,
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["e2", "e1"], "both enabled accounts' threads, newest first");
-    }
-
-    #[test]
-    fn filtered_emails_all_enabled_thread_collision_no_cross_account_merge() {
-        let db = Database::new_for_testing().unwrap();
-        insert_account(&db, "acc1", "me1@my.com");
-        insert_account(&db, "acc2", "me2@my.com");
-
-        // Same thread_id string in both accounts; both match the domain filter.
-        // Each account must keep its OWN latest row — the newer acc2 email must
-        // not swallow acc1's thread.
-        insert_contact_email(&db, "e1a", "acc1", "shared", "Bob", "bob@acme.com", "[]", "inbox", 100);
-        insert_contact_email(&db, "e1b", "acc1", "shared", "Bob", "bob@acme.com", "[]", "inbox", 150);
-        insert_contact_email(&db, "e2a", "acc2", "shared", "Ann", "ann@acme.com", "[]", "inbox", 200);
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::AllEnabled,
-                Some("acme.com"),
-                None,
-                None,
-                None,
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            vec!["e2a", "e1b"],
-            "one representative per (account, thread) — not per thread_id string"
-        );
-    }
 
     #[test]
     fn filtered_emails_all_enabled_tag_filter_spans_accounts() {
@@ -1858,11 +1574,8 @@ mod tests {
         let result = db
             .get_filtered_emails(
                 crate::db::AccountScope::AllEnabled,
-                None,
-                None,
-                Some("company"),
-                Some("Acme"),
-                None,
+                "company",
+                "Acme",
                 &crate::models::EmailWindow::default(),
                 50,
                 0,
@@ -3854,71 +3567,7 @@ mod tests {
         assert_eq!(found, vec!["genoveva@home.example", "gm@we.example"]);
     }
 
-    // Regression: the attachment-extension EXISTS used a bare `id`, which
-    // SQLite binds to the innermost table (email_attachment_meta.id), so the
-    // filter compared an attachment's email_id to its own id and never matched.
-    #[test]
-    fn filtered_emails_attachment_ext_matches_email_with_that_attachment() {
-        let db = Database::new_for_testing().unwrap();
-        let account = "acc1";
-        insert_account(&db, account, "me@example.com");
-        insert_contact_email(&db, "e1", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
-        insert_contact_email(&db, "e2", account, "t2", "Bob", "bob@example.com", "[]", "inbox", 200);
-        db.connection()
-            .execute(
-                "INSERT INTO email_attachment_meta (id, email_id, account_id, filename, mime_type)
-                 VALUES ('att1', 'e1', ?1, 'Report.PDF', 'application/pdf')",
-                rusqlite::params![account],
-            )
-            .unwrap();
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account(account),
-                None,
-                Some("bob@example.com"),
-                None,
-                None,
-                Some("pdf"),
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["e1"], "only the email carrying a .pdf attachment matches");
-    }
-
     // ── Thread dedup: same-second ties ──────────────────────────────────────────
-
-    // Regression: thread dedup joined back on `timestamp = MAX(timestamp)`, so
-    // two emails of one thread stamped in the same second both came back and
-    // the thread showed twice. The representative must be exactly one row,
-    // tie-broken like the inbox (`timestamp DESC, id DESC`).
-    #[test]
-    fn filtered_emails_same_second_thread_tie_returns_one_row() {
-        let db = Database::new_for_testing().unwrap();
-        let account = "acc1";
-        insert_account(&db, account, "me@example.com");
-        insert_contact_email(&db, "e-a", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
-        insert_contact_email(&db, "e-b", account, "t1", "Bob", "bob@example.com", "[]", "inbox", 100);
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account(account),
-                None,
-                Some("bob@example.com"),
-                None,
-                None,
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["e-b"]);
-    }
 
     fn insert_same_second_thread(db: &Database, account: &str) {
         for id in ["e-a", "e-b"] {
@@ -4048,42 +3697,6 @@ mod tests {
     }
 
     #[test]
-    fn filtered_emails_sender_filter_includes_archived_mail() {
-        let db = Database::new_for_testing().unwrap();
-        let account = "acc1";
-        insert_account(&db, account, "me@mymail.com");
-        insert_contact_email(&db, "in", account, "t1", "Ana", "ana@example.com", "[]", "inbox", 100);
-        insert_contact_email(
-            &db,
-            "arch",
-            account,
-            "t2",
-            "Ana",
-            "ana@example.com",
-            "[]",
-            "archive",
-            200,
-        );
-        insert_contact_email(&db, "junk", account, "t3", "Ana", "ana@example.com", "[]", "spam", 300);
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account(account),
-                None,
-                Some("ana@example.com"),
-                None,
-                None,
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["arch", "in"]);
-    }
-
-    #[test]
     fn filtered_emails_tag_filter_includes_archived_mail() {
         let db = Database::new_for_testing().unwrap();
         let account = "acc1";
@@ -4104,11 +3717,8 @@ mod tests {
         let result = db
             .get_filtered_emails(
                 crate::db::AccountScope::Account(account),
-                None,
-                None,
-                Some("company"),
-                Some("Acme"),
-                None,
+                "company",
+                "Acme",
                 &crate::models::EmailWindow::default(),
                 50,
                 0,
@@ -4116,43 +3726,6 @@ mod tests {
             .unwrap();
         let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, vec!["arch"]);
-    }
-
-    // A thread whose newest message was archived shows that message, not an
-    // older inbox one, as the filtered list's row for the thread.
-    #[test]
-    fn filtered_emails_thread_row_is_the_newest_live_message_even_when_archived() {
-        let db = Database::new_for_testing().unwrap();
-        let account = "acc1";
-        insert_account(&db, account, "me@mymail.com");
-        insert_contact_email(&db, "old", account, "t1", "Ana", "ana@example.com", "[]", "inbox", 100);
-        insert_contact_email(
-            &db,
-            "new",
-            account,
-            "t1",
-            "Ana",
-            "ana@example.com",
-            "[]",
-            "archive",
-            200,
-        );
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account(account),
-                Some("example.com"),
-                None,
-                None,
-                None,
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-        let ids: Vec<&str> = result.emails.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["new"]);
     }
 
     // The tag path skips COUNT(*) for the infinite-scroll list and says so
@@ -4166,34 +3739,8 @@ mod tests {
         let result = db
             .get_filtered_emails(
                 crate::db::AccountScope::Account("acc1"),
-                None,
-                None,
-                Some("priority"),
-                Some("urgent"),
-                None,
-                &crate::models::EmailWindow::default(),
-                50,
-                0,
-            )
-            .unwrap();
-
-        assert_eq!(result.emails.len(), 1);
-        assert_eq!(result.total_count, -1);
-    }
-
-    #[test]
-    fn a_sender_or_domain_filter_reports_its_total_as_unknown() {
-        let db = Database::new_for_testing().unwrap();
-        insert_email(&db, "e1", "acc1", "thread-a", 100);
-
-        let result = db
-            .get_filtered_emails(
-                crate::db::AccountScope::Account("acc1"),
-                Some("s.com"),
-                None,
-                None,
-                None,
-                None,
+                "priority",
+                "urgent",
                 &crate::models::EmailWindow::default(),
                 50,
                 0,
@@ -4236,5 +3783,178 @@ mod tests {
             super::split_addressee("Ada <ada@x.example"),
             (String::new(), "Ada <ada@x.example".to_string())
         );
+    }
+
+    /// The chat's query is not part of the list rebuild: every shape it can
+    /// take stays token for token, whitespace aside. Regenerate the snapshot
+    /// only for a change meant to reach the chat.
+    #[test]
+    fn lookup_sql_is_pinned() {
+        let base = SearchSqlArgs {
+            account_id: "acc",
+            query: "",
+            categories: None,
+            from_filter: None,
+            to_filter: None,
+            subject_filter: None,
+            after_timestamp: None,
+            before_timestamp: None,
+            tag_filters: None,
+            limit: 10,
+            ascending: false,
+            exclude_spam: false,
+            unread_only: false,
+            received_only: false,
+            participants: &[],
+        };
+        let tags = [TagQuery::typed("intent", "urgent"), TagQuery::any_type("billing")];
+        let categories = ["primary".to_string()];
+        let people = ["ada".to_string(), "ada@empresa.example".to_string()];
+        let cases = [
+            (
+                "word",
+                SearchSqlArgs {
+                    query: "invoice",
+                    ..base
+                },
+            ),
+            (
+                "words_ascending",
+                SearchSqlArgs {
+                    query: "invoice march",
+                    ascending: true,
+                    ..base
+                },
+            ),
+            (
+                "from_short",
+                SearchSqlArgs {
+                    from_filter: Some("a"),
+                    ..base
+                },
+            ),
+            (
+                "from_one_word",
+                SearchSqlArgs {
+                    from_filter: Some("ada"),
+                    ..base
+                },
+            ),
+            (
+                "from_two_words",
+                SearchSqlArgs {
+                    from_filter: Some("nadia de northwind"),
+                    ..base
+                },
+            ),
+            (
+                "from_address",
+                SearchSqlArgs {
+                    from_filter: Some("ada@empresa.example"),
+                    ..base
+                },
+            ),
+            (
+                "from_and_word",
+                SearchSqlArgs {
+                    from_filter: Some("ada"),
+                    query: "invoice",
+                    ..base
+                },
+            ),
+            (
+                "to",
+                SearchSqlArgs {
+                    to_filter: Some("ada@empresa.example"),
+                    ..base
+                },
+            ),
+            (
+                "subject",
+                SearchSqlArgs {
+                    subject_filter: Some("quarterly report"),
+                    ..base
+                },
+            ),
+            (
+                "subject_short",
+                SearchSqlArgs {
+                    subject_filter: Some("q"),
+                    ..base
+                },
+            ),
+            (
+                "dates",
+                SearchSqlArgs {
+                    query: "invoice",
+                    after_timestamp: Some(10),
+                    before_timestamp: Some(20),
+                    ..base
+                },
+            ),
+            (
+                "tags",
+                SearchSqlArgs {
+                    tag_filters: Some(&tags),
+                    ..base
+                },
+            ),
+            (
+                "categories",
+                SearchSqlArgs {
+                    query: "invoice",
+                    categories: Some(&categories),
+                    ..base
+                },
+            ),
+            (
+                "participants",
+                SearchSqlArgs {
+                    participants: &people,
+                    ..base
+                },
+            ),
+            (
+                "flags",
+                SearchSqlArgs {
+                    query: "invoice",
+                    exclude_spam: true,
+                    unread_only: true,
+                    received_only: true,
+                    ..base
+                },
+            ),
+        ];
+        let got: String = cases
+            .iter()
+            .map(|(name, args)| {
+                let (sql, binds) = build_search_sql(args).expect("every pinned shape can match");
+                let sql = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+                format!("-- {name} ({} binds)\n{sql}\n\n", binds.len())
+            })
+            .collect();
+        assert_eq!(got, include_str!("lookup_sql.snapshot.txt"));
+    }
+
+    #[test]
+    fn a_symbol_only_word_cannot_match() {
+        let args = SearchSqlArgs {
+            account_id: "acc",
+            query: "?!",
+            categories: None,
+            from_filter: None,
+            to_filter: None,
+            subject_filter: None,
+            after_timestamp: None,
+            before_timestamp: None,
+            tag_filters: None,
+            limit: 10,
+            ascending: false,
+            exclude_spam: false,
+            unread_only: false,
+            received_only: false,
+            participants: &[],
+        };
+        assert!(build_search_sql(&args).is_none());
     }
 }

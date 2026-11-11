@@ -9,6 +9,7 @@ import { useAccountStore } from '@/stores/accountStore';
 import { calendarCapableAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Calendar } from '@/types';
+import { CalendarFeedsSection } from './CalendarFeedsSection';
 import { SettingsPanel } from './SettingsPanel';
 
 /** Lead-time choices for the upcoming-meeting notification (minutes). */
@@ -37,7 +38,9 @@ export function CalendarSettings() {
   const integrationIds = useCalendarIntegrationStore((s) => s.enabledIds);
   const integrationLoaded = useCalendarIntegrationStore((s) => s.isLoaded);
   const setIntegrationEnabled = useCalendarIntegrationStore((s) => s.setEnabled);
-  const capableAccounts = calendarCapableAccounts(accounts);
+  const feedsByAccount = useCalendarIntegrationStore((s) => s.feedsByAccount);
+  const capableAccounts = calendarCapableAccounts(accounts, feedsByAccount);
+  const imapAccounts = accounts.filter((a) => a.enabled && a.provider === 'imap');
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [showTitle, setShowTitle] = useState(false);
   const [leadMinutes, setLeadMinutes] = useState<number>(DEFAULT_LEAD_MINUTES);
@@ -229,19 +232,19 @@ export function CalendarSettings() {
     <SettingsPanel
       header={
         error && (
-          <div className="flex-shrink-0 mx-6 mt-4 border border-red-800 bg-red-950 text-red-200 text-sm rounded p-3">
+          <div className="flex-shrink-0 mx-6 mt-4 border border-red-200 bg-red-50 text-red-800 text-sm rounded p-3">
             {error}
           </div>
         )
       }
     >
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.accountsLabel')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:calendar.accountsLabel')}</h3>
         <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.accountsDesc')}</p>
         {capableAccounts.length === 0 ? (
-          <p className="text-xs text-gray-400">{t('settings:calendar.noCapableAccounts')}</p>
+          <p className="text-xs text-gray-500">{t('settings:calendar.noCapableAccounts')}</p>
         ) : (
-          <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
+          <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-200">
             {capableAccounts.map((account) => {
               const enabled = integrationIds.has(account.id);
               const accountCalendars = calendarsByAccount[account.id] ?? [];
@@ -249,7 +252,7 @@ export function CalendarSettings() {
                 <div key={account.id}>
                   <div className="flex items-center justify-between gap-4 px-4 py-3">
                     <div className="min-w-0">
-                      <span className="text-sm text-gray-100 block truncate">{account.email}</span>
+                      <span className="text-sm text-gray-900 block truncate">{account.email}</span>
                       <span className="text-xs text-gray-500">{mailProviderName(account.provider)}</span>
                     </div>
                     <button
@@ -260,7 +263,7 @@ export function CalendarSettings() {
                       disabled={!integrationLoaded}
                       onClick={() => toggleAccountIntegration(account.id, !enabled)}
                       className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-                        enabled ? 'bg-primary-600' : 'bg-neutral-600'
+                        enabled ? 'bg-primary-600' : 'bg-gray-300'
                       }`}
                     >
                       <span
@@ -284,7 +287,7 @@ export function CalendarSettings() {
                             type="checkbox"
                             checked={calendar.isVisible}
                             onChange={(e) => toggleCalendarVisible(account.id, calendar, e.target.checked)}
-                            className="rounded border-gray-600 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
+                            className="rounded border-gray-300 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
                           />
                           <span
                             className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-black/20"
@@ -292,7 +295,7 @@ export function CalendarSettings() {
                               backgroundColor: calendarColor(calendar.color, calendar.providerCalendarId),
                             }}
                           />
-                          <span className="text-xs text-gray-300 truncate group-hover:text-gray-100">
+                          <span className="text-xs text-gray-700 truncate group-hover:text-gray-900">
                             {calendar.name || calendar.providerCalendarId}
                           </span>
                           {calendar.isPrimary && (
@@ -310,8 +313,8 @@ export function CalendarSettings() {
           </div>
         )}
         {reauthAccountId && (
-          <div className="mt-2 rounded-lg border border-amber-700 bg-amber-950 px-4 py-3">
-            <p className="text-xs text-amber-200">{t('calendar:reauthNeeded')}</p>
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-xs text-amber-800">{t('calendar:reauthNeeded')}</p>
             <button
               type="button"
               disabled={isReauthing}
@@ -324,11 +327,13 @@ export function CalendarSettings() {
         )}
       </section>
 
-      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+      <CalendarFeedsSection accounts={imapAccounts} />
+
+      <section className="rounded-lg border border-gray-200 bg-white px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <span className="text-sm font-medium text-gray-100">{t('settings:calendar.notificationsLabel')}</span>
-            <p className="text-xs text-gray-400 mt-1">{t('settings:calendar.notificationsDesc')}</p>
+            <span className="text-sm font-medium text-gray-900">{t('settings:calendar.notificationsLabel')}</span>
+            <p className="text-xs text-gray-500 mt-1">{t('settings:calendar.notificationsDesc')}</p>
           </div>
           <button
             type="button"
@@ -337,7 +342,7 @@ export function CalendarSettings() {
             disabled={!isLoaded}
             onClick={() => persistEnabled(!notificationsEnabled)}
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 disabled:opacity-50 ${
-              notificationsEnabled ? 'bg-primary-600' : 'bg-neutral-600'
+              notificationsEnabled ? 'bg-primary-600' : 'bg-gray-300'
             }`}
           >
             <span
@@ -349,11 +354,11 @@ export function CalendarSettings() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+      <section className="rounded-lg border border-gray-200 bg-white px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <span className="text-sm font-medium text-gray-100">{t('settings:calendar.showTitleLabel')}</span>
-            <p className="text-xs text-gray-400 mt-1">{t('settings:calendar.showTitleDesc')}</p>
+            <span className="text-sm font-medium text-gray-900">{t('settings:calendar.showTitleLabel')}</span>
+            <p className="text-xs text-gray-500 mt-1">{t('settings:calendar.showTitleDesc')}</p>
           </div>
           <button
             type="button"
@@ -363,7 +368,7 @@ export function CalendarSettings() {
             disabled={!isLoaded || !notificationsEnabled}
             onClick={() => persistShowTitle(!showTitle)}
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 disabled:opacity-50 ${
-              showTitle ? 'bg-primary-600' : 'bg-neutral-600'
+              showTitle ? 'bg-primary-600' : 'bg-gray-300'
             }`}
           >
             <span
@@ -376,7 +381,7 @@ export function CalendarSettings() {
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:calendar.leadTimeLabel')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:calendar.leadTimeLabel')}</h3>
         <p className="text-xs text-gray-500 mb-2">{t('settings:calendar.leadTimeDesc')}</p>
         <Select
           value={String(leadMinutes)}

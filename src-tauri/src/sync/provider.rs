@@ -224,7 +224,7 @@ impl EmailCategory {
 
 /// Localized "Sent with" lead-in for the footer. The product name "EmailOps"
 /// is a brand and is never translated.
-fn footer_prefix(language: Language) -> &'static str {
+pub(crate) fn footer_prefix(language: Language) -> &'static str {
     match language {
         Language::En => "Sent with",
         Language::Es => "Enviado con",
@@ -233,16 +233,16 @@ fn footer_prefix(language: Language) -> &'static str {
     }
 }
 
+/// The URL the footer links to. `thread_clean` recognises the footer by it.
+pub(crate) const FOOTER_URL: &str = "https://getemailops.com/?utm_source=email_footer";
+
 /// Plain-text footer appended to every outgoing email, in the user's UI language.
 ///
 /// The URL is on its own line — wrapping it in parentheses (e.g. `(https://…)`)
 /// makes most email-client auto-linkers swallow the trailing `)` into the URL,
 /// producing a broken link like `https://getemailops.com)/`.
 pub fn email_footer_plain(language: Language) -> String {
-    format!(
-        "\n\n--\n{} EmailOps\nhttps://getemailops.com/?utm_source=email_footer",
-        footer_prefix(language)
-    )
+    format!("\n\n--\n{} EmailOps\n{FOOTER_URL}", footer_prefix(language))
 }
 
 /// HTML footer appended to every outgoing email, in the user's UI language.
@@ -250,7 +250,7 @@ pub fn email_footer_html(language: Language) -> String {
     format!(
         "<br><br><hr style=\"border:none;border-top:1px solid #eee;margin:16px 0\">\
          <p style=\"color:#888;font-size:12px;margin:0\">{} \
-         <a href=\"https://getemailops.com/?utm_source=email_footer\" style=\"color:#888\">EmailOps</a></p>",
+         <a href=\"{FOOTER_URL}\" style=\"color:#888\">EmailOps</a></p>",
         footer_prefix(language)
     )
 }
@@ -482,6 +482,7 @@ pub trait EmailProvider: Send + Sync {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -502,6 +503,7 @@ pub trait EmailProvider: Send + Sync {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -716,8 +718,9 @@ pub trait EmailProvider: Send + Sync {
     /// Gmail keeps a message's id across a move, but IMAP (new UID) and Graph
     /// (new item id) re-key it, so there the header is the only way to find it
     /// again — and the returned [`MessageLocation::id`] is then the new id the
-    /// local row must be re-keyed to. `Ok(None)` means the provider no longer
-    /// has the message at all (deleted forever).
+    /// local row must be re-keyed to. `Ok(None)` means nothing answers to the id
+    /// and no search that could be run found the message: with a header, it is
+    /// gone. A search that could not be run is an `Err`, never `Ok(None)`.
     async fn locate_message(
         &self,
         _message_id: &str,
@@ -803,6 +806,7 @@ pub trait EmailProvider: Send + Sync {
         _from_email: &str,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _subject: &str,
         _body: &EmailBody,
         _attachments: &[EmailAttachment],
@@ -822,6 +826,7 @@ pub trait EmailProvider: Send + Sync {
         _from_email: &str,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _subject: &str,
         _body: &EmailBody,
         _attachments: &[EmailAttachment],
@@ -904,6 +909,10 @@ pub struct FakeEmailProvider {
     /// When `Some`, `create_draft` / `update_draft` fail with this message —
     /// simulates a provider that is reachable but refusing draft writes.
     draft_write_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, `create_draft` / `update_draft` are refused as malformed
+    /// with this message — what Gmail's 400 becomes (`InvalidInput`).
+    draft_write_rejection: std::sync::RwLock<Option<String>>,
+    draft_delete_failure: std::sync::RwLock<Option<String>>,
     /// Message ids whose `get_message` fails — simulates a message the
     /// provider cannot return (rate limit, deleted server-side).
     failing_messages: std::sync::RwLock<std::collections::HashSet<String>>,
@@ -927,6 +936,13 @@ pub struct FakeEmailProvider {
     history: std::sync::RwLock<Option<FakeHistory>>,
     /// When `Some`, `fetch_message_labels` fails with this message.
     label_fetch_failure: std::sync::RwLock<Option<String>>,
+    /// When `Some`, `locate_message` fails with this message.
+    locate_failure: std::sync::RwLock<Option<String>>,
+    /// `list_messages` answers newest arrival first, as IMAP lists by UID,
+    /// instead of newest date first.
+    lists_by_arrival: std::sync::atomic::AtomicBool,
+    /// Runs after every `batch_get_messages`.
+    after_batch: std::sync::RwLock<Option<Box<dyn Fn() + Send + Sync>>>,
     /// When `Some`, what `archive_message` answers instead of the archived
     /// message's own id under `archive` — models a provider that re-keys
     /// (Graph, IMAP) or files the message in a folder (IMAP).
@@ -939,6 +955,16 @@ pub struct FakeEmailProvider {
     listing_failure: std::sync::RwLock<Option<String>>,
     /// What `get_signature` answers for the profile address.
     signature: std::sync::RwLock<Option<String>>,
+    /// How long `batch_get_messages` and `fetch_attachment_bytes` take — a
+    /// provider on a real network, for tests that time a sync.
+    latency: std::sync::RwLock<FakeLatency>,
+}
+
+/// Simulated network time of a [`FakeEmailProvider`]. Zero by default.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FakeLatency {
+    pub batch_get: std::time::Duration,
+    pub attachment: std::time::Duration,
 }
 
 /// The change log of a [`FakeEmailProvider`] modelling Gmail.
@@ -1039,6 +1065,7 @@ pub struct FakeSentMessage {
     pub from_name: Option<String>,
     pub to_emails: Vec<String>,
     pub cc_emails: Vec<String>,
+    pub bcc_emails: Vec<String>,
     pub thread_id: Option<String>,
     pub original_message_id: Option<String>,
     /// The parent's `References` chain as handed to the provider, so tests can
@@ -1067,6 +1094,8 @@ impl FakeEmailProvider {
             calls: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             mailbox_write_failure: std::sync::RwLock::new(None),
             draft_write_failure: std::sync::RwLock::new(None),
+            draft_write_rejection: std::sync::RwLock::new(None),
+            draft_delete_failure: std::sync::RwLock::new(None),
             failing_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             attachment_listing: std::sync::RwLock::new(None),
             reports_message_states: std::sync::atomic::AtomicBool::new(false),
@@ -1075,11 +1104,24 @@ impl FakeEmailProvider {
             identity_listing_failure: std::sync::RwLock::new(None),
             history: std::sync::RwLock::new(None),
             label_fetch_failure: std::sync::RwLock::new(None),
+            locate_failure: std::sync::RwLock::new(None),
+            lists_by_arrival: std::sync::atomic::AtomicBool::new(false),
+            after_batch: std::sync::RwLock::new(None),
             archive_location: std::sync::RwLock::new(None),
             send_failure: std::sync::RwLock::new(None),
             listing_failure: std::sync::RwLock::new(None),
             signature: std::sync::RwLock::new(None),
+            latency: std::sync::RwLock::new(FakeLatency::default()),
         }
+    }
+
+    /// Make every message batch and attachment download take this long.
+    pub fn set_latency(&self, latency: FakeLatency) {
+        *self.latency.write().unwrap_or_else(PoisonError::into_inner) = latency;
+    }
+
+    fn latency(&self) -> FakeLatency {
+        *self.latency.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Make `archive_message` answer `location` from now on.
@@ -1169,6 +1211,21 @@ impl FakeEmailProvider {
             Some(message) => Err(crate::models::error::AppError::SyncError(message)),
             None => Ok(()),
         }
+    }
+
+    /// Make `list_messages` answer newest arrival first, as IMAP lists by UID.
+    pub fn list_by_arrival(&self) {
+        self.lists_by_arrival.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Run `hook` after every `batch_get_messages`.
+    pub fn after_batch(&self, hook: impl Fn() + Send + Sync + 'static) {
+        *self.after_batch.write().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
+    }
+
+    /// Make `locate_message` fail with `message`.
+    pub fn fail_locate(&self, message: impl Into<String>) {
+        *self.locate_failure.write().unwrap_or_else(PoisonError::into_inner) = Some(message.into());
     }
 
     /// Make `fetch_message_labels` fail.
@@ -1271,7 +1328,33 @@ impl FakeEmailProvider {
         *self.draft_write_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
     }
 
+    /// Make every subsequent draft create/update be refused as malformed with
+    /// `message`, or let them through again with `None`.
+    pub fn reject_draft_writes(&self, message: Option<&str>) {
+        *self
+            .draft_write_rejection
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
+    }
+
+    /// Make every subsequent draft delete fail with `message`, or let them
+    /// through again with `None`.
+    pub fn fail_draft_deletes(&self, message: Option<&str>) {
+        *self
+            .draft_delete_failure
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = message.map(String::from);
+    }
+
     fn draft_write_result(&self) -> Result<()> {
+        if let Some(message) = self
+            .draft_write_rejection
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+        {
+            return Err(AppError::InvalidInput(message.to_string()));
+        }
         match self
             .draft_write_failure
             .read()
@@ -1402,6 +1485,20 @@ impl FakeEmailProvider {
 
 use std::sync::PoisonError;
 
+/// The attachments a pushed draft reads back with, their bytes in the listing.
+fn pushed_attachments(attachments: &[EmailAttachment], seq: u64) -> Vec<crate::models::ProviderDraftAttachment> {
+    attachments
+        .iter()
+        .map(|att| crate::models::ProviderDraftAttachment {
+            message_id: format!("fake-msg-{seq}"),
+            attachment_id: String::new(),
+            filename: att.filename.clone(),
+            mime_type: att.mime_type.clone(),
+            inline_data: Some(att.data.clone()),
+        })
+        .collect()
+}
+
 #[async_trait]
 impl EmailProvider for FakeEmailProvider {
     async fn get_profile(&self) -> Result<(String, String)> {
@@ -1451,7 +1548,11 @@ impl EmailProvider for FakeEmailProvider {
             .filter(|m| after_timestamp.is_none_or(|t| m.email.timestamp >= t))
             .filter(|m| before_timestamp.is_none_or(|t| m.email.timestamp < t))
             .collect();
-        filtered.sort_by_key(|m| std::cmp::Reverse(m.email.timestamp));
+        if self.lists_by_arrival.load(std::sync::atomic::Ordering::SeqCst) {
+            filtered.reverse();
+        } else {
+            filtered.sort_by_key(|m| std::cmp::Reverse(m.email.timestamp));
+        }
         let total = filtered.len();
         let page: Vec<&FakeStoredMessage> = filtered.into_iter().skip(offset).take(max_results as usize).collect();
         let next_offset = offset + page.len();
@@ -1493,9 +1594,16 @@ impl EmailProvider for FakeEmailProvider {
         message_ids: &[&str],
     ) -> Result<Vec<Result<(Email, EmailCategory, Vec<AttachmentInfo>)>>> {
         self.record_call("batch_get_messages");
+        let delay = self.latency().batch_get;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let mut results = Vec::with_capacity(message_ids.len());
         for id in message_ids {
             results.push(self.get_message(id).await);
+        }
+        if let Some(hook) = self.after_batch.read().unwrap_or_else(PoisonError::into_inner).as_ref() {
+            hook();
         }
         Ok(results)
     }
@@ -1581,6 +1689,7 @@ impl EmailProvider for FakeEmailProvider {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -1595,6 +1704,7 @@ impl EmailProvider for FakeEmailProvider {
                 from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
+                bcc_emails: bcc_emails.to_vec(),
                 provider_message_id: Some(target.provider_message_id.to_string()),
                 thread_id: Some(target.thread_id.to_string()),
                 original_message_id: target.message_id.map(str::to_string),
@@ -1612,6 +1722,7 @@ impl EmailProvider for FakeEmailProvider {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1625,6 +1736,7 @@ impl EmailProvider for FakeEmailProvider {
                 from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
+                bcc_emails: bcc_emails.to_vec(),
                 provider_message_id: None,
                 thread_id: None,
                 original_message_id: None,
@@ -1637,6 +1749,10 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
+        let delay = self.latency().attachment;
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
         let key = (message_id.to_string(), attachment_id.to_string());
         self.attachment_bytes
             .read()
@@ -1860,6 +1976,14 @@ impl EmailProvider for FakeEmailProvider {
         message_id_header: Option<&str>,
     ) -> Result<Option<MessageLocation>> {
         self.record_call("locate_message");
+        if let Some(message) = self
+            .locate_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::SyncError(message));
+        }
         let guard = self.messages.read().unwrap_or_else(PoisonError::into_inner);
         let found = guard.iter().find(|m| m.email.id == message_id).or_else(|| {
             message_id_header.and_then(|header| guard.iter().find(|m| m.email.message_id.as_deref() == Some(header)))
@@ -2006,11 +2130,13 @@ impl EmailProvider for FakeEmailProvider {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
-        _attachments: &[EmailAttachment],
+        attachments: &[EmailAttachment],
         reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
+        self.record_call("create_draft");
         self.draft_write_result()?;
         let seq = self.draft_seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let id = format!("fake-draft-{seq}");
@@ -2018,12 +2144,14 @@ impl EmailProvider for FakeEmailProvider {
             provider_draft_id: id.clone(),
             to_addresses: to_emails.to_vec(),
             cc_addresses: cc_emails.to_vec(),
+            bcc_addresses: bcc_emails.to_vec(),
             subject: subject.to_string(),
             body: body.text.clone(),
             body_html: body.html.clone(),
             updated_at: None,
             provider_message_id: Some(format!("fake-msg-{seq}")),
             in_reply_to: reply.and_then(|r| r.message_id).map(str::to_string),
+            attachments: pushed_attachments(attachments, seq),
         };
         self.drafts
             .write()
@@ -2038,11 +2166,13 @@ impl EmailProvider for FakeEmailProvider {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
-        _attachments: &[EmailAttachment],
+        attachments: &[EmailAttachment],
         reply: Option<&ReplyTarget<'_>>,
     ) -> Result<String> {
+        self.record_call("update_draft");
         self.draft_write_result()?;
         // A draft sent or deleted from another device is gone: real providers
         // answer 404, which their clients surface as `NotFound`.
@@ -2061,12 +2191,14 @@ impl EmailProvider for FakeEmailProvider {
             provider_draft_id: provider_draft_id.to_string(),
             to_addresses: to_emails.to_vec(),
             cc_addresses: cc_emails.to_vec(),
+            bcc_addresses: bcc_emails.to_vec(),
             subject: subject.to_string(),
             body: body.text.clone(),
             body_html: body.html.clone(),
             updated_at: None,
             provider_message_id: Some(format!("fake-msg-{seq}")),
             in_reply_to: reply.and_then(|r| r.message_id).map(str::to_string),
+            attachments: pushed_attachments(attachments, seq),
         };
         self.drafts
             .write()
@@ -2076,6 +2208,14 @@ impl EmailProvider for FakeEmailProvider {
     }
 
     async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
+        if let Some(message) = self
+            .draft_delete_failure
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_deref()
+        {
+            return Err(AppError::SyncError(message.to_string()));
+        }
         self.drafts
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -2173,6 +2313,7 @@ mod tests {
             None,
             &["x@y.com".to_string()],
             &[],
+            &[],
             "subj",
             &EmailBody::plain("body"),
             &[],
@@ -2203,6 +2344,7 @@ mod tests {
             None,
             &["x@y.com".to_string()],
             &[],
+            &[],
             "subj",
             &body,
             &[],
@@ -2225,6 +2367,7 @@ mod tests {
                 None,
                 &["x@y.com".to_string()],
                 &[],
+                &[],
                 "subj",
                 &EmailBody::plain("body"),
                 &[],
@@ -2246,6 +2389,7 @@ mod tests {
                 "me@example.com",
                 None,
                 &["x@y.com".to_string()],
+                &[],
                 &[],
                 &ReplyTarget {
                     provider_message_id: "prov-1",
@@ -2435,6 +2579,7 @@ mod tests {
             _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
+            _bcc_emails: &[String],
             _target: &ReplyTarget<'_>,
             _subject: &str,
             _body: &EmailBody,
@@ -2448,6 +2593,7 @@ mod tests {
             _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
+            _bcc_emails: &[String],
             _subject: &str,
             _body: &EmailBody,
             _attachments: &[EmailAttachment],

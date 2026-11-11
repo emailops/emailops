@@ -239,8 +239,9 @@ sistema:
 - **Tokens OAuth y contraseñas** — el llavero del sistema, nunca un archivo en claro. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-Para mover o compartir un directorio de datos (para pruebas o un segundo perfil), define la
-variable de entorno `EMAILOPS_DATA_DIR` antes de arrancar. Las rutas exactas por plataforma, y
+Para guardar los datos en otro disco, elige **Ajustes → Privacidad y seguridad → Ubicación de los datos →
+Cambiar…**. Para pruebas o un segundo perfil, define en su lugar la variable de entorno
+`EMAILOPS_DATA_DIR` antes de arrancar. Las rutas exactas por plataforma, y
 qué se escribe dónde, están en
 [Privacidad y seguridad](../privacy-security/#where-your-data-is-stored).
 
@@ -249,7 +250,8 @@ qué se escribe dónde, están en
 <!-- claim:inst-uninstalling-1 -->
 Quitar la app deja a propósito tu base de datos de correo y los modelos descargados, de modo
 que una reinstalación retoma donde lo dejaste. Borra también el directorio de datos si quieres
-empezar de cero.
+empezar de cero; eso borra también las skills que hayas creado, igual que cualquier opción del
+desinstalador que elimine los datos de la app.
 
 <!-- claim:inst-uninstalling-2 -->
 En ningún caso se elimina nada de tu proveedor de correo — desinstalar EmailOps nunca toca el

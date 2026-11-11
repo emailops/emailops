@@ -39,7 +39,7 @@ export function StorageCard({ stats, error }: StorageCardProps) {
   const fmt = useFormatters();
   if (error) {
     return (
-      <div className="border border-red-800 bg-red-950 text-red-200 text-sm rounded p-3">
+      <div className="border border-red-200 bg-red-50 text-red-700 text-sm rounded p-3">
         Failed to load storage stats: {error}
       </div>
     );
@@ -59,11 +59,11 @@ export function StorageCard({ stats, error }: StorageCardProps) {
   ];
 
   return (
-    <div className="border border-gray-800 bg-gray-900 rounded p-4">
+    <div className="border border-gray-200 bg-white rounded p-4">
       <div className="flex items-baseline justify-between mb-3">
         <div>
           <div className="text-xs uppercase tracking-wider text-gray-500">{t('dashboard:storage.totalOnDisk')}</div>
-          <div className="text-2xl font-semibold text-white">{formatBytes(stats.totalBytes)}</div>
+          <div className="text-2xl font-semibold text-gray-900">{formatBytes(stats.totalBytes)}</div>
         </div>
         <div className="text-xs text-gray-500">{fmt.dateTime(stats.computedAt)}</div>
       </div>
@@ -72,17 +72,17 @@ export function StorageCard({ stats, error }: StorageCardProps) {
           const width = stats.totalBytes === 0 ? 0 : (row.bytes / stats.totalBytes) * 100;
           return (
             <div key={row.label} className="text-sm">
-              <div className="flex items-baseline justify-between text-gray-300">
+              <div className="flex items-baseline justify-between text-gray-700">
                 <span>
                   {row.label}
-                  {row.hint && <span className="ml-2 text-xs text-gray-600">{row.hint}</span>}
+                  {row.hint && <span className="ml-2 text-xs text-gray-500">{row.hint}</span>}
                 </span>
-                <span className="text-gray-400 tabular-nums">
+                <span className="text-gray-500 tabular-nums">
                   {formatBytes(row.bytes)}
-                  <span className="ml-2 text-xs text-gray-600">{pct(row.bytes, stats.totalBytes)}</span>
+                  <span className="ml-2 text-xs text-gray-500">{pct(row.bytes, stats.totalBytes)}</span>
                 </span>
               </div>
-              <div className="mt-0.5 h-1 bg-gray-800 rounded overflow-hidden">
+              <div className="mt-0.5 h-1 bg-gray-200 rounded overflow-hidden">
                 <div className="h-full bg-primary-600" style={{ width: `${width}%` }} />
               </div>
             </div>

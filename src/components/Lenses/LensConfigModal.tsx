@@ -170,7 +170,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
             type="button"
             onClick={onClose}
             disabled={isSaving}
-            className="rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+            className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-800 hover:bg-gray-100 disabled:opacity-50"
           >
             {t('common:actions.cancel')}
           </button>
@@ -186,14 +186,14 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
       }
     >
       {/* Tab bar */}
-      <div className="mb-4 flex border-b border-gray-700">
+      <div className="mb-4 flex border-b border-gray-200">
         {(['scope', 'columns', 'prompt'] as const).map((tab) => (
           <button
             key={tab}
             type="button"
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-1.5 text-xs font-medium transition-colors ${
-              activeTab === tab ? 'border-b-2 border-blue-500 text-blue-300' : 'text-gray-400 hover:text-gray-200'
+              activeTab === tab ? 'border-b-2 border-blue-500 text-blue-700' : 'text-gray-500 hover:text-gray-800'
             }`}
           >
             {tab === 'scope'
@@ -207,12 +207,12 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
 
       {/* Scope tab */}
       {activeTab === 'scope' && (
-        <div className="space-y-4 text-xs text-gray-300">
+        <div className="space-y-4 text-xs text-gray-700">
           <p className="text-[11px] text-gray-500">{t('lenses:scope.help')}</p>
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="mb-1 block text-gray-400">{t('lenses:scope.account')}</span>
+              <span className="mb-1 block text-gray-500">{t('lenses:scope.account')}</span>
               <Select
                 value={accountId}
                 options={[
@@ -228,7 +228,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-gray-400">{t('lenses:scope.direction')}</span>
+              <span className="mb-1 block text-gray-500">{t('lenses:scope.direction')}</span>
               <Select
                 value={direction}
                 options={[
@@ -244,7 +244,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
           </div>
 
           <div className="space-y-1">
-            <span className="block text-gray-400">{t('lenses:scope.mailboxes')}</span>
+            <span className="block text-gray-500">{t('lenses:scope.mailboxes')}</span>
             <div className="flex flex-wrap gap-1.5">
               {MAILBOXES.map((m) => (
                 <button
@@ -253,8 +253,8 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                   onClick={() => toggleIn(mailboxes, m, setMailboxes)}
                   className={`rounded border px-2 py-0.5 text-[11px] ${
                     mailboxes.includes(m)
-                      ? 'border-blue-500 bg-blue-600/30 text-blue-200'
-                      : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   {t(`lenses:scope.mailboxNames.${m}`)}
@@ -271,7 +271,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
           />
 
           <div className="space-y-1">
-            <span className="block text-gray-400">{t('lenses:scope.categories')}</span>
+            <span className="block text-gray-500">{t('lenses:scope.categories')}</span>
             <div className="flex flex-wrap gap-1.5">
               {CATEGORIES.map((c) => (
                 <button
@@ -280,8 +280,8 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                   onClick={() => toggleIn(categories, c, setCategories)}
                   className={`rounded border px-2 py-0.5 text-[11px] ${
                     categories.includes(c)
-                      ? 'border-blue-500 bg-blue-600/30 text-blue-200'
-                      : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   {t(`lenses:scope.categoryNames.${c}`)}
@@ -292,70 +292,70 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="mb-1 block text-gray-400">{t('lenses:scope.lastNDays')}</span>
+              <span className="mb-1 block text-gray-500">{t('lenses:scope.lastNDays')}</span>
               <input
                 type="number"
                 min={1}
                 value={lastDays}
                 onChange={(e) => setLastDays(e.target.value)}
                 placeholder={t('lenses:scope.lastNDaysPlaceholder')}
-                className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
               />
             </label>
             <label className="block">
-              <span className="mb-1 block text-gray-400">{t('lenses:scope.senderDomains')}</span>
+              <span className="mb-1 block text-gray-500">{t('lenses:scope.senderDomains')}</span>
               <input
                 type="text"
                 value={senderDomains}
                 onChange={(e) => setSenderDomains(e.target.value)}
                 placeholder="stripe.com, wise.com" // i18n-ignore: example sender domains
-                className={`w-full rounded border bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:outline-none ${
-                  domainCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
+                className={`w-full rounded border bg-white px-2 py-1.5 text-gray-900 focus:outline-none ${
+                  domainCheck.error ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-blue-500'
                 }`}
               />
               {domainCheck.error && (
-                <p className="mt-1 text-[10px] text-red-400">{inputErrorText(domainCheck.error)}</p>
+                <p className="mt-1 text-[10px] text-red-600">{inputErrorText(domainCheck.error)}</p>
               )}
             </label>
           </div>
 
           <label className="block">
-            <span className="mb-1 block text-gray-400">{t('lenses:scope.senderEmails')}</span>
+            <span className="mb-1 block text-gray-500">{t('lenses:scope.senderEmails')}</span>
             <input
               type="text"
               value={senderEmails}
               onChange={(e) => setSenderEmails(e.target.value)}
               placeholder="billing@stripe.com, invoices@vendor.com" // i18n-ignore: example sender emails
-              className={`w-full rounded border bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:outline-none ${
-                emailCheck.error ? 'border-red-500 focus:border-red-400' : 'border-gray-600 focus:border-blue-500'
+              className={`w-full rounded border bg-white px-2 py-1.5 text-gray-900 focus:outline-none ${
+                emailCheck.error ? 'border-red-500 focus:border-red-500' : 'border-gray-300 focus:border-blue-500'
               }`}
             />
-            {emailCheck.error && <p className="mt-1 text-[10px] text-red-400">{inputErrorText(emailCheck.error)}</p>}
+            {emailCheck.error && <p className="mt-1 text-[10px] text-red-600">{inputErrorText(emailCheck.error)}</p>}
           </label>
 
           <div className="space-y-2">
             <label className="block">
-              <span className="mb-1 block text-gray-400">{t('lenses:scope.keywordQuery')}</span>
+              <span className="mb-1 block text-gray-500">{t('lenses:scope.keywordQuery')}</span>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder={t('lenses:scope.keywordPlaceholder')}
-                  className="min-w-0 flex-1 rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1.5 text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="min-w-0 flex-1 rounded border border-gray-300 bg-white px-2 py-1.5 text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={() => void handleTestScope()}
                   disabled={isTesting || !!domainCheck.error || !!emailCheck.error}
                   title={t('lenses:scope.testHint')}
-                  className="shrink-0 rounded border border-gray-600 px-3 py-1 text-xs text-gray-200 hover:bg-gray-700 disabled:opacity-50"
+                  className="shrink-0 rounded border border-gray-300 px-3 py-1 text-xs text-gray-800 hover:bg-gray-100 disabled:opacity-50"
                 >
                   {isTesting ? t('lenses:scope.testing') : t('lenses:scope.test')}
                 </button>
               </div>
             </label>
-            <label className="flex items-center gap-2 text-[11px] text-gray-300">
+            <label className="flex items-center gap-2 text-[11px] text-gray-700">
               <input
                 type="checkbox"
                 checked={querySearchBody}
@@ -366,8 +366,8 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
               <span className="text-gray-500">{t('lenses:scope.keywordsBodyHint')}</span>
             </label>
             {scopeSample && (
-              <div className="rounded border border-gray-700 bg-[#1e1e1e] p-2">
-                <p className="text-gray-300">
+              <div className="rounded border border-gray-200 bg-white p-2">
+                <p className="text-gray-700">
                   {scopeSample.capped
                     ? t('lenses:scope.testResultCapped', { count: scopeSample.total })
                     : t('lenses:scope.testResult', { count: scopeSample.total })}
@@ -377,7 +377,7 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
                     {scopeSample.recent.map((email) => (
                       <li key={email.emailId} className="flex gap-2 text-[11px]">
                         <span className="shrink-0 text-gray-500">{formatDate(email.timestamp, i18n.language)}</span>
-                        <span className="truncate text-gray-200" title={email.subject}>
+                        <span className="truncate text-gray-800" title={email.subject}>
                           {email.subject}
                         </span>
                         <span className="ml-auto max-w-[35%] shrink-0 truncate text-gray-500" title={email.sender}>
@@ -391,16 +391,16 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
             )}
           </div>
 
-          {error && <div className="text-xs text-red-400">{error}</div>}
+          {error && <div className="text-xs text-red-600">{error}</div>}
         </div>
       )}
 
       {/* Columns tab */}
       {activeTab === 'columns' && (
-        <div className="space-y-3 text-xs text-gray-300">
+        <div className="space-y-3 text-xs text-gray-700">
           <p className="text-[11px] text-gray-500">{t('lenses:config.columnsHelp')}</p>
           <LensColumnsEditor columns={columns} onChange={setColumns} />
-          {error && <div className="text-xs text-red-400">{error}</div>}
+          {error && <div className="text-xs text-red-600">{error}</div>}
         </div>
       )}
 
@@ -409,17 +409,17 @@ export function LensConfigModal({ lens, open, onClose }: LensConfigModalProps) {
         <div className="space-y-3">
           <p className="text-[11px] text-gray-500">{t('lenses:config.promptHelp')}</p>
           <div className="text-[11px] text-gray-500">
-            {t('lenses:config.promptVersion')} <span className="text-gray-300">{lens.promptVersion}</span>
+            {t('lenses:config.promptVersion')} <span className="text-gray-700">{lens.promptVersion}</span>
           </div>
           <textarea
             value={promptText}
             onChange={(e) => setPromptText(e.currentTarget.value)}
             spellCheck={false}
             rows={14}
-            className="w-full rounded border border-gray-600 bg-[#1e1e1e] p-3 font-mono text-xs leading-relaxed text-gray-100 focus:border-blue-500 focus:outline-none"
+            className="w-full rounded border border-gray-300 bg-white p-3 font-mono text-xs leading-relaxed text-gray-900 focus:border-blue-500 focus:outline-none"
             placeholder={t('lenses:prompt.placeholder')}
           />
-          {error && <div className="text-xs text-red-400">{error}</div>}
+          {error && <div className="text-xs text-red-600">{error}</div>}
         </div>
       )}
     </Modal>

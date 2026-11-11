@@ -10,6 +10,7 @@ use std::collections::HashMap;
 pub mod attachments;
 pub mod autocomplete;
 pub mod batch;
+pub mod chat_starters;
 pub mod contacts;
 pub mod crud;
 pub mod failed;
@@ -17,9 +18,11 @@ pub mod folder_ops;
 pub mod headers;
 pub mod junk;
 pub mod junk_model;
+pub mod list;
 pub mod mailbox_state;
 pub mod search;
 pub mod snoozes;
+pub(crate) mod text_query;
 
 #[cfg(test)]
 pub(super) mod test_helpers;

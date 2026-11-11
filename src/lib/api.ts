@@ -4,6 +4,7 @@ import { arch as osArch, platform as osPlatform, version as osVersion } from '@t
 import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
 import type {
   Account,
+  AccountColor,
   AccountDashboard,
   AccountSettings,
   AccountSignature,
@@ -20,10 +21,12 @@ import type {
   BlockedSender,
   Calendar,
   CalendarEvent,
+  CalendarFeed,
   CalendarInvite,
   CatalogModel,
   ChatConversation,
   ChatMessage,
+  ChatStarter,
   ClassificationConfig,
   ClassificationRule,
   CompanyContactsGroup,
@@ -86,6 +89,7 @@ import type {
   TagStat,
   TaskConfig,
   TaskCountsSummary,
+  ThreadCursor,
   ThreadMessageText,
   ThreadParticipants,
   ThreadState,
@@ -223,6 +227,10 @@ export async function updateAccountName(accountId: string, name: string): Promis
   return invoke('update_account_name', { accountId, name });
 }
 
+export async function setAccountColor(accountId: string, color: AccountColor): Promise<Account> {
+  return invoke('set_account_color', { accountId, color });
+}
+
 export async function getAccountSettings(accountId: string): Promise<AccountSettings> {
   return invoke('get_account_settings', { accountId });
 }
@@ -352,6 +360,12 @@ export async function getThread(accountId: string, threadId: string): Promise<Em
   return invoke('get_thread', { accountId, threadId });
 }
 
+/** Email id → the `Reply-To` addresses a reply to that message goes to
+ *  instead of its sender; messages without one are left out. */
+export async function getThreadReplyTo(accountId: string, threadId: string): Promise<Record<string, string[]>> {
+  return invoke('get_thread_reply_to', { accountId, threadId });
+}
+
 /** Each message of a thread with what it adds to it, oldest first. */
 export async function getThreadNewContent(accountId: string, threadId: string): Promise<ThreadMessageText[]> {
   return invoke('get_thread_new_content', { accountId, threadId });
@@ -443,6 +457,7 @@ export interface OutgoingMessage {
   replyToEmailId?: string | null;
   to: string[];
   cc: string[];
+  bcc?: string[];
   /** For a reply, empty = the parent's subject ("Re: …"). */
   subject: string;
   /** Plain-text body. */
@@ -520,6 +535,9 @@ export async function sendReply(
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
   attachments?: EmailAttachment[],
+  bccEmails?: string[],
+  /** Unset replies to the parent's subject. */
+  subject?: string,
 ): Promise<void> {
   return invoke('send_reply', {
     emailId,
@@ -527,6 +545,8 @@ export async function sendReply(
     fromAccountId,
     toEmails,
     ccEmails,
+    bccEmails,
+    subject,
     bodyHtml,
     inlineImages,
     attachments,
@@ -553,11 +573,13 @@ export async function sendNewEmail(
   attachments?: EmailAttachment[],
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
+  bccEmails?: string[],
 ): Promise<void> {
   return invoke('send_new_email', {
     accountId,
     toEmails,
     ccEmails,
+    bccEmails,
     subject,
     body,
     attachments,
@@ -746,8 +768,11 @@ export async function getSyncStatus(accountId: string): Promise<SyncStatus> {
 // Search commands
 export interface ParsedSearchQuery {
   keywords: string[];
+  /** The free text as typed: phrases, brackets and AND / OR / NOT kept. */
+  text: string;
   fromFilter: string | null;
   toFilter: string | null;
+  ccFilter: string | null;
   subjectFilter: string | null;
   hasAttachment: boolean | null;
   isUnread: boolean | null;
@@ -755,32 +780,27 @@ export interface ParsedSearchQuery {
   beforeTimestamp: number | null;
 }
 
-export type SearchMethod = 'rag' | 'ai_parsed' | 'pattern_parsed' | 'keyword_search';
-
-export interface EmailWithScore extends Email {
-  relevanceScore: number | null;
-  matchReason: string | null;
-}
-
-export interface SearchResult {
-  emails: EmailWithScore[];
-  query: string;
+export interface ThreadPage {
+  emails: Email[];
+  /** Email id → when that row's thread last had activity. */
+  threadLatestAt: Record<string, number>;
+  nextCursor: ThreadCursor | null;
   parsedQuery: ParsedSearchQuery | null;
-  aiAvailable: boolean;
-  searchMethod: SearchMethod;
 }
 
-/** `accountId: null` searches across every enabled account (unified view).
- *  Search spans every category — the inbox tab does not narrow it.
- *  `mailbox` limits it to the view it runs in (`sent`, `archive`,
- *  `folder:<path>`); absent = every live mailbox. */
-export async function searchEmails(
+/** One page of a search or filter. `accountId: null` lists every enabled
+ *  account; `cursor: null` starts at the top, and a null `nextCursor` is the end
+ *  of the list. `recordSearch` logs a typed search for the chat's context. */
+export async function listThreads(
   accountId: string | null,
-  query?: string,
-  useAi?: boolean,
-  mailbox?: string,
-): Promise<SearchResult> {
-  return invoke('search_emails', { accountId, query, useAi, mailbox });
+  query: string,
+  view: MailboxView,
+  unreadOnly: boolean,
+  cursor: ThreadCursor | null,
+  limit: number,
+  recordSearch: boolean,
+): Promise<ThreadPage> {
+  return invoke('list_threads', { accountId, query, view, unreadOnly, cursor, limit, recordSearch });
 }
 
 export async function checkAiAvailable(): Promise<boolean> {
@@ -832,30 +852,18 @@ export async function getSavedSuggestions(accountId: string | null): Promise<Sma
   return invoke('get_saved_suggestions', { accountId });
 }
 
-/** `accountId: null` filters across every enabled account (unified view). */
+/** One tag's conversations, for the Tag Board. `accountId: null` lists every
+ *  enabled account (unified view). */
 export async function getFilteredEmails(
   accountId: string | null,
-  domain?: string,
-  senderEmail?: string,
-  tagType?: string,
-  tagValue?: string,
+  tagType: string,
+  tagValue: string,
   limit?: number,
   offset?: number,
-  attachmentExt?: string,
   /** Category / time-range narrowing. Omitted = every category, all of time. */
   window?: EmailWindow,
 ): Promise<FilteredEmailsResult> {
-  return invoke('get_filtered_emails', {
-    accountId,
-    domain,
-    senderEmail,
-    tagType,
-    tagValue,
-    limit,
-    offset,
-    attachmentExt,
-    window,
-  });
+  return invoke('get_filtered_emails', { accountId, tagType, tagValue, window, limit, offset });
 }
 
 /** Live thread counts per tag value for one classified tag type — the tag
@@ -1069,13 +1077,10 @@ export async function getEmailAttachmentMetas(accountId: string, emailId: string
   return invoke('get_email_attachment_metas', { accountId, emailId });
 }
 
-/** Fetch attachment bytes from the provider; returns standard base64. */
-export async function fetchEmailAttachmentBytes(
-  accountId: string,
-  emailId: string,
-  providerAttachmentId: string,
-): Promise<string> {
-  return invoke('fetch_email_attachment_bytes', { accountId, emailId, providerAttachmentId });
+/** The bytes of an attachment, by its row id, as standard base64: from its
+ *  downloaded file, its stored bytes or the provider. */
+export async function fetchEmailAttachmentBytes(accountId: string, metaId: string): Promise<string> {
+  return invoke('fetch_email_attachment_bytes', { accountId, metaId });
 }
 
 /** Open a locally-cached email attachment with the OS default app; `confirmed` as in `openAttachmentExternally`. */
@@ -1149,6 +1154,8 @@ export async function setAiConfig(
   thinkingEnabled?: boolean,
   // Omitted keeps the stored choice (the backend treats a missing value as "unchanged").
   zeroDataRetention?: boolean,
+  /** Required when `provider` is the OpenAI-compatible server. */
+  server?: ServerSettingsInput,
 ): Promise<void> {
   return invoke('set_ai_config', {
     provider,
@@ -1158,7 +1165,54 @@ export async function setAiConfig(
     monthlyBudgetUsd: monthlyBudgetUsd ?? 0,
     thinkingEnabled: thinkingEnabled ?? false,
     zeroDataRetention,
+    server,
   });
+}
+
+/** What Settings sends for the OpenAI-compatible server
+ *  (`services::ai_server::ServerSettingsInput`). */
+export interface ServerSettingsInput {
+  baseUrl: string;
+  /** A new key; null keeps the stored one. */
+  apiKey: string | null;
+  /** Delete the stored key. */
+  clearApiKey: boolean;
+  embeddingSource: 'server' | 'inapp' | 'openrouter';
+  /** Tokens; 0 reads it from the server. */
+  contextWindow: number;
+  /** The remote host whose disclosure the user just confirmed. */
+  disclosureAcceptedHost: string | null;
+}
+
+/** Models an OpenAI-compatible server lists at `GET {baseUrl}/models`. The
+ *  server may not be saved yet; `apiKey` is the key typed with it. */
+export async function listOpenAiCompatibleModels(
+  baseUrl: string,
+  apiKey?: string | null,
+): Promise<{ id: string; name: string }[]> {
+  return invoke('list_openai_compatible_models', { baseUrl, apiKey });
+}
+
+/** The context window chat uses with a server (`services::ai_server::ContextReport`). */
+export interface ServerContextReport {
+  window: number;
+  /** Reported by the server, set in Settings, or the default assumed. */
+  source: 'server' | 'configured' | 'assumed';
+  /** What the server reported; null when it did not say. */
+  served: number | null;
+  /** What Settings holds; 0 reads it from the server. */
+  configured: number;
+  recommended: number;
+  belowRecommended: boolean;
+}
+
+export async function checkOpenAiCompatibleContext(
+  baseUrl: string,
+  apiKey: string | null,
+  model: string,
+  contextWindow: number,
+): Promise<ServerContextReport> {
+  return invoke('check_openai_compatible_context', { baseUrl, apiKey, model, contextWindow });
 }
 
 export async function getAiUsage(): Promise<AiUsageSummary> {
@@ -1191,8 +1245,14 @@ export async function validateOpenRouterEmbeddingModel(
   return invoke('validate_openrouter_embedding_model', { model, apiKey, zeroDataRetention });
 }
 
-export async function testAiProvider(provider: string, model: string, apiKey?: string | null): Promise<string> {
-  return invoke('test_ai_provider', { provider, model, apiKey });
+/** `baseUrl` is the OpenAI-compatible server to test, which may not be saved yet. */
+export async function testAiProvider(
+  provider: string,
+  model: string,
+  apiKey?: string | null,
+  baseUrl?: string,
+): Promise<string> {
+  return invoke('test_ai_provider', { provider, model, apiKey, baseUrl });
 }
 
 export async function getEmbeddingsConfig(accountId: string): Promise<EmbeddingsConfig> {
@@ -1257,11 +1317,22 @@ export interface SkillInfo {
   enabled: boolean;
 }
 
+/** A skill that ships with the app (mirrors `services::skills::BundledSkillInfo`). */
+export interface BundledSkillInfo {
+  name: string;
+  description: string;
+  /** The bundled skill's own switch, off by default. */
+  enabled: boolean;
+  /** A skill of the user's has this name, so that one is used instead. */
+  shadowed: boolean;
+}
+
 /** Mirrors `services::skills::SkillsOverview`. */
 export interface SkillsOverview {
   enabled: boolean;
   dir: string | null;
   skills: SkillInfo[];
+  bundled: BundledSkillInfo[];
   /** Skills that failed to load. `code`/`params` translate like an `AppError`. */
   errors: { path: string; message: string; code: string; params: Record<string, string> }[];
 }
@@ -1305,6 +1376,21 @@ export async function createSkill(name: string): Promise<void> {
   return invoke('create_skill', { name });
 }
 
+/** Switch one bundled skill on or off for the chat. */
+export async function setBundledSkillEnabled(name: string, enabled: boolean): Promise<void> {
+  return invoke('set_bundled_skill_enabled', { name, enabled });
+}
+
+/** The full text of a bundled skill. */
+export async function readBundledSkill(name: string): Promise<string> {
+  return invoke('read_bundled_skill', { name });
+}
+
+/** Create an editable user skill from a bundled one. */
+export async function copyBundledSkill(name: string): Promise<void> {
+  return invoke('copy_bundled_skill', { name });
+}
+
 export async function listPrompts(): Promise<PromptInfo[]> {
   return invoke('list_prompts');
 }
@@ -1343,6 +1429,11 @@ export async function getEmailTagsBatch(emailIds: string[]): Promise<EmailTag[]>
 /** Verdicts keyed by email id. A missing key means "not scored yet". */
 export async function getJunkVerdicts(emailIds: string[]): Promise<Record<string, JunkVerdict>> {
   return invoke('get_junk_verdicts', { emailIds });
+}
+
+/** Whether the message carries text addressed to the AI assistant. Works with junk detection off. */
+export async function hasAiControlMarkup(accountId: string, emailId: string): Promise<boolean> {
+  return invoke('has_ai_control_markup', { accountId, emailId });
 }
 
 /**
@@ -1555,6 +1646,11 @@ export async function listContactsByCompany(accountId: string): Promise<CompanyC
   return invoke('list_contacts_by_company', { accountId });
 }
 
+/** Lowercased address → the name it uses when it writes to the account. */
+export async function getSenderNames(accountId: string): Promise<Record<string, string>> {
+  return invoke('get_sender_names', { accountId });
+}
+
 /** The account's organization domain ("Mi organización"); `null` for a free
  *  personal provider such as gmail.com. */
 export async function getOrganizationDomain(accountId: string): Promise<string | null> {
@@ -1590,12 +1686,19 @@ export interface DraftAttachmentInput {
   mimeType?: string | null;
 }
 
+/** Store a file attached in a composer so its draft keeps it; the result goes
+ *  into the draft's next save. */
+export async function storeDraftFile(accountId: string, file: EmailAttachment): Promise<DraftAttachmentInput> {
+  return invoke('store_draft_file', { accountId, file });
+}
+
 export interface SaveDraftRequest {
   id?: string;
   emailId?: string | null;
   accountId: string;
   toAddresses: string[];
   ccAddresses?: string[];
+  bccAddresses?: string[];
   subject: string;
   body: string;
   bodyHtml?: string | null;
@@ -1698,6 +1801,12 @@ export async function sendChatMessage(
   research = false,
   /** The estimate the user confirmed: the run reads exactly what it counted. */
   researchEstimateId?: string | null,
+  /**
+   * PDF attachment the user has open in the viewer, owned by
+   * `contextAccountId`. The backend grounds the turn in its text in place of
+   * the thread, for this turn only.
+   */
+  contextAttachmentId?: string | null,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1709,6 +1818,7 @@ export async function sendChatMessage(
     correction: correction ?? null,
     research,
     researchEstimateId: researchEstimateId ?? null,
+    contextAttachmentId: contextAttachmentId ?? null,
   });
 }
 
@@ -1762,6 +1872,11 @@ export interface ChatViewContext {
  */
 export async function prewarmChat(accountId: string): Promise<void> {
   return invoke('prewarm_chat', { accountId });
+}
+
+/** Suggested requests for an empty conversation on this account (no model call). */
+export async function getChatStarters(accountId: string): Promise<ChatStarter[]> {
+  return invoke('get_chat_starters', { accountId });
 }
 
 // ── Memory subsystem ─────────────────────────────────────────────────────────
@@ -1987,6 +2102,24 @@ export async function syncCalendarNow(accountId: string): Promise<number> {
   return invoke('sync_calendar_now', { accountId });
 }
 
+/** Subscribed ICS feeds of an IMAP account (label + host only; the URL stays
+ *  in the secrets vault). */
+export async function listCalendarFeeds(accountId: string): Promise<CalendarFeed[]> {
+  return invoke('list_calendar_feeds', { accountId });
+}
+
+/** Subscribe an IMAP account to a read-only ICS feed. The backend validates
+ *  and fetches the URL once, then syncs the new calendar right away. A blank
+ *  label takes the feed's own name. */
+export async function addCalendarFeed(accountId: string, label: string, url: string): Promise<CalendarFeed> {
+  return invoke('add_calendar_feed', { accountId, label, url });
+}
+
+/** Unsubscribe from a feed: its calendar, events and stored URL go with it. */
+export async function removeCalendarFeed(accountId: string, feedId: string): Promise<void> {
+  return invoke('remove_calendar_feed', { accountId, feedId });
+}
+
 // Dashboard
 export async function getDashboardStats(): Promise<AccountDashboard[]> {
   return invoke('get_dashboard_stats');
@@ -2002,6 +2135,55 @@ export async function getQueueState(): Promise<AllQueuesState> {
 
 export async function getStorageStats(): Promise<StorageStats> {
   return invoke('get_storage_stats');
+}
+
+// ── Data location ────────────────────────────────────────────────────────────
+
+/** Where EmailOps keeps its data folder (`commands/data_location.rs`). */
+export interface DataLocationInfo {
+  /** False on mobile, whose sandbox decides where app data lives. */
+  supported: boolean;
+  path: string;
+  defaultPath: string;
+  isDefault: boolean;
+  /** `EMAILOPS_DATA_DIR` decides the folder; it cannot be moved from the app. */
+  setByEnv: boolean;
+  /** The folder the data was moved from, until the user dismisses the note. */
+  previousPath: string | null;
+  sizeBytes: number;
+}
+
+/** The folder the data would move to, checked and remembered by the backend. */
+export interface PickedDataFolder {
+  path: string;
+  neededBytes: number;
+}
+
+/** Payload of the `data-move-progress` event. */
+export interface DataMoveProgress {
+  copiedBytes: number;
+  totalBytes: number;
+}
+
+export async function getDataLocation(): Promise<DataLocationInfo> {
+  return invoke('get_data_location');
+}
+
+export async function dismissPreviousDataLocation(): Promise<void> {
+  return invoke('dismiss_previous_data_location');
+}
+
+/** Open the native folder dialog; `null` when cancelled. */
+export async function pickDataFolder(): Promise<PickedDataFolder | null> {
+  return invoke('pick_data_folder');
+}
+
+/**
+ * Move the data to the folder last picked (or back to the default) and
+ * restart the app. Only returns on failure, which rejects.
+ */
+export async function moveDataLocation(toDefault: boolean): Promise<void> {
+  return invoke('move_data_location', { toDefault });
 }
 
 // ── Lenses ───────────────────────────────────────────────────────────────────

@@ -161,7 +161,7 @@ async function tab(name) {
   // Only the settings navigation: the app behind the dialog has its own
   // "Calendar", "Junk"… buttons, and pressing one of those is silent.
   const hit = await js((n) => {
-    const nav = [...document.querySelectorAll('nav,aside,div')].filter((e) => e.offsetParent && /Password, remote content/.test(e.innerText) && /Inbox layout/.test(e.innerText))
+    const nav = [...document.querySelectorAll('nav,aside,div')].filter((e) => e.offsetParent && /Password, remote content/.test(e.innerText) && /inbox layout/i.test(e.innerText))
       .sort((a, b) => a.innerText.length - b.innerText.length)[0];
     const el = nav && [...nav.querySelectorAll('button,[role=button],[role=tab]')].find((e) => e.innerText.trim().startsWith(n));
     el?.click();
@@ -557,13 +557,13 @@ async function afterWizard() {
     return ok(!want.length, `${langs.join(', ')} y los dos diseños`, `falta: ${want.join(', ')}`);
   });
   await claim('start-3-inbox-1', 'Settings → Appearance', {
-    covers: ['Change it whenever you like in Settings → Appearance, along with the interface language (English, Spanish, French, German).'],
-    how: 'Abre Ajustes → Appearance y comprueba que están allí el diseño de la bandeja y «Display language» con los idiomas que enumera la doc.',
+    covers: ['Change both whenever you like in Settings → Appearance, along with the interface language (English, Spanish, French, German).'],
+    how: 'Abre Ajustes → Appearance y comprueba que están allí el diseño de la bandeja, el tema y «Display language» con los idiomas que enumera la doc.',
   }, async ({ doc }) => {
     const native = { English: 'English', Spanish: 'Español', French: 'Français', German: 'Deutsch' };
     const langs = doc.match(/interface language \(([^)]+)\)/)[1].split(', ').map((l) => native[l] || l);
-    const good = /Display language/.test(plainTabs) && langs.every((l) => plainTabs.includes(l)) && plainTabs.includes('Split view');
-    return ok(good, 'Appearance tiene diseño e idioma de la interfaz', 'Appearance no tiene el diseño o el idioma de la interfaz');
+    const good = /Display language/.test(plainTabs) && langs.every((l) => plainTabs.includes(l)) && plainTabs.includes('Split view') && /Theme/.test(plainTabs);
+    return ok(good, 'Appearance tiene diseño, tema e idioma de la interfaz', 'Appearance no tiene el diseño, el tema o el idioma de la interfaz');
   });
   const priv = await tab('Privacy & Security');
   const privToggles = await toggles();
@@ -631,7 +631,8 @@ async function afterWizard() {
     return ok(!missing.length, `SQLite local con ${found.map(([i, t]) => `${i}→${t}`).join(', ')}`, `sin tabla para: ${missing.join(', ')}`);
   });
   await claim('priv-where-data-5', 'EMAILOPS_DATA_DIR', {
-    covers: ['Point EMAILOPS_DATA_DIR somewhere else before launching to use a different location'],
+    covers: ['Setting EMAILOPS_DATA_DIR before launching (for a second profile) overrides that choice.'],
+    partial: 'no se prueba que gane a una ubicación elegida en Data location',
     how: 'La instancia se lanza con EMAILOPS_DATA_DIR apuntando a un directorio temporal nuevo; comprueba que la base de datos se creó ahí.',
   }, async ({ doc }) => {
     doc.match(/EMAILOPS_DATA_DIR/);

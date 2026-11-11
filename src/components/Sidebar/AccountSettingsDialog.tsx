@@ -2,9 +2,10 @@ import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { ACCOUNT_COLORS, accountColorSwatchClass } from '@/lib/colors';
 import { errorText } from '@/lib/errors';
 import { useOverlay } from '@/stores/overlayStore';
-import type { Account } from '@/types';
+import type { Account, AccountColor } from '@/types';
 
 // Microsoft has no per-app revocation, so removing an Outlook account cannot
 // revoke EmailOps' access the way Google's endpoint does. These are the pages
@@ -106,6 +107,7 @@ export function AccountSettingsDialog({
   // without a display name stores its address there, which means "no name".
   const initialSenderName = account.name.trim().toLowerCase() === account.email.toLowerCase() ? '' : account.name;
   const [senderName, setSenderName] = useState(initialSenderName);
+  const [color, setColor] = useState<AccountColor>(account.color);
 
   const [syncEnabled, setSyncEnabled] = useState(account.enabled);
   const [isTogglingEnabled, setIsTogglingEnabled] = useState(false);
@@ -288,6 +290,9 @@ export function AccountSettingsDialog({
       if (senderName.trim() !== initialSenderName.trim()) {
         await api.updateAccountName(account.id, senderName);
       }
+      if (color !== account.color) {
+        await api.setAccountColor(account.id, color);
+      }
       await api.updateAccountSyncFrom(account.id, syncFromTimestamp);
       onSaved();
     } catch (e) {
@@ -310,15 +315,17 @@ export function AccountSettingsDialog({
     smtpPort,
     senderName,
     initialSenderName,
+    color,
+    account.color,
     syncFromTimestamp,
     onSaved,
   ]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-[#1f1f20] shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="border-b border-gray-700 px-6 py-4 flex-shrink-0">
-          <h2 className="text-lg font-semibold text-gray-100">{t('modal:accountSettings.modalTitle')}</h2>
+      <div className="theme-chrome w-full max-w-lg rounded-xl bg-white shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="border-b border-gray-200 px-6 py-4 flex-shrink-0">
+          <h2 className="text-lg font-semibold text-gray-900">{t('modal:accountSettings.modalTitle')}</h2>
           <p className="mt-0.5 text-sm text-gray-500">{account.email}</p>
         </div>
 
@@ -327,7 +334,7 @@ export function AccountSettingsDialog({
             failed Save & Sync looked like a silent no-op unless the user
             happened to scroll all the way down. */}
         {error && (
-          <div className="mx-6 mt-4 flex-shrink-0 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-300">
+          <div className="mx-6 mt-4 flex-shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
@@ -338,7 +345,7 @@ export function AccountSettingsDialog({
           ) : (
             <>
               <section>
-                <label className="block text-sm font-semibold text-gray-100 mb-1" htmlFor="account-sender-name">
+                <label className="block text-sm font-semibold text-gray-900 mb-1" htmlFor="account-sender-name">
                   {t('modal:accountSettings.senderNameHeading')}
                 </label>
                 <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.senderNameHint')}</p>
@@ -349,13 +356,34 @@ export function AccountSettingsDialog({
                   value={senderName}
                   onChange={(e) => setSenderName(e.target.value)}
                   placeholder={t('modal:accountSettings.senderNamePlaceholder')}
-                  className="w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                 />
               </section>
 
               <section>
-                <h3 className="text-sm font-semibold text-gray-100 mb-3">{t('modal:accountSettings.syncHeading')}</h3>
-                <div className="flex items-start gap-3 rounded-lg border border-gray-700 p-3">
+                <h3 className="text-sm font-semibold text-gray-900 mb-1">{t('modal:accountSettings.colorHeading')}</h3>
+                <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.colorHint')}</p>
+                <div role="radiogroup" aria-label={t('modal:accountSettings.colorHeading')} className="flex gap-2">
+                  {ACCOUNT_COLORS.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={color === option}
+                      aria-label={t(`modal:accountSettings.colors.${option}` as const)}
+                      title={t(`modal:accountSettings.colors.${option}` as const)}
+                      onClick={() => setColor(option)}
+                      className={`w-6 h-6 rounded-full ${accountColorSwatchClass(option)} ${
+                        color === option ? 'ring-2 ring-offset-2 ring-gray-500' : 'hover:opacity-80'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">{t('modal:accountSettings.syncHeading')}</h3>
+                <div className="flex items-start gap-3 rounded-lg border border-gray-200 p-3">
                   <button
                     type="button"
                     role="switch"
@@ -363,7 +391,7 @@ export function AccountSettingsDialog({
                     onClick={handleToggleEnabled}
                     disabled={isTogglingEnabled}
                     className={`relative mt-0.5 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 ${
-                      syncEnabled ? 'bg-primary-600' : 'bg-gray-600'
+                      syncEnabled ? 'bg-primary-600' : 'bg-gray-200'
                     }`}
                   >
                     <span
@@ -373,7 +401,7 @@ export function AccountSettingsDialog({
                     />
                   </button>
                   <div>
-                    <div className="text-sm font-medium text-gray-100">
+                    <div className="text-sm font-medium text-gray-900">
                       {syncEnabled ? 'Syncing enabled' : 'Sync paused'}
                     </div>
                     <div className="text-xs text-gray-500">
@@ -387,7 +415,7 @@ export function AccountSettingsDialog({
 
               {isGmail && (
                 <section>
-                  <h3 className="text-sm font-semibold text-gray-100 mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-3">
                     {t('modal:accountSettings.categoriesHeading')}
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.categoriesHint')}</p>
@@ -395,16 +423,16 @@ export function AccountSettingsDialog({
                     {GMAIL_CATEGORIES.map((cat) => (
                       <label
                         key={cat.id}
-                        className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-700 p-3 hover:border-gray-500 transition-colors"
+                        className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-200 p-3 hover:border-gray-300 transition-colors"
                       >
                         <input
                           type="checkbox"
                           checked={selectedCategories.has(cat.id)}
                           onChange={() => toggleCategory(cat.id)}
-                          className="mt-0.5 h-4 w-4 rounded border-gray-700 text-primary-600 focus:ring-primary-500"
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                         />
                         <div>
-                          <div className="text-sm font-medium text-gray-100">{cat.label}</div>
+                          <div className="text-sm font-medium text-gray-900">{cat.label}</div>
                           <div className="text-xs text-gray-500">{cat.description}</div>
                         </div>
                       </label>
@@ -415,7 +443,7 @@ export function AccountSettingsDialog({
 
               {isGmail && (
                 <section>
-                  <h3 className="text-sm font-semibold text-gray-100 mb-1">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">
                     {t('modal:accountSettings.autoDownloadHeading')}
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">
@@ -427,22 +455,22 @@ export function AccountSettingsDialog({
                     {GMAIL_CATEGORIES.filter((cat) => selectedCategories.has(cat.id)).map((cat) => (
                       <label
                         key={cat.id}
-                        className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-700 p-3 hover:border-gray-500 transition-colors"
+                        className="flex items-start gap-3 cursor-pointer rounded-lg border border-gray-200 p-3 hover:border-gray-300 transition-colors"
                       >
                         <input
                           type="checkbox"
                           checked={autoDownloadCategories.has(cat.id)}
                           onChange={() => toggleAutoDownload(cat.id)}
-                          className="mt-0.5 h-4 w-4 rounded border-gray-700 text-primary-600 focus:ring-primary-500"
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                         />
                         <div>
-                          <div className="text-sm font-medium text-gray-100">{cat.label}</div>
+                          <div className="text-sm font-medium text-gray-900">{cat.label}</div>
                           <div className="text-xs text-gray-500">{cat.description}</div>
                         </div>
                       </label>
                     ))}
                     {selectedCategories.size === 0 && (
-                      <p className="text-xs text-gray-400">{t('modal:accountSettings.autoDownloadEmptyCategories')}</p>
+                      <p className="text-xs text-gray-500">{t('modal:accountSettings.autoDownloadEmptyCategories')}</p>
                     )}
                   </div>
                 </section>
@@ -450,17 +478,17 @@ export function AccountSettingsDialog({
 
               {isImap && (
                 <section>
-                  <h3 className="text-sm font-semibold text-gray-100 mb-1">{t('modal:accountSettings.imapHeading')}</h3>
+                  <h3 className="text-sm font-semibold text-gray-900 mb-1">{t('modal:accountSettings.imapHeading')}</h3>
                   <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.imapHint')}</p>
                   {imapLoadError && (
-                    <div className="mb-3 rounded-lg border border-red-800 bg-red-900/20 px-3 py-2 text-sm text-red-300">
+                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                       {imapLoadError}
                     </div>
                   )}
                   <div className="space-y-3">
                     <div className="grid grid-cols-[1fr_6rem] gap-3">
                       <div>
-                        <label className="block text-xs font-medium text-gray-300" htmlFor="imap-host">
+                        <label className="block text-xs font-medium text-gray-700" htmlFor="imap-host">
                           {t('modal:accountSettings.imapServer')}
                         </label>
                         <input
@@ -472,11 +500,11 @@ export function AccountSettingsDialog({
                             markImapDirty();
                           }}
                           placeholder={'imap.example.com'} // i18n-ignore: example hostname, not user-facing copy
-                          className="mt-1 w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                          className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-300" htmlFor="imap-port">
+                        <label className="block text-xs font-medium text-gray-700" htmlFor="imap-port">
                           Port
                         </label>
                         <input
@@ -489,13 +517,13 @@ export function AccountSettingsDialog({
                             setImapPort(Number(e.target.value) || 0);
                             markImapDirty();
                           }}
-                          className="mt-1 w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                          className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                         />
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-gray-300" htmlFor="imap-username">
+                      <label className="block text-xs font-medium text-gray-700" htmlFor="imap-username">
                         Username
                       </label>
                       <input
@@ -507,12 +535,12 @@ export function AccountSettingsDialog({
                           setImapUsername(e.target.value);
                           markImapDirty();
                         }}
-                        className="mt-1 w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                        className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-medium text-gray-300" htmlFor="imap-password">
+                      <label className="block text-xs font-medium text-gray-700" htmlFor="imap-password">
                         Password
                       </label>
                       <div className="mt-1 flex gap-2">
@@ -526,12 +554,12 @@ export function AccountSettingsDialog({
                             setImapPassword(e.target.value);
                             markImapDirty();
                           }}
-                          className="flex-1 rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                          className="flex-1 rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                         />
                         <button
                           type="button"
                           onClick={() => setShowImapPassword((s) => !s)}
-                          className="rounded-lg border border-gray-700 px-3 text-xs text-gray-400 hover:bg-gray-800"
+                          className="rounded-lg border border-gray-200 px-3 text-xs text-gray-500 hover:bg-gray-100"
                         >
                           {showImapPassword ? 'Hide' : 'Show'}
                         </button>
@@ -540,7 +568,7 @@ export function AccountSettingsDialog({
 
                     <div className="grid grid-cols-[1fr_6rem] gap-3">
                       <div>
-                        <label className="block text-xs font-medium text-gray-300" htmlFor="smtp-host">
+                        <label className="block text-xs font-medium text-gray-700" htmlFor="smtp-host">
                           {t('modal:accountSettings.smtpServer')}
                         </label>
                         <input
@@ -552,11 +580,11 @@ export function AccountSettingsDialog({
                             markImapDirty();
                           }}
                           placeholder={'smtp.example.com'} // i18n-ignore: example hostname, not user-facing copy
-                          className="mt-1 w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                          className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-300" htmlFor="smtp-port">
+                        <label className="block text-xs font-medium text-gray-700" htmlFor="smtp-port">
                           Port
                         </label>
                         <input
@@ -569,7 +597,7 @@ export function AccountSettingsDialog({
                             setSmtpPort(Number(e.target.value) || 0);
                             markImapDirty();
                           }}
-                          className="mt-1 w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40"
+                          className="mt-1 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                         />
                       </div>
                     </div>
@@ -579,19 +607,19 @@ export function AccountSettingsDialog({
                         type="button"
                         onClick={handleTestImap}
                         disabled={imapTesting || !imapHost || !imapUsername || !imapPassword || !smtpHost}
-                        className="rounded-lg border border-gray-700 px-3 py-2 text-xs font-medium text-gray-300 hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {imapTesting ? 'Testing...' : 'Test connection'}
                       </button>
-                      {imapTestStatus === 'ok' && <span className="text-xs text-green-400">{imapTestMessage}</span>}
-                      {imapTestStatus === 'fail' && <span className="text-xs text-red-300">{imapTestMessage}</span>}
+                      {imapTestStatus === 'ok' && <span className="text-xs text-green-600">{imapTestMessage}</span>}
+                      {imapTestStatus === 'fail' && <span className="text-xs text-red-700">{imapTestMessage}</span>}
                     </div>
                   </div>
                 </section>
               )}
 
               <section>
-                <h3 className="text-sm font-semibold text-gray-100 mb-3">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">
                   {t('modal:accountSettings.syncPeriodHeading')}
                 </h3>
                 <p className="text-xs text-gray-500 mb-3">{t('modal:accountSettings.syncPeriodHint')}</p>
@@ -600,9 +628,7 @@ export function AccountSettingsDialog({
                     <label
                       key={opt.id}
                       className={`block cursor-pointer rounded-lg border p-3 transition-colors ${
-                        preset === opt.id
-                          ? 'border-primary-500 bg-primary-900/20'
-                          : 'border-gray-700 hover:border-gray-500'
+                        preset === opt.id ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
                       }`}
                     >
                       <div className="flex items-start gap-3">
@@ -612,10 +638,10 @@ export function AccountSettingsDialog({
                           value={opt.id}
                           checked={preset === opt.id}
                           onChange={() => setPreset(opt.id)}
-                          className="mt-1 h-4 w-4 border-gray-700 text-primary-600 focus:ring-primary-500"
+                          className="mt-1 h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500"
                         />
                         <div>
-                          <div className="text-sm font-medium text-gray-100">{opt.label}</div>
+                          <div className="text-sm font-medium text-gray-900">{opt.label}</div>
                           <div className="text-xs text-gray-500">{opt.description}</div>
                         </div>
                       </div>
@@ -624,8 +650,8 @@ export function AccountSettingsDialog({
                 </div>
 
                 {preset === 'custom' && (
-                  <div className="mt-2 rounded-lg border border-gray-700 bg-[#27272a] p-3">
-                    <label className="block text-sm font-medium text-gray-300" htmlFor="sync-from-date">
+                  <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <label className="block text-sm font-medium text-gray-700" htmlFor="sync-from-date">
                       {t('modal:accountSettings.syncSince')}
                     </label>
                     <input
@@ -634,29 +660,29 @@ export function AccountSettingsDialog({
                       value={customDate}
                       max={formatDate(new Date())}
                       onChange={(e) => setCustomDate(e.target.value)}
-                      className="mt-2 w-full rounded-lg border border-gray-700 bg-[#27272a] text-gray-100 placeholder:text-gray-500 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-900/40 [color-scheme:dark]"
+                      className="mt-2 w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-3 py-2 text-sm outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
                     />
-                    {isCustomInvalid && <p className="mt-2 text-xs text-red-400">Pick a valid date to continue.</p>}
+                    {isCustomInvalid && <p className="mt-2 text-xs text-red-600">Pick a valid date to continue.</p>}
                   </div>
                 )}
               </section>
 
-              <section className="border-t border-red-900/40 pt-5">
-                <h3 className="text-sm font-semibold text-red-300 mb-3">{t('modal:accountSettings.dangerHeading')}</h3>
+              <section className="border-t border-red-200 pt-5">
+                <h3 className="text-sm font-semibold text-red-700 mb-3">{t('modal:accountSettings.dangerHeading')}</h3>
                 {!showDeleteConfirm ? (
                   <button
                     type="button"
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="rounded-lg border border-red-800 px-3 py-2 text-sm font-medium text-red-300 hover:bg-red-900/20 transition-colors"
+                    className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
                   >
                     {t('modal:accountSettings.deleteAccount')}
                   </button>
                 ) : (
-                  <div className="rounded-lg border border-red-800 bg-red-900/20 p-4 space-y-3">
-                    <p className="text-sm font-medium text-red-200">{t('modal:accountSettings.dangerWarning')}</p>
-                    <p className="text-xs text-red-300">{t('modal:accountSettings.deleteWarning')}</p>
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3">
+                    <p className="text-sm font-medium text-red-800">{t('modal:accountSettings.dangerWarning')}</p>
+                    <p className="text-xs text-red-700">{t('modal:accountSettings.deleteWarning')}</p>
                     {account.provider === 'outlook' && (
-                      <div className="text-xs text-red-300 space-y-1">
+                      <div className="text-xs text-red-700 space-y-1">
                         <p>{t('modal:accountSettings.microsoftRevokeNotice')}</p>
                         <ul className="list-disc pl-4">
                           <li>
@@ -682,7 +708,7 @@ export function AccountSettingsDialog({
                         </ul>
                       </div>
                     )}
-                    <p className="font-mono text-xs text-red-400 bg-red-900/30 rounded px-2 py-1 select-all">
+                    <p className="font-mono text-xs text-red-600 bg-red-100 rounded px-2 py-1 select-all">
                       {account.email}
                     </p>
                     <input
@@ -690,9 +716,9 @@ export function AccountSettingsDialog({
                       value={deleteConfirmEmail}
                       onChange={(e) => setDeleteConfirmEmail(e.target.value)}
                       placeholder={account.email}
-                      className="w-full rounded-lg border border-red-800 bg-red-900/10 text-gray-100 placeholder:text-red-400/60 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-900/40"
+                      className="w-full rounded-lg border border-red-200 bg-white text-gray-900 placeholder:text-red-400/60 px-3 py-2 text-sm outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
                     />
-                    {deleteError && <p className="text-xs text-red-300">{deleteError}</p>}
+                    {deleteError && <p className="text-xs text-red-700">{deleteError}</p>}
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -702,7 +728,7 @@ export function AccountSettingsDialog({
                           setDeleteError(null);
                         }}
                         disabled={isDeleting}
-                        className="rounded-lg border border-gray-700 px-3 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -722,12 +748,12 @@ export function AccountSettingsDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-gray-700 px-6 py-4 flex-shrink-0">
+        <div className="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 flex-shrink-0">
           <button
             type="button"
             onClick={onClose}
             disabled={isSaving || isDeleting}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-400 hover:bg-gray-800 disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
           >
             Cancel
           </button>

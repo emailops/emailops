@@ -23,7 +23,8 @@ interface OtherAccountContextNoticeProps {
  */
 export function OtherAccountContextNotice({ context, onSwitchAccount }: OtherAccountContextNoticeProps) {
   const { t } = useTranslation('chat');
-  const ownerEmail = useAccountStore((s) => s.accounts.find((a) => a.id === context.accountId)?.email);
+  const accounts = useAccountStore((s) => s.accounts);
+  const ownerEmail = accounts.find((a) => a.id === context.accountId)?.email;
 
   // The account was removed or disabled under us — switching would go nowhere,
   // and a chip naming an account that no longer exists is worse than silence.
@@ -35,7 +36,7 @@ export function OtherAccountContextNotice({ context, onSwitchAccount }: OtherAcc
       title={t('panel.context.otherAccount.hint')}
     >
       <span
-        className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${accountColorClass(context.accountId)}`}
+        className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${accountColorClass(accounts, context.accountId)}`}
         aria-hidden="true"
       />
       <span className="truncate">{t('panel.context.otherAccount.label', { email: ownerEmail })}</span>

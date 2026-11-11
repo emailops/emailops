@@ -4,7 +4,6 @@
   "emptyHint": "Les nouveaux messages apparaîtront ici à la synchronisation.",
   "loading": "Chargement des courriels…",
   "loadingMore": "Chargement…",
-  "loadMore": "Charger plus",
   "noMore": "À jour",
   "syncing": "Synchronisation…",
   "syncProgress": "Synchronisation {{current}} sur {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "1 nouveau courriel téléchargé",
   "loadingEmails": "Chargement des courriels...",
   "loadingMoreEmails": "Chargement…",
-  "noMoreEmails": "Plus aucun courriel",
+  "noMoreEmails": "Plus aucun courriel téléchargé",
+  "noMoreEmailsSyncing": "Plus aucun courriel téléchargé pour l'instant. La synchronisation peut en apporter d'autres.",
   "loadingThread": "Chargement du fil...",
   "loadingEmail": "Chargement du courriel…",
   "categoriesAria": "Catégories de courriels",
@@ -23,6 +23,15 @@
     "all": "Tous",
     "unread": "Non lus",
     "empty": "Aucun e-mail non lu"
+  },
+  "emptyState": {
+    "syncing": "Synchronisation des courriels...",
+    "noSearchResults": "Aucun courriel ne correspond à votre recherche",
+    "noFilterResults": "Aucun courriel ne correspond aux filtres sélectionnés",
+    "noEmails": "Aucun courriel pour l'instant — essayez de synchroniser ou d'ajouter un compte",
+    "showAll": "Afficher tous les courriels",
+    "showAllCategories": "Afficher toutes les catégories",
+    "syncNow": "Synchroniser maintenant"
   },
   "noEmailSelected": "Aucun courriel sélectionné",
   "selectEmailHint": "Sélectionnez un courriel dans la liste pour l'afficher ici.",
@@ -75,7 +84,12 @@
     "unstar": "Retirer des favoris",
     "archive": "Archiver",
     "moveArchivedToInbox": "Déplacer vers la boîte de réception",
-    "hideFromFilters": "Masquer des filtres intelligents"
+    "hideFromFilters": "Masquer des filtres intelligents",
+    "toSelf": "vous",
+    "noRecipients": "À : (aucun destinataire)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "et {{count}} de plus",
+    "addRecipientFilter": "Ajouter le destinataire comme filtre intelligent"
   },
   "header": {
     "totalCount": "{{count}} courriels",
@@ -124,7 +138,14 @@
     "unstar": "Retirer des favoris",
     "archive": "Archiver",
     "moveToInbox": "Déplacer vers la boîte de réception",
-    "notSpam": "Pas un spam — déplacer vers la boîte de réception"
+    "notSpam": "Pas un spam — déplacer vers la boîte de réception",
+    "noPreview": "(Aucun aperçu)",
+    "toLine": "À : {{recipients}}",
+    "ccLine": "Cc : {{recipients}}",
+    "backLabel": "Retour",
+    "messageCount_one": "{{count}} message",
+    "messageCount_other": "{{count}} messages",
+    "messageCount_many": "{{count}} messages"
   },
   "compose": {
     "open": "Nouveau message",
@@ -140,6 +161,15 @@
     "suggestedSection": "Suggérés",
     "noFilters": "Pas encore de filtres intelligents — ils apparaîtront au fil du temps."
   },
+  "list": {
+    "firstPageFailed": "Impossible de charger la liste.",
+    "pageFailed": "Impossible de charger d'autres courriels."
+  },
+  "searchPanel": {
+    "firstResults": "{{count}} premiers résultats",
+    "results_one": "{{count}} résultat",
+    "results_other": "{{count}} résultats"
+  },
   "searchBox": {
     "inlinePlaceholder": "Rechercher… ({{operators}})",
     "fullPlaceholder": "Rechercher des courriels… ({{operators}})",
@@ -149,11 +179,14 @@
     "title": "Conseils de recherche",
     "senderHint": "nom/adresse de l'expéditeur",
     "recipientHint": "nom/adresse du destinataire",
+    "ccHint": "nom/adresse en copie",
     "subjectHint": "texte de l'objet",
+    "attachmentHint": "avec pièces jointes (-has:attachment : sans)",
     "unreadHint": "courriels non lus",
     "afterHint": "AAAA-MM-JJ",
     "beforeHint": "AAAA-MM-JJ",
-    "tagHint": "étiquette de classification"
+    "tagHint": "étiquette de classification",
+    "booleanHint": "expression exacte, l'un ou l'autre mot, sans un mot, regrouper"
   },
   "translation": {
     "detectedLabel": "Cet e-mail est en {{language}}",
@@ -164,6 +197,11 @@
     "aiTranslation": "Traduction IA · {{language}}",
     "truncatedNotice": "L'e-mail était trop long : seul le début a été traduit.",
     "failed": "Échec de la traduction : {{error}}"
+  },
+  "aiMarkup": {
+    "title": "Ce message contient des instructions destinées à votre assistant IA",
+    "detail": "Quelqu'un l'a écrit pour manipuler l'assistant. EmailOps le traite comme du contenu, jamais comme votre demande.",
+    "checkFailed": "Impossible de vérifier si le message contient des instructions pour l'assistant"
   },
   "junk": {
     "kind": {
@@ -185,7 +223,9 @@
       "credential_solicitation": "Vous demande de ressaisir votre mot de passe ou vos informations de compte",
       "display_name_contains_address": "Le nom de l'expéditeur est écrit pour ressembler à une autre adresse",
       "server_spam_flag": "Votre serveur de messagerie a marqué ce message comme spam",
-      "mixed_script_display_name": "Le nom de l'expéditeur mélange des alphabets pour se déguiser"
+      "mixed_script_display_name": "Le nom de l'expéditeur mélange des alphabets pour se déguiser",
+      "ai_control_markup": "Contient du texte adressé à un assistant IA",
+      "markdown_remote_image": "Intègre une image distante qu'un chat IA chargerait"
     },
     "isJunkHint": "Le classe aussi dans le dossier Indésirables du serveur pour que son filtre apprenne",
     "confirmedAndFiled": "Confirmé comme indésirable et classé dans le dossier du serveur",

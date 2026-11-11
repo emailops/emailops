@@ -1,5 +1,5 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
@@ -11,6 +11,7 @@ import {
   linkifySegments,
   visibleAttendees,
 } from '@/lib/calendarEvent';
+import { eventBounds } from '@/lib/calendarGrid';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
@@ -32,9 +33,15 @@ export function htmlToPlainText(html: string): string {
 interface EventDetailDialogProps {
   event: CalendarEvent;
   accountId: string;
-  /** Provider of the calendar account ('gmail' | 'outlook'). Drives the
-   *  delete-confirm notify affordances. */
+  /** The event's account address, shown in "All accounts" where one grid
+   *  mixes accounts; omitted for a single-account calendar. */
+  accountEmail?: string;
+  /** Provider of the calendar account ('gmail' | 'outlook' | 'imap'). Drives
+   *  the delete-confirm notify affordances. */
   provider: string;
+  /** The event's calendar is a subscribed feed (or another read-only
+   *  calendar): no delete action — the backend would refuse it. */
+  readOnly?: boolean;
   onClose: () => void;
   /** Deleted on the provider — parent removes the affected occurrence(s)
    *  from all views and closes. For recurring instances `scope` widens what
@@ -49,15 +56,28 @@ interface EventDetailDialogProps {
 export function EventDetailDialog({
   event,
   accountId,
+  accountEmail,
   provider,
+  readOnly = false,
   onClose,
   onDeleted,
   onAuthError,
 }: EventDetailDialogProps) {
-  useOverlay();
+  const isTopOverlay = useOverlay();
   const { t } = useTranslation(['calendar', 'common']);
   const { date, time, dateTime } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
+
+  // On the document, as the app-wide handler on the window consumes the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || !isTopOverlay()) return;
+      e.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, isTopOverlay]);
 
   const joinUrl = event.meetingLink ? getSafeExternalUrl(event.meetingLink) : null;
   const htmlLinkUrl = event.htmlLink ? getSafeExternalUrl(event.htmlLink) : null;
@@ -116,7 +136,7 @@ export function EventDetailDialog({
 
   const sameDay = new Date(event.startTime * 1000).toDateString() === new Date(event.endTime * 1000).toDateString();
   const timeRange = event.isAllDay
-    ? `${date(event.startTime)} · ${t('calendar:allDay')}`
+    ? `${date(eventBounds(event).start)} · ${t('calendar:allDay')}`
     : sameDay
       ? `${date(event.startTime)} · ${time(event.startTime)} – ${time(event.endTime)}`
       : `${dateTime(event.startTime)} – ${dateTime(event.endTime)}`;
@@ -192,6 +212,11 @@ export function EventDetailDialog({
         )}
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
+          {accountEmail && (
+            <DetailRow label={t('calendar:detail.account')}>
+              <span className="text-gray-800 break-all">{accountEmail}</span>
+            </DetailRow>
+          )}
           {event.location && (
             <DetailRow label={t('calendar:detail.location')}>
               <span className="text-gray-800 break-words">{event.location}</span>
@@ -255,107 +280,110 @@ export function EventDetailDialog({
           )}
         </div>
 
-        {/* Footer — delete action with inline confirm (never a browser confirm). */}
-        <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3">
-          {!confirmingDelete ? (
-            <div className="flex justify-end">
-              <button
-                onClick={() => setConfirmingDelete(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                  />
-                </svg>
-                {t('calendar:detail.delete')}
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-gray-900">{t('calendar:detail.deleteConfirmTitle')}</p>
-              {isRecurringInstance && (
-                <div className="space-y-1.5" role="radiogroup" aria-label={t('calendar:detail.deleteConfirmTitle')}>
-                  {(['instance', 'following', 'all'] as const).map((scope) => (
-                    <label key={scope} className="flex items-center gap-2 text-sm text-gray-700">
-                      <input
-                        type="radio"
-                        name="event-delete-scope"
-                        value={scope}
-                        checked={deleteScope === scope}
-                        onChange={() => setDeleteScope(scope)}
-                        className="border-gray-300 text-primary-600 focus:ring-primary-500"
-                      />
-                      {t(`calendar:detail.deleteScope.${scope}` as const)}
-                      {scope === 'all' && (
-                        <span className="text-xs text-gray-400">{t('calendar:detail.deleteScope.allHint')}</span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-              )}
-              {hasOtherAttendees && (
-                <>
-                  <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={notifyAttendees}
-                      onChange={(e) => setNotifyAttendees(e.target.checked)}
-                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+        {/* Footer — delete action with inline confirm (never a browser confirm).
+            Absent for read-only calendars (subscribed feeds). */}
+        {!readOnly && (
+          <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3">
+            {!confirmingDelete ? (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                     />
-                    {t('calendar:detail.notifyAttendees')}
-                  </label>
-                  {notifyAttendees && provider === 'outlook' && (
-                    <div>
-                      <label
-                        htmlFor="event-cancel-message"
-                        className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
-                      >
-                        {t('calendar:detail.cancellationMessage')}
-                      </label>
-                      <textarea
-                        id="event-cancel-message"
-                        rows={2}
-                        value={cancelMessage}
-                        onChange={(e) => setCancelMessage(e.target.value)}
-                        placeholder={t('calendar:detail.cancellationMessagePlaceholder')}
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y"
-                      />
-                    </div>
-                  )}
-                  {notifyAttendees && provider === 'gmail' && (
-                    <p className="text-xs text-gray-500">{t('calendar:detail.googleCancellationHint')}</p>
-                  )}
-                </>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setConfirmingDelete(false)}
-                  disabled={isDeleting}
-                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  {t('common:actions.cancel')}
-                </button>
-                <button
-                  onClick={() => void handleDelete()}
-                  disabled={isDeleting}
-                  className="px-4 py-1.5 text-sm rounded-md bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                >
-                  {isDeleting && (
-                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                    </svg>
-                  )}
-                  {isDeleting ? t('calendar:detail.deleting') : t('calendar:detail.deleteButton')}
+                  </svg>
+                  {t('calendar:detail.delete')}
                 </button>
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-gray-900">{t('calendar:detail.deleteConfirmTitle')}</p>
+                {isRecurringInstance && (
+                  <div className="space-y-1.5" role="radiogroup" aria-label={t('calendar:detail.deleteConfirmTitle')}>
+                    {(['instance', 'following', 'all'] as const).map((scope) => (
+                      <label key={scope} className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="radio"
+                          name="event-delete-scope"
+                          value={scope}
+                          checked={deleteScope === scope}
+                          onChange={() => setDeleteScope(scope)}
+                          className="border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        {t(`calendar:detail.deleteScope.${scope}` as const)}
+                        {scope === 'all' && (
+                          <span className="text-xs text-gray-400">{t('calendar:detail.deleteScope.allHint')}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {hasOtherAttendees && (
+                  <>
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={notifyAttendees}
+                        onChange={(e) => setNotifyAttendees(e.target.checked)}
+                        className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      {t('calendar:detail.notifyAttendees')}
+                    </label>
+                    {notifyAttendees && provider === 'outlook' && (
+                      <div>
+                        <label
+                          htmlFor="event-cancel-message"
+                          className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1"
+                        >
+                          {t('calendar:detail.cancellationMessage')}
+                        </label>
+                        <textarea
+                          id="event-cancel-message"
+                          rows={2}
+                          value={cancelMessage}
+                          onChange={(e) => setCancelMessage(e.target.value)}
+                          placeholder={t('calendar:detail.cancellationMessagePlaceholder')}
+                          className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-primary-500 resize-y"
+                        />
+                      </div>
+                    )}
+                    {notifyAttendees && provider === 'gmail' && (
+                      <p className="text-xs text-gray-500">{t('calendar:detail.googleCancellationHint')}</p>
+                    )}
+                  </>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setConfirmingDelete(false)}
+                    disabled={isDeleting}
+                    className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    {t('common:actions.cancel')}
+                  </button>
+                  <button
+                    onClick={() => void handleDelete()}
+                    disabled={isDeleting}
+                    className="px-4 py-1.5 text-sm rounded-md bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {isDeleting && (
+                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                      </svg>
+                    )}
+                    {isDeleting ? t('calendar:detail.deleting') : t('calendar:detail.deleteButton')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

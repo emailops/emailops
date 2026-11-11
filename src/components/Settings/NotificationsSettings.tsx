@@ -46,7 +46,7 @@ function Switch({ label, checked, disabled, onChange }: SwitchProps) {
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-        checked ? 'bg-primary-600' : 'bg-neutral-600'
+        checked ? 'bg-primary-600' : 'bg-gray-300'
       }`}
     >
       <span
@@ -125,17 +125,17 @@ export function NotificationsSettings({ accounts }: { accounts: Account[] }) {
     <SettingsPanel
       header={
         error && (
-          <div className="flex-shrink-0 mx-6 mt-4 border border-red-800 bg-red-950 text-red-200 text-sm rounded p-3">
+          <div className="flex-shrink-0 mx-6 mt-4 border border-red-200 bg-red-50 text-red-800 text-sm rounded p-3">
             {error}
           </div>
         )
       }
     >
-      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+      <section className="rounded-lg border border-gray-200 bg-white px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <span className="text-sm font-medium text-gray-100">{t('notifications.enabledLabel')}</span>
-            <p className="text-xs text-gray-400 mt-1">{t('notifications.enabledDesc')}</p>
+            <span className="text-sm font-medium text-gray-900">{t('notifications.enabledLabel')}</span>
+            <p className="text-xs text-gray-500 mt-1">{t('notifications.enabledDesc')}</p>
           </div>
           <Switch
             label={t('notifications.enabledLabel')}
@@ -147,18 +147,18 @@ export function NotificationsSettings({ accounts }: { accounts: Account[] }) {
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('notifications.accountsLabel')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('notifications.accountsLabel')}</h3>
         <p className="text-xs text-gray-500 mb-2">{t('notifications.accountsDesc')}</p>
         {accounts.length === 0 ? (
-          <p className="text-xs text-gray-400">{t('notifications.noAccounts')}</p>
+          <p className="text-xs text-gray-500">{t('notifications.noAccounts')}</p>
         ) : (
-          <div className="rounded-lg border border-gray-700 bg-[#1f1f20] divide-y divide-gray-700">
+          <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-200">
             {accounts.map((account) => {
               const on = prefs.accounts[account.id] ?? true;
               return (
                 <div key={account.id} className="flex items-center justify-between gap-4 px-4 py-3">
                   <div className="min-w-0">
-                    <span className="text-sm text-gray-100 block truncate">{account.email}</span>
+                    <span className="text-sm text-gray-900 block truncate">{account.email}</span>
                     <span className="text-xs text-gray-500">{mailProviderName(account.provider)}</span>
                   </div>
                   <Switch
@@ -181,7 +181,7 @@ export function NotificationsSettings({ accounts }: { accounts: Account[] }) {
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('notifications.contentLabel')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('notifications.contentLabel')}</h3>
         <p className="text-xs text-gray-500 mb-2">{t('notifications.contentDesc')}</p>
         <div className="space-y-2">
           {contentOptions.map((option) => (
@@ -193,22 +193,22 @@ export function NotificationsSettings({ accounts }: { accounts: Account[] }) {
                 checked={prefs.content === option.value}
                 disabled={!isLoaded || masterOff}
                 onChange={() => save({ ...prefs, content: option.value }, PREF_CONTENT, option.value)}
-                className="mt-0.5 border-gray-600 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
+                className="mt-0.5 border-gray-300 bg-transparent text-primary-600 focus:ring-primary-600 focus:ring-offset-0"
               />
               <span className="min-w-0">
-                <span className="text-sm text-gray-100 block">{option.label}</span>
-                <span className="text-xs text-gray-400">{option.desc}</span>
+                <span className="text-sm text-gray-900 block">{option.label}</span>
+                <span className="text-xs text-gray-500">{option.desc}</span>
               </span>
             </label>
           ))}
         </div>
       </section>
 
-      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
+      <section className="rounded-lg border border-gray-200 bg-white px-4 py-3">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <span className="text-sm font-medium text-gray-100">{t('notifications.onlyUnfocusedLabel')}</span>
-            <p className="text-xs text-gray-400 mt-1">{t('notifications.onlyUnfocusedDesc')}</p>
+            <span className="text-sm font-medium text-gray-900">{t('notifications.onlyUnfocusedLabel')}</span>
+            <p className="text-xs text-gray-500 mt-1">{t('notifications.onlyUnfocusedDesc')}</p>
           </div>
           <Switch
             label={t('notifications.onlyUnfocusedLabel')}

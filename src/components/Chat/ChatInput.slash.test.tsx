@@ -33,6 +33,7 @@ beforeEach(() => {
       { name: 'weekly-digest', description: 'Off.', path: '', enabled: false },
       { name: 'trip-brief', description: 'Trips.', path: '', enabled: true },
     ],
+    bundled: [{ name: 'zero-inbox', description: 'Triage.', enabled: true, shadowed: false }],
     errors: [],
   });
   act(() => useSkillsEnabledStore.setState({ enabled: true }));
@@ -77,6 +78,13 @@ describe('ChatInput slash suggestions', () => {
     expect(options()).toHaveLength(1);
     expect(options()[0]).toContain('/weekly-report');
     expect(options()[0]).toContain('Weekly recap.');
+  });
+
+  it('offers a bundled skill that is switched on', async () => {
+    const textarea = await renderInput();
+    await typeInto(textarea, '/zero');
+    expect(options()).toHaveLength(1);
+    expect(options()[0]).toContain('/zero-inbox');
   });
 
   it('Enter picks the highlighted skill instead of sending', async () => {

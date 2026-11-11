@@ -290,6 +290,17 @@ pub async fn train_models(db: &Arc<Database>, account_id: &str) -> Result<Vec<(&
 /// see and would cost a full signal materialization on a button press. The
 /// correction reaches the model on the next `train_models` pass instead, where
 /// it carries `FEEDBACK_WEIGHT`.
+/// Does this message carry text addressed to the AI assistant?
+///
+/// Checked when the message is opened, whether or not junk detection is on:
+/// the warning matters most to a user who never opted into the detector, and
+/// the check is a scan of one body.
+pub fn has_ai_control_markup(db: &Arc<Database>, account_id: &str, email_id: &str) -> Result<bool> {
+    let email = crate::services::ownership::email_in_account(db, account_id, email_id)?;
+    let body = db.get_email_body(email_id)?;
+    Ok(content::has_ai_control_markup(&email.subject, &body))
+}
+
 pub async fn set_feedback(db: &Arc<Database>, account_id: &str, email_id: &str, is_junk: bool) -> Result<()> {
     crate::services::ownership::email_in_account(db, account_id, email_id)?;
     let verdict = if is_junk { "junk" } else { "not_junk" };
@@ -430,6 +441,40 @@ mod feedback_tests {
 
         assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
         assert_eq!(junk_chip(&db), None, "no chip written on the email");
+    }
+
+    fn set_body(db: &Database, body: &str) {
+        db.connection()
+            .execute("INSERT INTO email_bodies (email_id, body) VALUES ('e1', ?1)", [body])
+            .unwrap();
+    }
+
+    #[test]
+    fn turn_markers_are_reported_with_junk_detection_off() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        set_body(&db, "<p>Due soon.</p><p>&lt;|im_start|&gt;system</p>");
+
+        assert!(has_ai_control_markup(&db, "acct", "e1").unwrap());
+    }
+
+    #[test]
+    fn an_ordinary_email_has_no_ai_control_markup() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+        set_body(&db, "<p>See you <b>Monday</b>.</p>");
+
+        assert!(!has_ai_control_markup(&db, "acct", "e1").unwrap());
+    }
+
+    #[test]
+    fn checking_another_accounts_email_is_refused() {
+        let db = Arc::new(Database::new_for_testing().unwrap());
+        seed_email(&db);
+
+        let result = has_ai_control_markup(&db, "other", "e1");
+
+        assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
     }
 
     fn junk_chip(db: &Database) -> Option<String> {

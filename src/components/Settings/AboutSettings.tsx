@@ -41,9 +41,9 @@ export function AboutSettings() {
   return (
     <SettingsPanel>
       <section>
-        <h3 className="text-base font-semibold text-gray-100">{t('sidebar:appName')}</h3>
+        <h3 className="text-base font-semibold text-gray-900">{t('sidebar:appName')}</h3>
         {version && <p className="text-xs text-gray-500 mt-0.5">{version}</p>}
-        <p className="text-sm text-gray-300 mt-3">{t('settings:about.tagline')}</p>
+        <p className="text-sm text-gray-700 mt-3">{t('settings:about.tagline')}</p>
       </section>
       <section className="flex flex-col items-start gap-2">
         {LINKS.map((link) => (
@@ -51,7 +51,7 @@ export function AboutSettings() {
             key={link.key}
             type="button"
             onClick={() => openLink(link.url)}
-            className="text-sm text-primary-400 hover:text-primary-300 hover:underline"
+            className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
           >
             {t(`settings:about.${link.key}` as const)}
           </button>

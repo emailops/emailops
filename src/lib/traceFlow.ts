@@ -19,7 +19,9 @@ export type FlowKind =
   | 'tool'
   | 'llmRound'
   | 'answer'
-  | 'llmCall';
+  | 'llmCall'
+  /** One part of a long open document, read before the answer. */
+  | 'documentPart';
 
 /** Label ids of the numbers in a step's details section (translated by the panel). */
 export type FlowDetailLabel =
@@ -73,6 +75,9 @@ export function formatCall(name: string, args: unknown): string {
   const cut = inner.length > MAX_CALL_CHARS ? `${inner.slice(0, MAX_CALL_CHARS - 1)}…` : inner;
   return `${name}(${cut})`;
 }
+
+/** Trace kind of one part of a long open document (`open_document::DOCUMENT_PART_CALL`). */
+const DOCUMENT_PART = 'document_part';
 
 const PHASE_BY_KIND: Record<string, FlowPhase> = {
   research_map: 'map',
@@ -129,6 +134,8 @@ export function buildFlow(trace: ChatTrace): FlowStep[] {
     if (phase) totals[phase] = (totals[phase] ?? 0) + 1;
   }
   const seen: Partial<Record<FlowPhase, number>> = {};
+  const documentParts = (trace.llmCalls ?? []).filter((c) => c.kind === DOCUMENT_PART).length;
+  let documentPartsSeen = 0;
   const flow: FlowStep[] = [];
   const base = (step: TraceStep, key: string) => ({
     key,
@@ -243,6 +250,9 @@ export function buildFlow(trace: ChatTrace): FlowStep[] {
             ordinal: { n: seen[phase] ?? 1, total: totals[phase] ?? 1 },
             findings,
           });
+        } else if (call.kind === DOCUMENT_PART) {
+          documentPartsSeen += 1;
+          flow.push({ ...common, kind: 'documentPart', ordinal: { n: documentPartsSeen, total: documentParts } });
         } else if (call.kind === 'tool_round') {
           flow.push({ ...common, kind: 'llmRound', round: call.round });
         } else {

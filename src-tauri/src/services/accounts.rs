@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::{Account, OAuthTokens};
+use crate::models::{Account, AccountColor, OAuthTokens};
 use crate::services::logger;
 use crate::sync::gmail::GmailClient;
 use crate::sync::imap::{ImapClient, ImapCredentials};
@@ -94,6 +94,7 @@ pub async fn add_account(db: &Arc<Database>, provider_name: &str, sync_from_time
         sort_order: 0,
         enabled: true,
         sync_from_timestamp,
+        color: db.next_account_color()?,
     };
 
     persist_oauth_account(db, &account, &tokens)?;
@@ -136,6 +137,18 @@ pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::
         .flatten()
         .map(|a| a.provider == "imap")
         .unwrap_or(false);
+    // Feed rows cascade with the account, their URLs in the vault do not.
+    let feed_ids: Vec<String> = match db.list_calendar_feeds(account_id) {
+        Ok(feeds) => feeds.into_iter().map(|f| f.id).collect(),
+        Err(e) => {
+            logger::log(
+                "error",
+                "account",
+                format!("Could not list the account's calendar feeds: {e}"),
+            );
+            Vec::new()
+        }
+    };
 
     // The DB is the source of truth for whether the account exists, so it goes
     // FIRST and its failure aborts the removal. Tearing credentials down first
@@ -160,6 +173,17 @@ pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::
             "account",
             format!("Account removed, but clearing its stored credentials failed: {e}"),
         );
+    }
+    for feed_id in &feed_ids {
+        if let Err(e) =
+            super::secrets_vault::delete(crate::sync::ics_feed_calendar::CALENDAR_FEED_KEYRING_SERVICE, feed_id)
+        {
+            logger::log(
+                "error",
+                "account",
+                format!("Account removed, but clearing its calendar feed URL from the vault failed: {e}"),
+            );
+        }
     }
 
     // Per-account preferences have no FK to `accounts`, so the cascade above
@@ -219,6 +243,7 @@ fn account_pref_keys(account_id: &str) -> (Vec<String>, Vec<String>) {
         crate::services::emails::state_refresh_last_key(account_id),
         crate::services::emails::history_cursor_key(account_id),
         crate::services::emails::backfill_done_key(account_id),
+        crate::services::emails::draft_attachments_pulled_key(account_id),
         crate::services::dashboard::server_total_pref_key(account_id),
     ];
     let prefixes = vec![
@@ -473,6 +498,16 @@ pub fn update_account_name(db: &Arc<Database>, account_id: &str, name: &str) -> 
 
     db.update_account_name(account_id, &name)?;
     Ok(Account { name, ..account })
+}
+
+/// Recolour `account_id` — the colour that marks it in the sidebar, the
+/// unified inbox and the "All accounts" calendar.
+pub fn set_account_color(db: &Arc<Database>, account_id: &str, color: AccountColor) -> Result<Account> {
+    if !db.set_account_color(account_id, color)? {
+        return Err(AppError::NotFound(format!("Account {} not found", account_id)));
+    }
+    db.get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", account_id)))
 }
 
 /// Whether `account` should take its name from Gmail's "Send mail as" setting:
@@ -974,6 +1009,7 @@ pub async fn add_imap_account(
         sort_order: 0,
         enabled: true,
         sync_from_timestamp,
+        color: db.next_account_color()?,
     };
 
     persist_imap_account(db, &account, &credentials)?;
@@ -1305,6 +1341,26 @@ mod tests {
     }
 
     #[test]
+    fn set_account_color_returns_the_recoloured_account() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        db.insert_account(&imap_account("acc-c", "c@example.com"))
+            .expect("seed account");
+
+        let account = set_account_color(&db, "acc-c", AccountColor::Indigo).expect("recolour");
+
+        assert_eq!(account.color, AccountColor::Indigo);
+    }
+
+    #[test]
+    fn set_account_color_on_an_unknown_account_is_not_found() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+
+        let err = set_account_color(&db, "missing", AccountColor::Indigo).unwrap_err();
+
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[test]
     fn update_account_name_stores_the_trimmed_name() {
         let db = Arc::new(Database::new_for_testing().expect("db"));
         db.insert_account(&imap_account("acc-r", "r@example.com"))
@@ -1441,6 +1497,7 @@ mod tests {
             sort_order: 0,
             enabled: true,
             sync_from_timestamp: None,
+            color: AccountColor::Blue,
         }
     }
 
@@ -1745,6 +1802,31 @@ mod tests {
     // unusable AND undeletable, because every retry hit the same failure. The DB
     // is the source of truth, so it must go first; credential cleanup afterwards
     // can only leak, never block the delete.
+    #[test]
+    fn remove_account_clears_calendar_feed_urls_from_the_vault() {
+        let _seam = seam_test_lock();
+        let _guard = CRED_STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        keychain::install(Arc::new(keychain::InMemoryKeychain::new()));
+        secrets_vault::reset_for_testing();
+        db.seed_test_account_with_provider("acc-feeds", "imap");
+        db.insert_calendar_feed(&crate::models::CalendarFeed {
+            id: "feed-1".into(),
+            account_id: "acc-feeds".into(),
+            label: "Shared".into(),
+            host: "cal.example.com".into(),
+            created_at: 1,
+        })
+        .expect("insert feed");
+        let service = crate::sync::ics_feed_calendar::CALENDAR_FEED_KEYRING_SERVICE;
+        secrets_vault::set(service, "feed-1", "https://cal.example.com/x.ics").expect("vault");
+
+        remove_account(&db, "acc-feeds", std::path::Path::new("/nonexistent")).expect("remove");
+
+        assert_eq!(secrets_vault::get(service, "feed-1").expect("vault"), None);
+        assert!(db.get_account("acc-feeds").expect("get").is_none());
+    }
+
     #[test]
     fn remove_account_deletes_the_account_even_when_keychain_teardown_fails() {
         let _seam = seam_test_lock();

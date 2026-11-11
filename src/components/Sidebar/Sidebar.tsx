@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClockIcon, ScheduledSendIcon, SentIcon } from '@/components/common/MailIcons';
 import { currentPlatform, type Folder, type MailboxView } from '@/lib/api';
+import { accountColorSwatchClass } from '@/lib/colors';
 import { isEmailDrag, planEmailDrop, readEmailDragPayload } from '@/lib/emailDrag';
 import { errorText } from '@/lib/errors';
 import type { FeedbackType } from '@/lib/feedback';
@@ -99,13 +100,17 @@ interface SidebarProps {
   tasksEnabled: boolean;
   memoriesEnabled: boolean;
   lensesEnabled: boolean;
-  /** Experimental skills switch (Settings → Skills); shows the Skills view entry. */
+  /** Skills switch (Settings → Skills); shows the Skills view entry. */
   skillsEnabled: boolean;
   /** Experimental shared-documents switch (Settings → Shared documents). */
   sharedDocsEnabled: boolean;
-  /** True when at least one account has calendar integration enabled
-   *  (Settings → Calendar) — the Calendar entry is hidden otherwise. */
-  calendarEnabled: boolean;
+  /** Show the Calendar entry (any enabled account: an IMAP account without a
+   *  feed gets the panel's setup prompt). */
+  calendarEntry: boolean;
+  /** The calendar is on screen — docked panel or full view. */
+  calendarActive: boolean;
+  /** Opens the right-docked calendar agenda (the calendar's default surface). */
+  onOpenCalendarPanel: () => void;
   onSelectLens: (lensId: string) => void;
 }
 
@@ -144,7 +149,9 @@ export function Sidebar({
   lensesEnabled,
   skillsEnabled,
   sharedDocsEnabled,
-  calendarEnabled,
+  calendarEntry,
+  calendarActive,
+  onOpenCalendarPanel,
   onSelectLens,
 }: SidebarProps) {
   const { counts } = useMemoryStore();
@@ -296,8 +303,8 @@ export function Sidebar({
   };
 
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col">
-      <div className="p-4 border-b border-gray-700">
+    <aside className="theme-chrome w-64 bg-white text-gray-900 border-r border-gray-200 flex flex-col">
+      <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold">{t('sidebar:appName')}</h1>
@@ -308,7 +315,7 @@ export function Sidebar({
               <button
                 onClick={onSync}
                 disabled={isSyncing}
-                className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
                 title={t('sidebar:accountActions.syncEmails')}
               >
                 <svg
@@ -343,7 +350,7 @@ export function Sidebar({
         {/* Search Button */}
         <button
           onClick={onOpenSearch}
-          className="mt-3 w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+          className="mt-3 w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -356,7 +363,7 @@ export function Sidebar({
           <span>{t('sidebar:search')}</span>
           {/* Rendered rather than translated: the shortcut is the same in every
               language, but differs per platform (⌘K on macOS, Ctrl+K elsewhere). */}
-          <kbd className="ml-auto text-xs bg-gray-700 px-1.5 py-0.5 rounded">
+          <kbd className="ml-auto text-xs bg-white border border-gray-200 text-gray-500 px-1.5 py-0.5 rounded">
             {formatShortcut(currentPlatform(), 'K')}
           </kbd>
         </button>
@@ -370,14 +377,14 @@ export function Sidebar({
           <div className="flex items-center justify-between mb-2">
             <button
               onClick={() => setAccountsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-300"
+              className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-700"
             >
               <CollapseChevron open={accountsOpen} />
               {t('sidebar:accounts')}
             </button>
             <button
               onClick={onAddAccount}
-              className="p-0.5 text-gray-500 hover:text-primary-400 hover:bg-gray-800 rounded transition-colors"
+              className="p-0.5 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded transition-colors"
               title={t('sidebar:addAccount')}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -394,7 +401,7 @@ export function Sidebar({
                   <li>
                     <div
                       className={`flex items-center rounded-lg text-sm transition-colors ${
-                        isUnifiedActive ? 'bg-primary-600 text-white' : 'text-gray-300 hover:bg-gray-800'
+                        isUnifiedActive ? 'bg-primary-600 text-white' : 'text-gray-700 hover:bg-gray-100'
                       }`}
                     >
                       <button
@@ -441,7 +448,7 @@ export function Sidebar({
         <section>
           <button
             onClick={() => setViewsOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-700"
           >
             <CollapseChevron open={viewsOpen} />
             {t('sidebar:views')}
@@ -455,8 +462,8 @@ export function Sidebar({
                   onDragLeave={clearDragOver('inbox')}
                   onDrop={handleEmailDrop(t('sidebar:inbox'), 'inbox')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'inbox' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                  } ${dragOverTarget === 'inbox' ? 'ring-1 ring-blue-400 bg-gray-800' : ''}`}
+                    viewMode === 'inbox' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
+                  } ${dragOverTarget === 'inbox' ? 'ring-1 ring-blue-400 bg-gray-100' : ''}`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -474,7 +481,7 @@ export function Sidebar({
                   <button
                     onClick={() => onSetViewMode('tagboard')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'tagboard' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'tagboard' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -493,7 +500,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('attachments')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'attachments' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'attachments' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -522,7 +529,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('drafts')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'drafts' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'drafts' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -541,7 +548,7 @@ export function Sidebar({
                   data-testid="sidebar-scheduled"
                   onClick={() => onSetViewMode('scheduled')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'scheduled' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'scheduled' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <ScheduledSendIcon className="w-4 h-4" />
@@ -552,7 +559,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('sent')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'sent' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'sent' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <SentIcon className="w-4 h-4" />
@@ -563,7 +570,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('starred')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'starred' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'starred' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -582,7 +589,7 @@ export function Sidebar({
                   data-testid="sidebar-snoozed"
                   onClick={() => onSetViewMode('snoozed')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'snoozed' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'snoozed' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <ClockIcon className="w-4 h-4" />
@@ -596,7 +603,7 @@ export function Sidebar({
                   <button
                     onClick={() => onSetViewMode('archive')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'archive' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'archive' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -618,7 +625,7 @@ export function Sidebar({
                     data-testid="sidebar-documents"
                     onClick={() => onSetViewMode('documents')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'documents' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'documents' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -633,12 +640,15 @@ export function Sidebar({
                   </button>
                 </li>
               )}
-              {calendarEnabled && (
+              {calendarEntry && (
                 <li>
+                  {/* Opens the docked day agenda; the full grid is one click
+                      further from the panel's header. */}
                   <button
-                    onClick={() => onSetViewMode('calendar')}
+                    onClick={onOpenCalendarPanel}
+                    aria-pressed={calendarActive}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'calendar' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      calendarActive ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -661,7 +671,7 @@ export function Sidebar({
         <section>
           <button
             onClick={() => setOtherViewsOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-700"
           >
             <CollapseChevron open={otherViewsOpen} />
             {t('sidebar:otherViews')}
@@ -672,7 +682,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('spam')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'spam' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'spam' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -690,7 +700,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('deleted')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'deleted' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'deleted' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -708,7 +718,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('contacts')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'contacts' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'contacts' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -726,7 +736,7 @@ export function Sidebar({
                 <button
                   onClick={() => onSetViewMode('dashboard')}
                   className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                    viewMode === 'dashboard' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                    viewMode === 'dashboard' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -753,7 +763,7 @@ export function Sidebar({
             <div className="flex items-center justify-between mb-2">
               <button
                 onClick={() => setFoldersOpen((v) => !v)}
-                className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-300"
+                className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-700"
               >
                 <CollapseChevron open={foldersOpen} />
                 {t('sidebar:folders')}
@@ -765,7 +775,7 @@ export function Sidebar({
                     setAddingFolder(true);
                   }}
                   title={t('sidebar:folderActions.newFolder')}
-                  className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                  className="p-1 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -792,7 +802,7 @@ export function Sidebar({
                         }}
                         placeholder={t('sidebar:folderActions.namePlaceholder')}
                         disabled={folderBusy}
-                        className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                        className="w-full bg-white border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 disabled:opacity-50"
                       />
                     </div>
                   </li>
@@ -814,7 +824,7 @@ export function Sidebar({
                               if (e.key === 'Escape') setEditingFolderId(null);
                             }}
                             disabled={folderBusy}
-                            className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                            className="w-full bg-white border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 focus:outline-none focus:border-blue-500 disabled:opacity-50"
                           />
                         </div>
                       </li>
@@ -829,8 +839,8 @@ export function Sidebar({
                         onDragLeave={clearDragOver(folder.id)}
                         onDrop={handleEmailDrop(label, mode)}
                         className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                          viewMode === mode ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
-                        } ${dragOverTarget === folder.id ? 'ring-1 ring-blue-400 bg-gray-800' : ''}`}
+                          viewMode === mode ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
+                        } ${dragOverTarget === folder.id ? 'ring-1 ring-blue-400 bg-gray-100' : ''}`}
                       >
                         <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path
@@ -843,7 +853,7 @@ export function Sidebar({
                         <span className="truncate">{label}</span>
                       </button>
                       {isImapAccount && (
-                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-gray-800/95 rounded">
+                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center gap-0.5 bg-white/90 rounded">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -851,7 +861,7 @@ export function Sidebar({
                               setEditingName(label);
                             }}
                             title={t('sidebar:folderActions.rename')}
-                            className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200"
+                            className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
                           >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path
@@ -868,7 +878,7 @@ export function Sidebar({
                               setConfirmDeleteFolder(folder);
                             }}
                             title={t('common:actions.delete')}
-                            className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-red-400"
+                            className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-red-600"
                           >
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path
@@ -893,7 +903,7 @@ export function Sidebar({
         <section>
           <button
             onClick={() => setAiFeaturesOpen((v) => !v)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 hover:text-gray-300"
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 hover:text-gray-700"
           >
             <CollapseChevron open={aiFeaturesOpen} />
             {t('sidebar:aiFeatures')}
@@ -911,7 +921,7 @@ export function Sidebar({
                     aria-pressed={viewMode === 'chat'}
                     title={t('chat:panel.expand')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'chat' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -931,7 +941,7 @@ export function Sidebar({
                   <button
                     onClick={() => onSetViewMode('tasks')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'tasks' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'tasks' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -946,7 +956,7 @@ export function Sidebar({
                     {tasksBadge > 0 && (
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                          counts.overdue > 0 ? 'bg-red-600 text-white' : 'bg-gray-600 text-gray-100'
+                          counts.overdue > 0 ? 'bg-red-600 text-white' : 'bg-gray-200 text-gray-700'
                         }`}
                       >
                         {tasksBadge}
@@ -960,7 +970,7 @@ export function Sidebar({
                   <button
                     onClick={() => onSetViewMode('memory')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'memory' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'memory' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -982,7 +992,7 @@ export function Sidebar({
                     data-testid="sidebar-skills"
                     onClick={() => onSetViewMode('skills')}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                      viewMode === 'skills' ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                      viewMode === 'skills' ? 'bg-primary-50 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1002,8 +1012,8 @@ export function Sidebar({
                   <div
                     className={`group flex items-center rounded-lg text-sm transition-colors ${
                       viewMode === 'lenses' && !activeLensId
-                        ? 'bg-gray-700 text-white'
-                        : 'text-gray-300 hover:bg-gray-800'
+                        ? 'bg-primary-50 text-primary-700'
+                        : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
                     <button
@@ -1027,7 +1037,7 @@ export function Sidebar({
                         onSetViewMode('lenses');
                         openCreateLens(true);
                       }}
-                      className="p-1 rounded text-gray-400 hover:text-white hover:bg-gray-700 transition-colors flex-shrink-0"
+                      className="p-1 rounded text-gray-500 hover:text-gray-700 hover:bg-gray-200 transition-colors flex-shrink-0"
                       title={t('sidebar:newLens')}
                       aria-label={t('sidebar:newLens')}
                     >
@@ -1041,7 +1051,7 @@ export function Sidebar({
                           e.stopPropagation();
                           setLensesListOpen((v) => !v);
                         }}
-                        className="px-2 py-2 text-gray-400 hover:text-gray-200 flex-shrink-0"
+                        className="px-2 py-2 text-gray-500 hover:text-gray-700 flex-shrink-0"
                         title={lensesListOpen ? t('sidebar:collapseLenses') : t('sidebar:expandLenses')}
                       >
                         <CollapseChevron open={lensesListOpen} />
@@ -1049,7 +1059,7 @@ export function Sidebar({
                     )}
                   </div>
                   {lensesListOpen && lenses.length > 0 && (
-                    <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-700 pl-2">
+                    <ul className="mt-0.5 ml-3 space-y-0.5 border-l border-gray-200 pl-2">
                       {lenses.map((l) => {
                         const isActive = viewMode === 'lenses' && activeLensId === l.id;
                         return (
@@ -1059,7 +1069,7 @@ export function Sidebar({
                               className={`w-full text-left px-2 py-1 rounded text-xs truncate transition-colors ${
                                 isActive
                                   ? 'bg-primary-600 text-white'
-                                  : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
                               }`}
                               title={l.name}
                             >
@@ -1091,7 +1101,7 @@ export function Sidebar({
         />
       </nav>
 
-      <div className="p-4 border-t border-gray-700">
+      <div className="p-4 border-t border-gray-200">
         <div className="flex items-center justify-between">
           <div className="text-xs text-gray-500 truncate">
             {isUnifiedActive ? (
@@ -1104,7 +1114,7 @@ export function Sidebar({
           </div>
           <button
             onClick={onOpenAppSettings}
-            className="ml-2 flex-shrink-0 p-1.5 text-gray-500 hover:text-gray-300 hover:bg-gray-800 rounded transition-colors"
+            className="ml-2 flex-shrink-0 p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
             title={t('sidebar:appSettings')}
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1118,7 +1128,7 @@ export function Sidebar({
             </svg>
           </button>
         </div>
-        {isSyncing && <div className="mt-2 text-xs text-primary-400">{t('sidebar:syncingEmails')}</div>}
+        {isSyncing && <div className="mt-2 text-xs text-primary-600">{t('sidebar:syncingEmails')}</div>}
         {availableUpdate && (
           <button
             type="button"
@@ -1127,7 +1137,7 @@ export function Sidebar({
                 addLog('error', 'system', `Failed to open release page: ${errorText(e)}`);
               });
             }}
-            className="mt-2 block text-left text-xs text-primary-400 hover:text-primary-300 hover:underline truncate w-full"
+            className="mt-2 block text-left text-xs text-primary-600 hover:text-primary-700 hover:underline truncate w-full"
             title={availableUpdate.url}
           >
             {t('sidebar:updateAvailable', { version: availableUpdate.version })}
@@ -1143,11 +1153,11 @@ export function Sidebar({
           onClick={() => !folderBusy && setConfirmDeleteFolder(null)}
         >
           <div
-            className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-4 w-80 shadow-xl"
+            className="bg-white border border-gray-200 rounded-lg p-4 w-80 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm font-semibold text-gray-100 mb-1">{t('sidebar:folderActions.deleteTitle')}</p>
-            <p className="text-xs text-gray-400 mb-4">
+            <p className="text-sm font-semibold text-gray-900 mb-1">{t('sidebar:folderActions.deleteTitle')}</p>
+            <p className="text-xs text-gray-500 mb-4">
               {t('sidebar:folderActions.deleteConfirm', {
                 name: folderLabel(confirmDeleteFolder.displayName, confirmDeleteFolder.delimiter),
               })}
@@ -1156,7 +1166,7 @@ export function Sidebar({
               <button
                 onClick={() => setConfirmDeleteFolder(null)}
                 disabled={folderBusy}
-                className="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-200 hover:bg-gray-600 disabled:opacity-50"
+                className="px-3 py-1.5 text-xs rounded bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
               >
                 {t('common:actions.cancel')}
               </button>
@@ -1175,7 +1185,7 @@ export function Sidebar({
   );
 }
 
-function AccountItem({
+export function AccountItem({
   account,
   isActive,
   isFirst,
@@ -1206,11 +1216,16 @@ function AccountItem({
           isActive
             ? 'bg-primary-600 text-white'
             : account.enabled
-              ? 'text-gray-300 hover:bg-gray-800'
-              : 'text-gray-500 hover:bg-gray-800 opacity-50'
+              ? 'text-gray-700 hover:bg-gray-100'
+              : 'text-gray-500 hover:bg-gray-100 opacity-50'
         }`}
       >
-        <button onClick={onSelect} className="flex-1 text-left px-3 py-1.5 min-w-0">
+        <button onClick={onSelect} className="flex-1 text-left px-3 py-1.5 min-w-0 flex items-center gap-1.5">
+          <span
+            data-testid="account-color-dot"
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${accountColorSwatchClass(account.color)}`}
+            aria-hidden="true"
+          />
           <span className="block truncate text-xs">
             {account.email}
             {!account.enabled && (
@@ -1228,7 +1243,7 @@ function AccountItem({
                   e.stopPropagation();
                   onMoveUp();
                 }}
-                className="p-0.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200"
+                className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
                 title={t('sidebar:accountActions.moveUp')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1242,7 +1257,7 @@ function AccountItem({
                   e.stopPropagation();
                   onMoveDown();
                 }}
-                className="p-0.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200"
+                className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
                 title={t('sidebar:accountActions.moveDown')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1255,7 +1270,7 @@ function AccountItem({
                 e.stopPropagation();
                 onToggleEnabled();
               }}
-              className="p-0.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200"
+              className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
               title={account.enabled ? 'Disable account' : 'Enable account'}
             >
               {account.enabled ? (
@@ -1289,7 +1304,7 @@ function AccountItem({
                 e.stopPropagation();
                 onOpenSettings();
               }}
-              className="p-0.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200"
+              className="p-0.5 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
               title={t('sidebar:accountActions.openSettings')}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

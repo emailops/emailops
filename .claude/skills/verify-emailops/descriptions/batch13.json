@@ -136,8 +136,6 @@
     "src-tauri/src/db/emails/mailbox_state.rs::the_servers_read_state_is_applied_in_both_directions": "El estado de lectura del servidor se aplica en local tanto a leído como a no leído.",
     "src-tauri/src/db/emails/mailbox_state.rs::the_servers_read_state_never_overwrites_a_pending_local_change": "El estado de lectura del servidor no pisa un cambio local que aún no se ha enviado.",
     "src-tauri/src/db/emails/mailbox_state.rs::v029_leaves_existing_rows_with_nothing_pending": "La migración V029 deja los correos existentes sin envíos pendientes y conserva su estado de lectura.",
-    "src-tauri/src/db/emails/search.rs::filtered_emails_attachment_ext_matches_email_with_that_attachment": "El filtro por extensión de adjunto devuelve solo el correo que lleva un adjunto de ese tipo.",
-    "src-tauri/src/db/emails/search.rs::filtered_emails_same_second_thread_tie_returns_one_row": "Dos correos del mismo hilo con la misma marca de tiempo aparecen como un solo hilo en la lista filtrada.",
     "src-tauri/src/db/emails/search.rs::search_from_same_second_thread_tie_returns_one_row": "La búsqueda por remitente devuelve un solo resultado por hilo aunque dos correos compartan el mismo segundo.",
     "src-tauri/src/db/emails/search.rs::search_from_with_more_matches_than_the_sql_variable_limit": "Buscar por un remitente con más correos que el límite de variables de SQLite funciona y devuelve los más recientes.",
     "src-tauri/src/db/emails/search.rs::search_keyword_same_second_thread_tie_returns_one_row": "La búsqueda por palabra clave devuelve un solo resultado por hilo aunque dos correos compartan el mismo segundo.",

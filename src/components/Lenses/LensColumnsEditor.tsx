@@ -42,7 +42,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
         <button
           type="button"
           onClick={() => onChange([...columns, newColumn()])}
-          className="rounded border border-gray-600 px-2 py-0.5 text-[11px] text-gray-200 hover:bg-gray-700"
+          className="rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-800 hover:bg-gray-100"
         >
           {t('lenses:columns.add')}
         </button>
@@ -50,7 +50,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
       <div className="space-y-2">
         {columns.map((c, idx) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: column rows have no stable id during creation; reorder/remove would still re-render correctly because inputs are uncontrolled
-          <div key={idx} className="rounded border border-gray-700 bg-[#1e1e1e]/60 p-3">
+          <div key={idx} className="rounded border border-gray-200 bg-gray-50 p-3">
             <div className="grid grid-cols-12 gap-2">
               <label className="col-span-3 block">
                 <span className="mb-1 block text-[10px] uppercase text-gray-500">{t('lenses:columns.key')}</span>
@@ -60,7 +60,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                   value={c.key}
                   onChange={(e) => update(idx, { key: e.target.value })}
                   placeholder="amount" // i18n-ignore: example column key (technical identifier)
-                  className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
               </label>
               <label className="col-span-3 block">
@@ -70,7 +70,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                   value={c.label}
                   onChange={(e) => update(idx, { label: e.target.value })}
                   placeholder={t('lenses:columns.builtin.amount')}
-                  className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
               </label>
               <label className="col-span-3 block">
@@ -88,7 +88,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                 />
               </label>
               <div className="col-span-2 flex items-end gap-3">
-                <label className="flex items-center gap-1 text-[11px] text-gray-300">
+                <label className="flex items-center gap-1 text-[11px] text-gray-700">
                   <input
                     type="checkbox"
                     checked={c.required}
@@ -97,7 +97,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                   {t('lenses:columns.required')}
                 </label>
                 <label
-                  className="flex items-center gap-1 text-[11px] text-gray-300"
+                  className="flex items-center gap-1 text-[11px] text-gray-700"
                   title={t('lenses:create.uniqueKeyTooltip')}
                 >
                   <input
@@ -119,7 +119,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                 <button
                   type="button"
                   onClick={() => onChange(columns.filter((_, i) => i !== idx))}
-                  className="rounded p-1 text-gray-500 hover:bg-gray-700 hover:text-red-300"
+                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-red-700"
                   title={t('lenses:create.removeColumn')}
                   aria-label={t('lenses:create.removeColumn')}
                 >
@@ -134,7 +134,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                 value={c.description}
                 onChange={(e) => update(idx, { description: e.target.value })}
                 placeholder={t('lenses:create.descriptionPlaceholder')}
-                className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
+                className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 focus:border-blue-500 focus:outline-none"
               />
             </label>
             {c.type === 'enum' && (
@@ -145,7 +145,7 @@ export function LensColumnsEditor({ columns, onChange }: LensColumnsEditorProps)
                   value={c.enumValues}
                   onChange={(e) => update(idx, { enumValues: e.target.value })}
                   placeholder="paid, unpaid, refunded" // i18n-ignore: example enum values
-                  className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
+                  className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 focus:border-blue-500 focus:outline-none"
                 />
               </label>
             )}

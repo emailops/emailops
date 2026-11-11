@@ -34,7 +34,7 @@ function NoteLink({ href, children }: { href?: string; children?: ReactNode }) {
   return (
     <button
       type="button"
-      className="text-primary-300 underline hover:text-primary-200"
+      className="text-primary-600 underline hover:text-primary-700"
       onClick={() => {
         void openExternal(safeUrl).catch((err) => {
           addLog('error', 'system', `Failed to open link: ${errorText(err)}`);
@@ -48,17 +48,17 @@ function NoteLink({ href, children }: { href?: string; children?: ReactNode }) {
 
 const MARKDOWN_COMPONENTS = {
   h3: ({ children }: { children?: ReactNode }) => (
-    <h4 className="mb-1.5 mt-4 text-xs font-semibold uppercase tracking-wide text-gray-400 first:mt-0">{children}</h4>
+    <h4 className="mb-1.5 mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500 first:mt-0">{children}</h4>
   ),
-  p: ({ children }: { children?: ReactNode }) => <p className="mb-2 text-sm text-gray-200">{children}</p>,
+  p: ({ children }: { children?: ReactNode }) => <p className="mb-2 text-sm text-gray-700">{children}</p>,
   ul: ({ children }: { children?: ReactNode }) => (
-    <ul className="mb-2 list-disc space-y-1 pl-5 text-sm text-gray-200">{children}</ul>
+    <ul className="mb-2 list-disc space-y-1 pl-5 text-sm text-gray-700">{children}</ul>
   ),
   strong: ({ children }: { children?: ReactNode }) => (
-    <strong className="font-semibold text-gray-100">{children}</strong>
+    <strong className="font-semibold text-gray-900">{children}</strong>
   ),
   code: ({ children }: { children?: ReactNode }) => (
-    <code className="rounded bg-gray-800 px-1 py-0.5 font-mono text-xs text-gray-100">{children}</code>
+    <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-xs text-gray-800">{children}</code>
   ),
   a: NoteLink,
 };
@@ -134,7 +134,7 @@ export function ReleaseNotesDialog({ onboardingCompleted }: ReleaseNotesDialogPr
         {pending.versions.map((version) => (
           <section key={version} className="mb-4 last:mb-0">
             {showVersionHeadings && (
-              <h3 className="mb-2 text-sm font-semibold text-gray-100">
+              <h3 className="mb-2 text-sm font-semibold text-gray-900">
                 {t('notifications:releaseNotes.version', { version })}
               </h3>
             )}

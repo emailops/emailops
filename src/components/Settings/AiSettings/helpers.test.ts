@@ -140,4 +140,23 @@ describe('needsEmbeddingProbe', () => {
     expect(needsEmbeddingProbe({ ...base, provider: 'ollama' }, null)).toBe(false);
     expect(needsEmbeddingProbe({ ...base, provider: 'llamacpp' }, null)).toBe(false);
   });
+
+  it('asks for a probe of an OpenRouter model beside a server chat', () => {
+    const server = (embeddingSource: 'server' | 'inapp' | 'openrouter') => ({
+      ...base,
+      provider: 'openai_compatible' as const,
+      server: {
+        baseUrl: 'http://localhost:1234/v1',
+        embeddingSource,
+        contextWindow: 0,
+        hasApiKey: false,
+        disclosedHost: null,
+      },
+    });
+    expect(needsEmbeddingProbe(server('openrouter'), null)).toBe(true);
+    expect(needsEmbeddingProbe(server('openrouter'), 'vendor/embed')).toBe(false);
+    // The server's own model is probed by the backend on save.
+    expect(needsEmbeddingProbe(server('server'), null)).toBe(false);
+    expect(needsEmbeddingProbe(server('inapp'), null)).toBe(false);
+  });
 });

@@ -78,13 +78,13 @@ function ColumnFilterMenu({ column, values, selected, onChange, onClose }: Colum
       role="dialog"
       aria-label={t('documents:sheet.filterColumn', { col: column })}
       data-testid="sheet-filter-menu"
-      className="absolute left-0 top-full z-20 mt-1 w-56 rounded border border-gray-600 bg-gray-800 p-2 text-left text-xs font-normal text-gray-200 shadow-lg"
+      className="absolute left-0 top-full z-20 mt-1 w-56 rounded border border-gray-300 bg-white p-2 text-left text-xs font-normal text-gray-800 shadow-lg"
     >
       <div className="mb-1 flex gap-2">
         <button
           type="button"
           onClick={() => onChange(undefined)}
-          className="rounded px-1.5 py-0.5 text-gray-300 hover:bg-gray-700"
+          className="rounded px-1.5 py-0.5 text-gray-700 hover:bg-gray-100"
         >
           {t('documents:sheet.selectAll')}
         </button>
@@ -92,7 +92,7 @@ function ColumnFilterMenu({ column, values, selected, onChange, onClose }: Colum
           type="button"
           data-testid="sheet-filter-clear-all"
           onClick={() => onChange(new Set())}
-          className="rounded px-1.5 py-0.5 text-gray-300 hover:bg-gray-700"
+          className="rounded px-1.5 py-0.5 text-gray-700 hover:bg-gray-100"
         >
           {t('documents:sheet.selectNone')}
         </button>
@@ -100,7 +100,7 @@ function ColumnFilterMenu({ column, values, selected, onChange, onClose }: Colum
       <ul className="max-h-56 overflow-y-auto">
         {values.map((value) => (
           <li key={value}>
-            <label className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-gray-700">
+            <label className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-gray-100">
               <input
                 type="checkbox"
                 data-testid={`sheet-filter-value-${value}`}
@@ -128,7 +128,7 @@ function ConflictBanner({ conflicts, onResolve }: ConflictBannerProps) {
   return (
     <div
       data-testid="sheet-conflicts"
-      className="mb-3 rounded border border-amber-700 bg-amber-900/20 p-2 text-xs text-amber-100"
+      className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
     >
       <p className="mb-1 font-medium">{t('documents:conflicts.banner', { count: conflicts.length })}</p>
       <ul className="flex flex-col gap-1">
@@ -153,7 +153,7 @@ function ConflictBanner({ conflicts, onResolve }: ConflictBannerProps) {
               type="button"
               data-testid="sheet-conflict-keep"
               onClick={() => onResolve(c, 'kept')}
-              className="rounded px-1.5 py-0.5 text-amber-100 hover:bg-amber-900/40"
+              className="rounded px-1.5 py-0.5 text-amber-900 hover:bg-amber-100"
             >
               {t('documents:conflicts.keep', { value: c.kept })}
             </button>
@@ -299,7 +299,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
               aria-label={t('documents:toolbar.undo')}
               disabled={!history.canUndo}
               onClick={() => undo?.undo()}
-              className="px-2 py-0.5 rounded text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:hover:bg-transparent"
+              className="px-2 py-0.5 rounded text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
             >
               ↶
             </button>
@@ -310,14 +310,14 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
               aria-label={t('documents:toolbar.redo')}
               disabled={!history.canRedo}
               onClick={() => undo?.redo()}
-              className="px-2 py-0.5 rounded text-sm text-gray-300 hover:bg-gray-700 disabled:opacity-40 disabled:hover:bg-transparent"
+              className="px-2 py-0.5 rounded text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
             >
               ↷
             </button>
           </div>
         )}
         {rows.length < grid.rowIds.length && (
-          <p className="text-xs text-amber-300" data-testid="sheet-filtered">
+          <p className="text-xs text-amber-700" data-testid="sheet-filtered">
             {t('documents:sheet.filteredRows', { shown: rows.length - 1, total: grid.rowIds.length - 1 })}
           </p>
         )}
@@ -325,7 +325,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
       {editable && pending.length > 0 && (
         <ConflictBanner conflicts={pending} onResolve={(c, keep) => resolveConflict(doc, c, keep)} />
       )}
-      <table className="border-collapse text-sm text-gray-200" style={{ tableLayout: 'fixed' }}>
+      <table className="border-collapse text-sm text-gray-800" style={{ tableLayout: 'fixed' }}>
         <colgroup>
           <col style={{ width: 48 }} />
           {grid.colIds.map((colId, c) => (
@@ -339,7 +339,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
             {grid.colIds.map((colId, c) => (
               <th
                 key={colId}
-                className="group relative px-2 py-1 border border-gray-700 bg-gray-800 font-medium text-gray-400"
+                className="group relative px-2 py-1 border border-gray-200 bg-gray-50 font-medium text-gray-500"
               >
                 <span>{columnLabel(c)}</span>
                 <button
@@ -349,7 +349,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                   aria-label={t('documents:sheet.filterColumn', { col: columnLabel(c) })}
                   aria-pressed={!!filters[colId]}
                   onClick={() => setFilterOpen((open) => (open === colId ? null : colId))}
-                  className={`ml-1 ${filters[colId] ? 'text-primary-400' : 'invisible group-hover:visible text-gray-500 hover:text-white'}`}
+                  className={`ml-1 ${filters[colId] ? 'text-primary-600' : 'invisible group-hover:visible text-gray-500 hover:text-gray-900'}`}
                 >
                   <svg className="inline w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
@@ -366,7 +366,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                     title={t('documents:sheet.deleteColumn')}
                     aria-label={t('documents:sheet.deleteColumn')}
                     onClick={() => deleteColumn(doc, c)}
-                    className="ml-1 invisible group-hover:visible text-gray-500 hover:text-red-300"
+                    className="ml-1 invisible group-hover:visible text-gray-500 hover:text-red-700"
                   >
                     ×
                   </button>
@@ -402,7 +402,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                   title={t('documents:sheet.addColumn')}
                   aria-label={t('documents:sheet.addColumn')}
                   onClick={() => insertColumn(doc, lastCol)}
-                  className="px-2 text-gray-400 hover:text-white"
+                  className="px-2 text-gray-500 hover:text-gray-900"
                 >
                   +
                 </button>
@@ -415,7 +415,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
             const rowId = grid.rowIds[r];
             return (
               <tr key={rowId} className="group">
-                <th className="px-2 border border-gray-700 bg-gray-800 font-medium text-gray-400 text-right whitespace-nowrap">
+                <th className="px-2 border border-gray-200 bg-gray-50 font-medium text-gray-500 text-right whitespace-nowrap">
                   {editable && (
                     <button
                       type="button"
@@ -423,7 +423,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                       title={t('documents:sheet.insertRowAbove')}
                       aria-label={t('documents:sheet.insertRowAbove')}
                       onClick={() => addRow(r)}
-                      className="mr-1 invisible group-hover:visible text-gray-500 hover:text-white"
+                      className="mr-1 invisible group-hover:visible text-gray-500 hover:text-gray-900"
                     >
                       +
                     </button>
@@ -434,7 +434,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                       title={t('documents:sheet.deleteRow')}
                       aria-label={t('documents:sheet.deleteRow')}
                       onClick={() => deleteRow(doc, r)}
-                      className="mr-1 invisible group-hover:visible text-gray-500 hover:text-red-300"
+                      className="mr-1 invisible group-hover:visible text-gray-500 hover:text-red-700"
                     >
                       ×
                     </button>
@@ -447,7 +447,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                   const isFormula = raw.startsWith('=');
                   const conflict = conflictAt.get(ref);
                   return (
-                    <td key={colId} className="border border-gray-700 p-0">
+                    <td key={colId} className="border border-gray-200 p-0">
                       <input
                         data-cell={ref}
                         aria-label={t('documents:sheet.cell', { ref: `${columnLabel(c)}${r + 1}` })}
@@ -480,9 +480,9 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
                             if (next !== undefined) focusCell(next, c);
                           }
                         }}
-                        className={`w-full px-2 py-1 bg-transparent focus:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-primary-500 ${
-                          isFormula && focused !== ref ? 'text-right text-primary-200' : ''
-                        } ${conflict ? 'ring-1 ring-inset ring-amber-500 bg-amber-900/20' : ''}`}
+                        className={`w-full px-2 py-1 bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary-500 ${
+                          isFormula && focused !== ref ? 'text-right text-primary-700' : ''
+                        } ${conflict ? 'ring-1 ring-inset ring-amber-500 bg-amber-50' : ''}`}
                       />
                     </td>
                   );
@@ -497,7 +497,7 @@ export function SheetEditor({ doc, editable }: SheetEditorProps) {
           type="button"
           data-testid="sheet-add-row"
           onClick={() => addRow(lastRow)}
-          className="mt-2 px-2 py-1 text-xs rounded text-gray-400 hover:text-white hover:bg-gray-700"
+          className="mt-2 px-2 py-1 text-xs rounded text-gray-500 hover:text-gray-900 hover:bg-gray-100"
         >
           + {t('documents:sheet.addRow')}
         </button>

@@ -13,4 +13,12 @@ describe('calendar responses have the shape the frontend types declare', () => {
       tsInterfaceFields('CalendarInvite'),
     );
   });
+
+  it('get_calendars answers Calendar', () => {
+    expect(rustStructFields('models/mod.rs', 'Calendar')).toEqual(tsInterfaceFields('Calendar'));
+  });
+
+  it('list_calendar_feeds answers CalendarFeed', () => {
+    expect(rustStructFields('models/mod.rs', 'CalendarFeed')).toEqual(tsInterfaceFields('CalendarFeed'));
+  });
 });

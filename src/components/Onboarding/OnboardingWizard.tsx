@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { type Language, NATIVE_NAMES, SUPPORTED_LANGUAGES, useUiLanguage } from '@/i18n';
+import { LanguageSelect } from '@/components/shared/LanguageSelect';
+import { useUiLanguage } from '@/i18n';
 import { useAiStore } from '@/stores/aiStore';
 import { useOverlay } from '@/stores/overlayStore';
 import type { InboxLayout } from '@/types';
@@ -63,8 +64,8 @@ export function OnboardingWizard({ currentLayout, onChangeLayout, onComplete }: 
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/95 p-6">
-      <div className="bg-[#1f1f20] border border-gray-700 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-50/95 p-6">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
         <Header step={step} aiEnabled={aiEnabled} />
         <div className="flex-1 overflow-y-auto px-8 py-6">
           {step === 1 && <StepAiChoice onNext={() => goNext(1)} />}
@@ -95,12 +96,12 @@ function Header({ step, aiEnabled }: { step: Step; aiEnabled: boolean }) {
   const list = visibleSteps(aiEnabled);
   const displayIdx = Math.max(0, list.indexOf(step)) + 1;
   return (
-    <div className="px-8 py-5 border-b border-gray-700 flex items-center justify-between">
+    <div className="px-8 py-5 border-b border-gray-200 flex items-center justify-between">
       <div>
         <div className="text-xs uppercase tracking-wider text-gray-500">
           {t('auth:onboarding.wizard.stepOf', { current: displayIdx, total: list.length })}
         </div>
-        <h1 className="text-xl font-semibold text-gray-100 mt-0.5">{titles[step]}</h1>
+        <h1 className="text-xl font-semibold text-gray-900 mt-0.5">{titles[step]}</h1>
       </div>
       <div className="flex items-center gap-4">
         <LanguagePicker />
@@ -119,20 +120,12 @@ function LanguagePicker() {
   const { t } = useTranslation(['common']);
   const { language, setLanguage } = useUiLanguage();
   return (
-    <select
-      aria-label={t('common:language.selectLabel')}
+    <LanguageSelect
+      ariaLabel={t('common:language.selectLabel')}
       value={language}
-      onChange={(e) => {
-        void setLanguage(e.target.value as Language);
-      }}
-      className="bg-[#333] text-gray-300 border border-gray-600 rounded px-2 py-1 text-xs focus:border-primary-500 outline-none"
-    >
-      {SUPPORTED_LANGUAGES.map((code) => (
-        <option key={code} value={code}>
-          {NATIVE_NAMES[code]}
-        </option>
-      ))}
-    </select>
+      onChange={(next) => void setLanguage(next)}
+      size="xs"
+    />
   );
 }
 
@@ -142,7 +135,7 @@ function StepIndicator({ step, aiEnabled }: { step: Step; aiEnabled: boolean }) 
   return (
     <div className="flex items-center gap-1.5">
       {list.map((n, idx) => (
-        <div key={n} className={`h-1.5 w-6 rounded-full ${idx <= currentIdx ? 'bg-primary-500' : 'bg-gray-700'}`} />
+        <div key={n} className={`h-1.5 w-6 rounded-full ${idx <= currentIdx ? 'bg-primary-500' : 'bg-gray-200'}`} />
       ))}
     </div>
   );

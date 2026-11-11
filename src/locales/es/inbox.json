@@ -4,7 +4,6 @@
   "emptyHint": "Los mensajes nuevos aparecerán aquí cuando se sincronice tu buzón.",
   "loading": "Cargando correos…",
   "loadingMore": "Cargando más…",
-  "loadMore": "Cargar más",
   "noMore": "Al día",
   "syncing": "Sincronizando…",
   "syncProgress": "Sincronizando {{current}} de {{total}}",
@@ -12,7 +11,8 @@
   "newEmailsOne": "Descargado 1 correo nuevo",
   "loadingEmails": "Cargando correos...",
   "loadingMoreEmails": "Cargando más...",
-  "noMoreEmails": "No hay más correos",
+  "noMoreEmails": "No hay más correos descargados",
+  "noMoreEmailsSyncing": "No hay más correos descargados por ahora. La sincronización puede traer más.",
   "loadingThread": "Cargando hilo...",
   "loadingEmail": "Cargando correo…",
   "categoriesAria": "Categorías de correo",
@@ -23,6 +23,15 @@
     "all": "Todos",
     "unread": "No leídos",
     "empty": "No hay correos sin leer"
+  },
+  "emptyState": {
+    "syncing": "Sincronizando correos...",
+    "noSearchResults": "Ningún correo coincide con tu búsqueda",
+    "noFilterResults": "Ningún correo coincide con los filtros seleccionados",
+    "noEmails": "Aún no hay correos: prueba a sincronizar o añade una cuenta",
+    "showAll": "Mostrar todos los correos",
+    "showAllCategories": "Mostrar todas las categorías",
+    "syncNow": "Sincronizar ahora"
   },
   "noEmailSelected": "Ningún correo seleccionado",
   "selectEmailHint": "Selecciona un correo de la lista para verlo aquí.",
@@ -75,7 +84,12 @@
     "unstar": "Quitar destacado",
     "archive": "Archivar",
     "moveArchivedToInbox": "Mover a Recibidos",
-    "hideFromFilters": "Ocultar de los filtros inteligentes"
+    "hideFromFilters": "Ocultar de los filtros inteligentes",
+    "toSelf": "ti",
+    "noRecipients": "Para: (sin destinatarios)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "y {{count}} más",
+    "addRecipientFilter": "Añadir destinatario como filtro inteligente"
   },
   "header": {
     "totalCount": "{{count}} correos",
@@ -124,7 +138,14 @@
     "unstar": "Quitar destacado",
     "archive": "Archivar",
     "moveToInbox": "Mover a Recibidos",
-    "notSpam": "No es spam — mover a Recibidos"
+    "notSpam": "No es spam — mover a Recibidos",
+    "noPreview": "(Sin vista previa)",
+    "toLine": "Para: {{recipients}}",
+    "ccLine": "Cc: {{recipients}}",
+    "backLabel": "Atrás",
+    "messageCount_one": "{{count}} mensaje",
+    "messageCount_other": "{{count}} mensajes",
+    "messageCount_many": "{{count}} mensajes"
   },
   "compose": {
     "open": "Redactar",
@@ -140,6 +161,15 @@
     "suggestedSection": "Sugeridos",
     "noFilters": "Aún no hay filtros inteligentes — aparecerán a medida que crezca tu buzón."
   },
+  "list": {
+    "firstPageFailed": "No se ha podido cargar la lista.",
+    "pageFailed": "No se han podido cargar más correos."
+  },
+  "searchPanel": {
+    "firstResults": "Primeros {{count}} resultados",
+    "results_one": "{{count}} resultado",
+    "results_other": "{{count}} resultados"
+  },
   "searchBox": {
     "inlinePlaceholder": "Buscar… ({{operators}})",
     "fullPlaceholder": "Buscar correos… ({{operators}})",
@@ -149,11 +179,14 @@
     "title": "Consejos de búsqueda",
     "senderHint": "nombre/correo del remitente",
     "recipientHint": "nombre/correo del destinatario",
+    "ccHint": "nombre/correo en copia",
     "subjectHint": "texto del asunto",
+    "attachmentHint": "con adjuntos (-has:attachment: sin ellos)",
     "unreadHint": "correos no leídos",
     "afterHint": "AAAA-MM-DD",
     "beforeHint": "AAAA-MM-DD",
-    "tagHint": "etiqueta de clasificación"
+    "tagHint": "etiqueta de clasificación",
+    "booleanHint": "frase exacta, una u otra palabra, sin una palabra, agrupar"
   },
   "translation": {
     "detectedLabel": "Este correo está en {{language}}",
@@ -164,6 +197,11 @@
     "aiTranslation": "Traducción con IA · {{language}}",
     "truncatedNotice": "El correo era demasiado largo: solo se tradujo el comienzo.",
     "failed": "Error al traducir: {{error}}"
+  },
+  "aiMarkup": {
+    "title": "Este correo contiene instrucciones dirigidas a tu asistente de IA",
+    "detail": "Alguien lo ha escrito para manipular al asistente. EmailOps lo trata como contenido, nunca como una petición tuya.",
+    "checkFailed": "No se pudo comprobar si el correo lleva instrucciones para el asistente"
   },
   "junk": {
     "kind": {
@@ -185,7 +223,9 @@
       "credential_solicitation": "Te pide volver a introducir tu contraseña o los datos de tu cuenta",
       "display_name_contains_address": "El nombre del remitente está escrito para parecer otra dirección",
       "server_spam_flag": "Tu servidor de correo lo marcó como spam",
-      "mixed_script_display_name": "El nombre del remitente mezcla alfabetos para disfrazarse"
+      "mixed_script_display_name": "El nombre del remitente mezcla alfabetos para disfrazarse",
+      "ai_control_markup": "Contiene texto dirigido a un asistente de IA",
+      "markdown_remote_image": "Incluye una imagen remota que un chat de IA cargaría"
     },
     "isJunkHint": "También lo archiva en la carpeta Junk del servidor para que su filtro aprenda",
     "confirmedAndFiled": "Confirmado como basura y archivado en la carpeta Junk del servidor",

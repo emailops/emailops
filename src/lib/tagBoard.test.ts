@@ -910,16 +910,25 @@ describe('senderLabel', () => {
 
   it('says "Me" for a message the account owner sent', () => {
     // A card showing your own address tells you nothing you didn't know.
-    expect(senderLabel(email('e', { sender: 'Gero Dp', senderEmail: ME }), ME, 'Me')).toBe('Me');
+    expect(senderLabel(email('e', { sender: 'Sam Rivera', senderEmail: ME, mailbox: 'archive' }), ME, 'Me')).toBe('Me');
   });
 
   it('matches the owner address case-insensitively', () => {
-    expect(senderLabel(email('e', { sender: 'Gero', senderEmail: 'Me@Mine.TEST' }), ME, 'Me')).toBe('Me');
+    expect(senderLabel(email('e', { sender: 'Sam', senderEmail: 'Me@Mine.TEST', mailbox: 'archive' }), ME, 'Me')).toBe(
+      'Me',
+    );
+  });
+
+  it('keeps the sender of an Inbox message that only forges the owner address', () => {
+    // Same rule as the inbox rows: in Inbox and Spam only the sent flag counts.
+    expect(senderLabel(email('e', { sender: 'Sam Rivera', senderEmail: ME, mailbox: 'inbox' }), ME, 'Me')).toBe(
+      'Sam Rivera',
+    );
   });
 
   it("trusts the provider's sent flag even when the address differs", () => {
     // Aliases and send-as addresses: still the user, still "Me".
-    const alias = email('e', { sender: 'Gero', senderEmail: 'alias@mine.test', isSent: true });
+    const alias = email('e', { sender: 'Sam', senderEmail: 'alias@mine.test', isSent: true });
     expect(senderLabel(alias, ME, 'Me')).toBe('Me');
   });
 

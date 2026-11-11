@@ -40,13 +40,13 @@ export function LensRowDrawer({ row, onClose }: LensRowDrawerProps) {
       />
 
       {/* Panel */}
-      <div className="flex h-full w-[min(46rem,80vw)] flex-col bg-[#1e1e1e] text-gray-200 shadow-2xl">
-        <div className="flex items-center justify-between gap-3 border-b border-gray-700 px-5 py-3">
-          <h2 className="truncate text-sm font-semibold text-gray-100">{t('lenses:row.sourceEmail')}</h2>
+      <div className="flex h-full w-[min(46rem,80vw)] flex-col bg-white text-gray-800 shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-3">
+          <h2 className="truncate text-sm font-semibold text-gray-900">{t('lenses:row.sourceEmail')}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded border border-gray-600 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-700"
+            className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-100"
           >
             {t('common:actions.close')}
           </button>

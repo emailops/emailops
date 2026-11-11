@@ -3,12 +3,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::error::Result;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderType {
     Ollama,
     OpenRouter,
     LlamaCpp,
+    /// A user-configured OpenAI-compatible server (LM Studio, vLLM,
+    /// llama-server, LiteLLM, a local proxy…), driven by the OpenRouter client
+    /// without OpenRouter's routing object and headers.
+    #[serde(rename = "openai_compatible")]
+    OpenAiCompatible,
 }
 
 impl std::fmt::Display for ProviderType {
@@ -17,6 +22,7 @@ impl std::fmt::Display for ProviderType {
             ProviderType::Ollama => write!(f, "ollama"),
             ProviderType::OpenRouter => write!(f, "openrouter"),
             ProviderType::LlamaCpp => write!(f, "llamacpp"),
+            ProviderType::OpenAiCompatible => write!(f, "openai_compatible"),
         }
     }
 }
@@ -24,6 +30,36 @@ impl std::fmt::Display for ProviderType {
 // ── Shared message types ─────────────────────────────────────────────────────
 
 /// A single message in an AI conversation, provider-neutral.
+/// Most tool calls one round may run, on every provider. The model can ask for
+/// more in the next round, once it has read these results.
+///
+/// A round has no other bound than the generation budget: greedy decoding can
+/// tip into listing one distinct search after another and never emit the
+/// end-of-turn token (observed on Qwen 3.6 35B: 106 `search_emails` calls in
+/// one round). Every call was executed and the results overflowed the context
+/// window, which dropped the system prompt and the question from the front.
+/// 8 is the largest batch seen in a round of a passing verified run.
+pub const MAX_TOOL_CALLS_PER_ROUND: usize = 8;
+
+/// Close the objects a `<tool_call>` body left open: Qwen 3.6 35B can end the
+/// block one brace short. Only for a block the model closed itself: one the
+/// stream cut off may be half written. `None` when nothing is open, or when a
+/// string is.
+pub(crate) fn close_open_objects(body: &str) -> Option<String> {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for c in body.chars() {
+        match (in_string, c) {
+            (true, _) if escaped => escaped = false,
+            (true, '\\') => escaped = true,
+            (true, '"') | (false, '"') => in_string = !in_string,
+            (false, '{') => depth += 1,
+            (false, '}') => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth > 0 && !in_string).then(|| format!("{body}{}", "}".repeat(depth)))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiMessage {
     pub role: String,
@@ -82,6 +118,10 @@ pub struct ChatStreamResult {
     /// `None` from the local backends, and from a reply cancelled before its
     /// usage arrived.
     pub cost_usd: Option<f64>,
+    /// The model stopped because it reached its token limit, not because it
+    /// had finished: the text ends mid-way. `false` when a backend does not
+    /// say, and for a reply its caller stopped.
+    pub truncated: bool,
 }
 
 /// Result from a streaming chat completion that may also carry tool calls.
@@ -113,6 +153,8 @@ pub struct ToolStreamResult {
     pub dropped_front_tokens: Option<u32>,
     /// See [`ChatStreamResult::cost_usd`].
     pub cost_usd: Option<f64>,
+    /// See [`ChatStreamResult::truncated`].
+    pub truncated: bool,
 }
 
 /// Capability flags for a backend. Higher-level code can use these to
@@ -204,6 +246,11 @@ pub struct ModelPricing {
 #[async_trait]
 pub trait AIProvider: Send + Sync {
     fn provider_type(&self) -> ProviderType;
+    /// The backend that computes this provider's embeddings: the same one,
+    /// except for a [`SplitProvider`].
+    fn embedding_provider_type(&self) -> ProviderType {
+        self.provider_type()
+    }
     fn model_name(&self) -> &str;
     fn embedding_model_name(&self) -> &str;
 
@@ -291,6 +338,7 @@ pub trait AIProvider: Send + Sync {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: false,
         })
     }
 
@@ -343,6 +391,7 @@ pub trait AIProvider: Send + Sync {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: false,
         })
     }
 
@@ -377,6 +426,142 @@ pub trait AIProvider: Send + Sync {
     }
 }
 
+// ── Split provider: chat from one backend, embeddings from another ─────────
+
+/// Chat from one provider and embeddings from another. Used for an
+/// OpenAI-compatible server, which usually serves chat only: its turns go to
+/// the server, while the email index is built by the in-app embedding model
+/// or by OpenRouter, whichever the user picked.
+///
+/// Every method is forwarded to `chat` except the embedding ones, which go to
+/// `embeddings`. Forwarding is explicit for each trait method — including the
+/// ones with default bodies — so a backend's own streaming, metering, context
+/// window and warm-up are never silently replaced by the trait's fallbacks.
+pub struct SplitProvider {
+    chat: std::sync::Arc<dyn AIProvider>,
+    embeddings: std::sync::Arc<dyn AIProvider>,
+}
+
+impl SplitProvider {
+    pub fn new(chat: std::sync::Arc<dyn AIProvider>, embeddings: std::sync::Arc<dyn AIProvider>) -> Self {
+        Self { chat, embeddings }
+    }
+}
+
+#[async_trait]
+impl AIProvider for SplitProvider {
+    fn provider_type(&self) -> ProviderType {
+        self.chat.provider_type()
+    }
+
+    fn embedding_provider_type(&self) -> ProviderType {
+        self.embeddings.embedding_provider_type()
+    }
+
+    fn model_name(&self) -> &str {
+        self.chat.model_name()
+    }
+
+    fn embedding_model_name(&self) -> &str {
+        self.embeddings.embedding_model_name()
+    }
+
+    async fn is_available(&self) -> bool {
+        self.chat.is_available().await
+    }
+
+    async fn is_embedding_available(&self) -> bool {
+        self.embeddings.is_embedding_available().await
+    }
+
+    fn embedding_configured(&self) -> bool {
+        self.embeddings.embedding_configured()
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        self.chat.list_models().await
+    }
+
+    async fn list_embedding_models(&self) -> Result<Vec<ModelInfo>> {
+        self.embeddings.list_embedding_models().await
+    }
+
+    async fn complete(&self, prompt: &str, options: CompletionOptions) -> Result<CompletionResult> {
+        self.chat.complete(prompt, options).await
+    }
+
+    async fn complete_with_prefix(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        options: CompletionOptions,
+    ) -> Result<CompletionResult> {
+        self.chat.complete_with_prefix(prefix, suffix, options).await
+    }
+
+    fn context_window(&self) -> Option<u32> {
+        self.chat.context_window()
+    }
+
+    async fn resolve_context_window(&self) -> Option<u32> {
+        self.chat.resolve_context_window().await
+    }
+
+    async fn embed(&self, text: &str) -> Result<EmbeddingResult> {
+        self.embeddings.embed(text).await
+    }
+
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>> {
+        self.embeddings.embed_batch(texts).await
+    }
+
+    async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
+        self.chat.chat_with_tools(messages, tools).await
+    }
+
+    async fn chat_with_tools_metered(
+        &self,
+        messages: &[AiMessage],
+        tools: &[serde_json::Value],
+    ) -> Result<ToolStreamResult> {
+        self.chat.chat_with_tools_metered(messages, tools).await
+    }
+
+    async fn chat_stream(
+        &self,
+        messages: Vec<AiMessage>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ChatStreamResult> {
+        self.chat.chat_stream(messages, on_token).await
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        self.chat.chat_stream_with_tools(messages, tools, on_token).await
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities {
+            embeddings: self.embeddings.capabilities().embeddings,
+            ..self.chat.capabilities()
+        }
+    }
+
+    /// Warms the chat backend only: the embedding model loads with the first
+    /// indexing batch, as it does for the in-app runtime on its own.
+    async fn warmup(&self) -> Result<()> {
+        self.chat.warmup().await
+    }
+
+    async fn prewarm_chat_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
+        self.chat.prewarm_chat_prefix(messages).await
+    }
+}
+
 // ── Fake AI provider for tests ───────────────────────────────────────────────
 //
 // Lives in the production crate (not `#[cfg(test)]`) so integration tests and
@@ -407,6 +592,8 @@ pub struct FakeAiProvider {
     embedding_cost_usd: f64,
     /// What `embedding_configured` answers (true by default).
     embedding_configured: bool,
+    /// What `provider_type` answers (Ollama by default).
+    provider_type: ProviderType,
     available: RwLock<bool>,
     /// FIFO of canned completion responses. When empty, falls back to
     /// `default_completion`.
@@ -424,6 +611,11 @@ pub struct FakeAiProvider {
     completion_calls: RwLock<Vec<String>>,
     completion_shapes: RwLock<Vec<Option<crate::ai::json_shape::JsonShape>>>,
     chat_calls: RwLock<Vec<Vec<AiMessage>>>,
+    /// When set, chat calls never return, like a model that has hung.
+    chats_hang: RwLock<bool>,
+    /// Which chat calls (1-based) report their reply as stopped at the token
+    /// limit.
+    truncated_chat_calls: RwLock<std::collections::HashSet<usize>>,
     embed_calls: RwLock<Vec<String>>,
     /// Called at the end of each `embed` with the number of calls so far.
     embed_hook: RwLock<Option<EmbedHook>>,
@@ -438,6 +630,7 @@ impl FakeAiProvider {
             embedding_dim: 8,
             embedding_cost_usd: 0.0,
             embedding_configured: true,
+            provider_type: ProviderType::Ollama,
             available: RwLock::new(true),
             completions: RwLock::new(std::collections::VecDeque::new()),
             completion_failure: RwLock::new(None),
@@ -457,6 +650,8 @@ impl FakeAiProvider {
             completion_calls: RwLock::new(Vec::new()),
             completion_shapes: RwLock::new(Vec::new()),
             chat_calls: RwLock::new(Vec::new()),
+            chats_hang: RwLock::new(false),
+            truncated_chat_calls: RwLock::new(std::collections::HashSet::new()),
             embed_calls: RwLock::new(Vec::new()),
             embed_hook: RwLock::new(None),
             prewarm_calls: RwLock::new(Vec::new()),
@@ -518,6 +713,13 @@ impl FakeAiProvider {
         *self.embed_hook.write().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(hook));
     }
 
+    /// Report `kind` as the backend type, for paths that depend on it (the
+    /// budget meters only OpenRouter).
+    pub fn with_provider_type(mut self, kind: ProviderType) -> Self {
+        self.provider_type = kind;
+        self
+    }
+
     /// Report `cost_usd` as charged on every `embed` call.
     pub fn with_embedding_cost(mut self, cost_usd: f64) -> Self {
         self.embedding_cost_usd = cost_usd;
@@ -554,6 +756,32 @@ impl FakeAiProvider {
     /// Queue a fully-formed canned chat response (e.g. one carrying
     /// `tool_calls`). Returned in FIFO order from `chat_with_tools` /
     /// `chat_stream_with_tools`.
+    /// Make every later chat call hang, sending no token and no reply.
+    pub fn hang_chats(&self) {
+        *self.chats_hang.write().unwrap_or_else(PoisonError::into_inner) = true;
+    }
+
+    /// [`Self::push_chat_message`] for a reply the backend reports as stopped
+    /// at its token limit.
+    pub fn push_truncated_chat_message(&self, msg: AiMessage) {
+        let queued = self.chats.read().unwrap_or_else(PoisonError::into_inner).len();
+        let made = self.chat_calls.read().unwrap_or_else(PoisonError::into_inner).len();
+        self.truncated_chat_calls
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(made + queued + 1);
+        self.push_chat_message(msg);
+    }
+
+    /// Whether the chat call made last is one queued as truncated.
+    fn last_chat_truncated(&self) -> bool {
+        let made = self.chat_calls.read().unwrap_or_else(PoisonError::into_inner).len();
+        self.truncated_chat_calls
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&made)
+    }
+
     pub fn push_chat_message(&self, msg: AiMessage) {
         self.chats
             .write()
@@ -649,7 +877,7 @@ impl Default for FakeAiProvider {
 #[async_trait]
 impl AIProvider for FakeAiProvider {
     fn provider_type(&self) -> ProviderType {
-        ProviderType::Ollama // arbitrary — tests typically don't gate on this
+        self.provider_type
     }
 
     async fn prewarm_chat_prefix(&self, messages: Vec<AiMessage>) -> Result<()> {
@@ -772,6 +1000,10 @@ impl AIProvider for FakeAiProvider {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .push(messages.to_vec());
+        let hangs = *self.chats_hang.read().unwrap_or_else(PoisonError::into_inner);
+        if hangs {
+            std::future::pending::<()>().await;
+        }
         Ok(self
             .chats
             .write()
@@ -807,6 +1039,35 @@ impl AIProvider for FakeAiProvider {
             stable_tokens: None,
             dropped_front_tokens: None,
             cost_usd: None,
+            truncated: self.last_chat_truncated(),
+        })
+    }
+
+    async fn chat_stream_with_tools(
+        &self,
+        messages: Vec<AiMessage>,
+        tools: Vec<serde_json::Value>,
+        mut on_token: Box<dyn FnMut(String) -> bool + Send>,
+    ) -> Result<ToolStreamResult> {
+        let message = self.chat_with_tools(&messages, &tools).await?;
+        let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+        if !has_tool_calls && !message.content.is_empty() {
+            let _ = on_token(message.content.clone());
+        }
+        Ok(ToolStreamResult {
+            message,
+            eval_count: None,
+            prompt_eval_count: None,
+            prefill_ms: None,
+            cached_prompt_tokens: None,
+            prefix_plan: None,
+            sys_cached_before: None,
+            sys_cached_after: None,
+            system_prefix_tokens: None,
+            stable_tokens: None,
+            dropped_front_tokens: None,
+            cost_usd: None,
+            truncated: self.last_chat_truncated(),
         })
     }
 }
@@ -825,6 +1086,61 @@ impl Clone for FakeAiProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SplitProvider ────────────────────────────────────────────────────
+
+    fn split() -> (
+        std::sync::Arc<FakeAiProvider>,
+        std::sync::Arc<FakeAiProvider>,
+        SplitProvider,
+    ) {
+        let chat = std::sync::Arc::new(FakeAiProvider::new().with_model("server-chat"));
+        let embeddings = std::sync::Arc::new(FakeAiProvider::new().with_model("local"));
+        let provider = SplitProvider::new(chat.clone(), embeddings.clone());
+        (chat, embeddings, provider)
+    }
+
+    #[tokio::test]
+    async fn split_provider_chats_with_one_backend_and_embeds_with_the_other() {
+        let (chat, embeddings, provider) = split();
+        chat.push_completion("from the server");
+        let reply = provider.complete("hi", CompletionOptions::default()).await.unwrap();
+        assert_eq!(reply.text, "from the server");
+        assert_eq!(chat.completion_calls(), vec!["hi"]);
+        assert!(
+            embeddings.completion_calls().is_empty(),
+            "no chat reaches the embedding backend"
+        );
+
+        provider.embed("mail text").await.unwrap();
+        provider.embed_batch(&["a".into(), "b".into()]).await.unwrap();
+        assert_eq!(embeddings.embed_calls(), vec!["mail text", "a", "b"]);
+        assert!(chat.embed_calls().is_empty(), "no mail is embedded by the chat server");
+    }
+
+    #[tokio::test]
+    async fn split_provider_names_each_side_and_streams_from_the_chat_backend() {
+        let (chat, _embeddings, provider) = split();
+        assert_eq!(provider.model_name(), "server-chat");
+        assert_eq!(provider.embedding_model_name(), "fake-embed-model");
+        chat.push_chat_response("streamed");
+        let result = provider.chat_stream(vec![], Box::new(|_| true)).await.unwrap();
+        assert_eq!(result.content, "streamed");
+        assert_eq!(chat.chat_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn split_provider_reports_the_embedding_backend_setup() {
+        let chat = std::sync::Arc::new(FakeAiProvider::new());
+        let unset = std::sync::Arc::new(FakeAiProvider::new().without_embedding_model());
+        let provider = SplitProvider::new(chat.clone(), unset);
+        assert!(
+            !provider.embedding_configured(),
+            "follows the embedding backend, not the chat one"
+        );
+        chat.set_available(false);
+        assert!(!provider.is_available().await, "availability is the chat server's");
+    }
 
     #[tokio::test]
     async fn complete_returns_canned_then_default() {

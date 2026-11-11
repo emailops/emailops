@@ -7,7 +7,7 @@ import { useLogStore } from '@/stores/logStore';
 
 const PRIMARY =
   'rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50';
-const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700';
+const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100';
 
 /** Pure: the addresses typed in the recipients box (commas, semicolons or new lines). */
 export function parseRecipients(text: string): string[] {
@@ -141,7 +141,7 @@ export function ShareDialog({ accountId, title, exclude, fromAddress, onShare, o
       // The error sits in the fixed header, never below the fold.
       subtitle={
         error ? (
-          <span data-testid="share-error" className="text-red-300">
+          <span data-testid="share-error" className="text-red-700">
             {error}
           </span>
         ) : (
@@ -165,7 +165,7 @@ export function ShareDialog({ accountId, title, exclude, fromAddress, onShare, o
         </>
       }
     >
-      <label className="block text-sm font-medium text-gray-300" htmlFor="share-recipients">
+      <label className="block text-sm font-medium text-gray-700" htmlFor="share-recipients">
         {t('documents:shareDialog.recipients')}
       </label>
       <textarea
@@ -174,11 +174,11 @@ export function ShareDialog({ accountId, title, exclude, fromAddress, onShare, o
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
-        className="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-2 py-1 text-sm text-gray-200"
+        className="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-800"
       />
       {suggestions.length > 0 && (
         <div className="mt-2" data-testid="share-suggestions">
-          {!token && <p className="mb-1 text-xs text-gray-400">{t('documents:shareDialog.suggested')}</p>}
+          {!token && <p className="mb-1 text-xs text-gray-500">{t('documents:shareDialog.suggested')}</p>}
           <ul className="flex flex-col gap-1">
             {suggestions.map((s) => (
               <li key={s.email}>
@@ -186,12 +186,12 @@ export function ShareDialog({ accountId, title, exclude, fromAddress, onShare, o
                   type="button"
                   data-testid={`share-suggestion-${s.email}`}
                   onClick={() => setText((current) => withRecipient(current, s.email))}
-                  className="w-full flex items-center gap-2 px-2 py-1 rounded text-left text-sm text-gray-200 hover:bg-gray-700"
+                  className="w-full flex items-center gap-2 px-2 py-1 rounded text-left text-sm text-gray-800 hover:bg-gray-100"
                 >
                   <span className="truncate">{s.name || s.email}</span>
                   {s.name && <span className="truncate text-xs text-gray-500">{s.email}</span>}
                   {s.sameOrganization && (
-                    <span className="ml-auto flex-shrink-0 px-1.5 py-0.5 rounded bg-primary-900/50 text-[10px] text-primary-200">
+                    <span className="ml-auto flex-shrink-0 px-1.5 py-0.5 rounded bg-primary-100 text-[10px] text-primary-700">
                       {t('documents:shareDialog.sameOrganization')}
                     </span>
                   )}
@@ -202,7 +202,7 @@ export function ShareDialog({ accountId, title, exclude, fromAddress, onShare, o
         </div>
       )}
       <p className="mt-1 text-xs text-gray-500">{t('documents:shareDialog.recipientsHint')}</p>
-      <label className="mt-4 flex items-start gap-2 text-sm text-gray-300">
+      <label className="mt-4 flex items-start gap-2 text-sm text-gray-700">
         <input
           type="checkbox"
           data-testid="share-consent"

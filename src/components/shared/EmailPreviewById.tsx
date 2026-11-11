@@ -130,7 +130,7 @@ export function EmailPreviewById({
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4 email-body-content">
-        {policyReady && <EmailHtmlFrame html={safeHtml} allowRemoteContent={allowRemote} />}
+        {policyReady && <EmailHtmlFrame html={safeHtml} schemeSource={body} allowRemoteContent={allowRemote} />}
       </div>
     </div>
   );

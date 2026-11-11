@@ -104,13 +104,13 @@ function Cell({ column, value, hasOverride }: CellProps) {
   const { t } = useTranslation(['common']);
   const fmt = useFormatters();
   if (value === null || value === undefined || value === '') {
-    return <span className="text-gray-600">—</span>;
+    return <span className="text-gray-400">—</span>;
   }
-  const cls = hasOverride ? 'text-amber-300' : 'text-gray-200';
+  const cls = hasOverride ? 'text-amber-700' : 'text-gray-800';
   switch (column.type) {
     case 'currency': {
       const v = value as { amount?: number; currency?: string };
-      if (typeof v.amount !== 'number') return <span className="text-gray-600">—</span>;
+      if (typeof v.amount !== 'number') return <span className="text-gray-400">—</span>;
       return (
         <span className={cls}>
           {fmt.number(v.amount, { minimumFractionDigits: 2 })} {v.currency ?? ''}
@@ -134,7 +134,7 @@ function Cell({ column, value, hasOverride }: CellProps) {
       return (
         <button
           type="button"
-          className="text-blue-400 hover:underline break-all text-left"
+          className="text-blue-600 hover:underline break-all text-left"
           onClick={(e) => {
             e.stopPropagation();
             // Hand off to the OS browser instead of navigating the app's own
@@ -201,7 +201,7 @@ function EditableCell({ column, value, hasOverride, onSave }: EditableCellProps)
             setEditing(false);
           }
         }}
-        className="w-24 rounded border border-blue-500 bg-[#1e1e1e] px-1 py-0.5 text-gray-100 focus:outline-none"
+        className="w-24 rounded border border-blue-500 bg-white px-1 py-0.5 text-gray-900 focus:outline-none"
       />
     );
   }
@@ -280,7 +280,7 @@ function EditableCell({ column, value, hasOverride, onSave }: EditableCellProps)
         if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
         if (e.key === 'Escape') setEditing(false);
       }}
-      className="w-full rounded border border-blue-500 bg-[#1e1e1e] px-1 py-0.5 text-gray-100 focus:outline-none"
+      className="w-full rounded border border-blue-500 bg-white px-1 py-0.5 text-gray-900 focus:outline-none"
     />
   );
 }
@@ -312,18 +312,18 @@ function LensTableRow({
   const { t } = useTranslation(['lenses']);
   const fmt = useFormatters();
   return (
-    <tr className="group border-b border-gray-800 hover:bg-gray-800/40">
-      <td className="px-3 py-2 align-top whitespace-nowrap text-gray-200">
+    <tr className="group border-b border-gray-200 hover:bg-gray-50">
+      <td className="px-3 py-2 align-top whitespace-nowrap text-gray-800">
         {fmt.date(row.emailTimestamp, EMAIL_DATE_OPTIONS)}
       </td>
       <td className="px-3 py-2 align-top">
         <button
           type="button"
           onClick={() => onOpenRow(row)}
-          className="block max-w-[18rem] cursor-pointer text-left hover:text-blue-300"
+          className="block max-w-[18rem] cursor-pointer text-left hover:text-blue-700"
           title={t('lenses:table.openSourceEmail')}
         >
-          <div className="truncate text-gray-200" title={row.emailSubject}>
+          <div className="truncate text-gray-800" title={row.emailSubject}>
             {row.emailSubject || t('lenses:create.noSubject')}
           </div>
           <div className="truncate text-[11px] text-gray-500" title={row.emailSender}>
@@ -346,7 +346,7 @@ function LensTableRow({
           <button
             type="button"
             onClick={() => onReextract(row.emailId)}
-            className="rounded border border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-gray-700"
+            className="rounded border border-gray-300 px-1.5 py-0.5 text-[10px] text-gray-700 hover:bg-gray-100"
             title={t('lenses:table.reextractRow')}
           >
             ↻
@@ -355,7 +355,7 @@ function LensTableRow({
             <button
               type="button"
               onClick={() => onInclude(row.emailId)}
-              className="rounded border border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-300 hover:bg-gray-700"
+              className="rounded border border-gray-300 px-1.5 py-0.5 text-[10px] text-gray-700 hover:bg-gray-100"
               title={t('lenses:table.includeRow')}
             >
               ↩
@@ -364,7 +364,7 @@ function LensTableRow({
             <button
               type="button"
               onClick={() => onExclude(row.emailId)}
-              className="rounded border border-red-700/60 px-1.5 py-0.5 text-[10px] text-red-300 hover:bg-red-900/40"
+              className="rounded border border-red-200 px-1.5 py-0.5 text-[10px] text-red-700 hover:bg-red-100"
               title={t('lenses:table.excludeRow')}
             >
               ✕
@@ -476,20 +476,20 @@ export function LensTable({
 
   return (
     <table className="w-full text-left text-xs">
-      <thead className="sticky top-0 bg-[#252526] text-gray-400">
+      <thead className="sticky top-0 bg-gray-50 text-gray-500">
         <tr>
           <th
-            className="cursor-pointer select-none border-b border-gray-700 px-3 py-2 font-medium whitespace-nowrap hover:text-gray-200"
+            className="cursor-pointer select-none border-b border-gray-200 px-3 py-2 font-medium whitespace-nowrap hover:text-gray-800"
             onClick={() => toggleSort(DATE_SORT_KEY)}
           >
             {t('lenses:table.date')}
             {sortArrow(DATE_SORT_KEY)}
           </th>
-          <th className="border-b border-gray-700 px-3 py-2 font-medium">{t('lenses:table.email')}</th>
+          <th className="border-b border-gray-200 px-3 py-2 font-medium">{t('lenses:table.email')}</th>
           {columns.map((c) => (
             <th
               key={c.key}
-              className="cursor-pointer select-none border-b border-gray-700 px-3 py-2 font-medium hover:text-gray-200"
+              className="cursor-pointer select-none border-b border-gray-200 px-3 py-2 font-medium hover:text-gray-800"
               title={c.description}
               onClick={() => toggleSort(c.key)}
             >
@@ -503,7 +503,7 @@ export function LensTable({
               />
             </th>
           ))}
-          <th className="border-b border-gray-700 px-3 py-2" />
+          <th className="border-b border-gray-200 px-3 py-2" />
         </tr>
       </thead>
       <tbody>
@@ -517,10 +517,10 @@ export function LensTable({
         {groups
           ? groups.map(([label, bucket]) => (
               <Fragment key={label}>
-                <tr className="bg-[#252526]">
+                <tr className="bg-gray-50">
                   <td
                     colSpan={colSpan}
-                    className="border-b border-gray-700 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400"
+                    className="border-b border-gray-200 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500"
                   >
                     {label === '(none)' ? t('lenses:noneOption') : label}{' '}
                     <span className="ml-1 text-gray-500">({bucket.length})</span>
@@ -565,8 +565,8 @@ export function EmptyState({ onCreate }: { onCreate: () => void }) {
   const { t } = useTranslation(['lenses']);
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-      <h2 className="text-base font-semibold text-gray-200">{t('lenses:empty')}</h2>
-      <p className="max-w-md text-xs text-gray-400">{t('lenses:emptyDescription')}</p>
+      <h2 className="text-base font-semibold text-gray-800">{t('lenses:empty')}</h2>
+      <p className="max-w-md text-xs text-gray-500">{t('lenses:emptyDescription')}</p>
       <button
         type="button"
         onClick={onCreate}
@@ -593,13 +593,13 @@ export function NoRowsState({
   const pct = total > 0 ? Math.min(100, Math.round((processed / Math.max(1, total)) * 100)) : 0;
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-      <h2 className="text-base font-semibold text-gray-200">{t('lenses:emptyRows')}</h2>
-      <p className="max-w-md text-xs text-gray-400">
+      <h2 className="text-base font-semibold text-gray-800">{t('lenses:emptyRows')}</h2>
+      <p className="max-w-md text-xs text-gray-500">
         {isRunning && total > 0 ? t('lenses:view.extractingFrom', { count: total }) : t('lenses:view.noRowsHelp')}
       </p>
       {isRunning && total > 0 && (
         <div className="w-72 max-w-full">
-          <div className="h-1.5 w-full overflow-hidden rounded bg-gray-800">
+          <div className="h-1.5 w-full overflow-hidden rounded bg-gray-200">
             <div className="h-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
           </div>
           <p className="mt-1 text-[11px] text-gray-500">{t('lenses:view.progress', { processed, total, pct })}</p>

@@ -46,9 +46,8 @@ describe('composeEditorExtensions — tables', () => {
     });
     expect(body.querySelectorAll('tr')).toHaveLength(3);
     expect(attrs(body.querySelector('tr'))).toEqual({ bgcolor: '#eeeeee', style: 'height: 30px;' });
-    expect(attrs(body.querySelector('th'))).toEqual({ colspan: '2', rowspan: '1', align: 'left' });
+    expect(attrs(body.querySelector('th'))).toEqual({ colspan: '2', align: 'left' });
     expect(attrs(body.querySelector('td'))).toEqual({
-      colspan: '1',
       rowspan: '2',
       width: '200',
       valign: 'top',
@@ -60,9 +59,7 @@ describe('composeEditorExtensions — tables', () => {
 
   it('adds no editor-only markup to the table', () => {
     const out = roundTrip('<table><tbody><tr><td>One</td><td>Two</td></tr></tbody></table>');
-    expect(out).toBe(
-      '<table><tbody><tr><td colspan="1" rowspan="1"><p>One</p></td><td colspan="1" rowspan="1"><p>Two</p></td></tr></tbody></table>',
-    );
+    expect(out).toBe('<table><tbody><tr><td><p>One</p></td><td><p>Two</p></td></tr></tbody></table>');
   });
 
   it('keeps the table when text inside a cell is edited', () => {
@@ -259,7 +256,7 @@ describe('composeEditorExtensions — table sections, caption and column widths'
 
   it('writes a table that is all header rows without an empty tbody', () => {
     expect(roundTrip('<table><thead><tr><th>Only</th></tr></thead></table>')).toBe(
-      '<table><thead><tr><th colspan="1" rowspan="1"><p>Only</p></th></tr></thead></table>',
+      '<table><thead><tr><th><p>Only</p></th></tr></thead></table>',
     );
   });
 

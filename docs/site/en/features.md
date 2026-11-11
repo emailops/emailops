@@ -39,6 +39,20 @@ An **All accounts** view merges every enabled mailbox into one list, alongside t
 per-account views. Custom IMAP folders are synced too, and you can create, rename, delete
 and drag messages between folders from inside the app.
 
+## Replying
+
+<!-- claim:reading-pane-reply -->
+**Reply** answers the sender, or the address the message names in its *Reply-To* header, as a
+mailing list or a shop's no-reply address does. **Reply all** adds everyone else in the
+conversation. The subject of a reply or a forward can be edited before it goes, and a reply
+stays in its conversation. Every composer has **Cc** and **Bcc**: blind copies reach their
+recipients without the others seeing them, and a message can go to Cc or Bcc alone.
+
+<!-- claim:compose-drafts-keep-files -->
+What you write is saved as a draft as you type, attached files included, so closing a composer
+or the app keeps it; a forward is kept too. A message holds up to 32 files of at most 25 MB
+each.
+
 ## Forwarding
 
 <!-- claim:reading-pane-forward -->
@@ -63,6 +77,12 @@ for Gmail and Outlook accounts and in **All accounts**; an IMAP account archives
 Archive folder, which appears with its other folders. Archived mail is only out of the inbox:
 search, the smart filters and the AI features still reach it.
 
+<!-- claim:feat-list-sent-rows -->
+In every list, a row for a message you sent names who it went to (“To: Ana, Luis +1”) instead
+of your own name, and its tooltip lists every recipient. A recipient's name comes from the
+message itself or from how that person signs when they write to you; failing that, the row
+shows the address.
+
 <!-- claim:feat-organize-3 -->
 Tick the box at the start of a row to select it. With one or more selected, a toolbar above the
 list acts on all of them at once — archive, snooze, delete, mark as read or unread, star — and
@@ -82,8 +102,8 @@ conversation as unread always goes back to the list.
 <!-- claim:feat-organize-6 -->
 **All** and **Unread** at the top of the list choose what it shows. **Unread** keeps only the
 conversations with an unread message — in views that list single messages, such as sent mail
-and folders, only the unread messages — in every view and with a smart filter on; it is hidden
-while you search. A conversation you open stays in the list until the list reloads, and the
+and folders, only the unread messages — in every view, with a smart filter on and while you
+search. A conversation you open stays in the list until the list reloads, and the
 choice lasts until you quit EmailOps.
 
 ## Snooze {#snooze}
@@ -141,6 +161,11 @@ In the plain-text version of a message, a signature that ends it is preceded by 
 `-- ` line, so other mail apps can recognise it. When the account has a signature for that kind
 of message, AI drafts leave your name and contact details out and let the signature sign.
 
+<!-- claim:feat-signatures-4 -->
+Below the signature, **Add "Sent with EmailOps" at the end of the messages I send** decides
+whether the messages you send end with that line. It is on by default and applies to every
+account; messages already sent keep their footer.
+
 ## Smart filters
 
 <!-- claim:feat-smart-filters-1 -->
@@ -152,15 +177,16 @@ feed the [Tag Board](../ai-features/#tag-board), which lays them out as a grid o
 Clicking a filter writes it into the search box as a query you can see and edit —
 `tag:priority=urgent`, `from:`, `domain:`, `ext:` — and clicking it again clears it.
 Right-click a filter and choose **Add to search** to combine it with what is already there.
-A filter works inside the view you are in, so in Sent or a folder it lists only that view's mail,
-and the search stays set when you switch accounts; when it finds nothing, the list says a
+A filter or search works inside the view you are in: Sent, Spam, Trash and folders list only their
+own mail, and the inbox reaches everything except Spam and Trash. The search stays set when you switch accounts; when it finds nothing, the list says a
 search is active and offers to clear it. Each tag group lists its ten most-used values first,
 with a button under the group for the rest.
 
 ## Calendar {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Per-account month, week and day views for Google Calendar and Outlook. You get meeting
+Month, week and day views for Google Calendar and Outlook, for one account or for **All
+accounts** together, where each event takes its account's colour. You get meeting
 reminders ahead of each event with a one-click **Join** button for Meet, Teams, Webex and
 Zoom links. Calendar sync is on by default for Gmail and Outlook accounts and can be
 switched off per account, along with the notification lead time, in **Settings → Calendar**.
@@ -170,6 +196,16 @@ Every calendar on an account is synced, not just the primary one — so a calend
 colleague shared with you shows up here the same way it does in Google or Outlook. Each
 one is tinted with the colour its provider gives it, and the legend above the grid hides
 or shows individual calendars; the same switches live in **Settings → Calendar**.
+
+<!-- claim:feat-calendar-4 -->
+IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example
+Proton Calendar's share-via-link URL, under **Calendar feeds (IMAP accounts)** in
+**Settings → Calendar**. A feed is read-only, refreshes every few minutes, and its link is kept
+in your keychain, not in the database.
+
+<!-- claim:feat-calendar-5 -->
+Next to the inbox, the calendar also opens as a panel docked on the right, the **Agenda**;
+**Open full calendar** switches to the full view.
 
 <!-- claim:feat-calendar-3 -->
 System notifications for a reminder leave the meeting title out unless you turn on
@@ -182,6 +218,9 @@ EmailOps always shows the full meeting.
 <!-- claim:feat-attachments-view-1 -->
 One place for the attachments you care about — invoices, contracts, receipts — with preview and
 download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
+
+<!-- claim:feat-attachments-view-9 -->
+A PDF opens in its own tab, where **Zoom in** and **Zoom out** change its size.
 
 <!-- claim:feat-attachments-view-2 -->
 The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or
@@ -270,8 +309,8 @@ email's recipients.
 ## Search
 
 <!-- claim:feat-search-1 -->
-Full-text search over subjects, bodies, senders and attachments. With AI enabled this is
-joined by semantic search, which matches on meaning rather than exact words.
+Full-text search over subjects, bodies and senders. The list goes down to the last match in the
+mail you have downloaded, and mail the junk detector flagged shows up with its warning.
 
 <!-- claim:feat-search-2 -->
 Searches can be narrowed with operators, on their own or next to free text:
@@ -280,12 +319,21 @@ Searches can be narrowed with operators, on their own or next to free text:
 |---|---|
 | `from:ana` | sender address or name |
 | `to:ana` | recipient |
+| `cc:ana` | someone in Cc |
 | `subject:invoice` | subject line |
 | `before:2026-09-01` / `after:2026-09-01` | received date |
 | `id:<email id>` | one specific email |
 | `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
 | `domain:example.com` | the sender's domain |
 | `ext:pdf` | an attachment of that file type |
+| `has:attachment` / `-has:attachment` | mail with / without attachments |
+
+<!-- claim:feat-search-3 -->
+In the free text, a quoted phrase finds its words in that order, `OR` between two words finds
+either, a `-` (or `NOT`) before a word leaves out the mail that has it, and brackets group:
+`(invoice OR receipt) -draft`. Words side by side must all match, and they group before `OR`:
+`invoice OR receipt march` means invoice, or receipt and march. Operators are written in
+capitals; a lowercase "or" is an ordinary word.
 
 ## Junk and bulk mail {#junk-and-bulk-mail}
 
@@ -350,6 +398,21 @@ until you allow them, and credentials live in the system keyring. All of it is c
 Split or full-width inbox layout, and a UI available in English, Spanish, French and German.
 The AI's output language is set separately, so you can read the interface in one language and
 have replies drafted in another.
+
+<!-- claim:feat-interface-2 -->
+EmailOps has a light and a dark theme. **Settings → Appearance → Theme** offers **Light**,
+**Dark** and **System**, which follows the operating system's appearance; the choice is kept
+across restarts. On the dark theme, messages are shown dark too whenever they can be: a message
+that brings its own dark design uses it, a plain message or a light design is adapted, and a
+design that is already dark is left as it is.
+
+<!-- claim:feat-interface-3 -->
+**Settings → About** shows the version you are running, with links to the website, the source code
+on GitHub and **Sponsor the project ♥**, which opens the project's GitHub Sponsors page.
+
+<!-- claim:feat-interface-4 -->
+The compose toolbar has a **Font** and a **Font size** picker. Both follow the cursor, so they show
+the font and size of the text you are in.
 
 ## Keyboard shortcuts {#keyboard-shortcuts}
 

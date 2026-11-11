@@ -16,8 +16,10 @@ export default defineConfig({
     globals: true,
     // Never pick up test files from agent worktrees under .claude/ — they
     // duplicate src/ against a different node_modules (two React copies →
-    // null-hooks errors) and would fail main's suite spuriously.
-    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
+    // null-hooks errors) and would fail main's suite spuriously. `.tasks/` is
+    // the private task-board repo some checkouts clone in place; its plugin
+    // tests need the Claude Code runtime, not the app's.
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**', '.tasks/**'],
     // Only read by `vitest run --coverage` (make coverage-ts); the plain gate
     // run does not collect coverage. Reports land in the gitignored
     // src-tauri/reports/ tree next to the Rust coverage.
@@ -34,7 +36,9 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      // .claude/worktrees/ holds full checkouts; edits or an `npm ci` there
+      // would otherwise reload (or end) a `make dev` run from this checkout.
+      ignored: ['**/src-tauri/**', '**/.claude/**'],
     },
   },
 });

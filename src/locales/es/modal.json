@@ -50,6 +50,18 @@
     "senderNameHeading": "Nombre del remitente",
     "senderNameHint": "Aparece como remitente en los correos que envías desde esta cuenta. Déjalo vacío para enviar solo con la dirección.",
     "senderNamePlaceholder": "Tu nombre",
+    "colorHeading": "Color",
+    "colorHint": "Identifica esta cuenta en la barra lateral, la bandeja unificada y el calendario de \"Todas las cuentas\".",
+    "colors": {
+      "blue": "Azul",
+      "emerald": "Esmeralda",
+      "amber": "Ámbar",
+      "purple": "Morado",
+      "rose": "Rosa",
+      "cyan": "Cian",
+      "indigo": "Índigo",
+      "orange": "Naranja"
+    },
     "syncHeading": "Sincronización",
     "categoriesHeading": "Categorías a sincronizar",
     "autoDownloadHeading": "Descarga automática de adjuntos",

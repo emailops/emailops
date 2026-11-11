@@ -58,9 +58,9 @@ export function LensFolderChips({ accountId, selected, onToggle }: LensFolderChi
 
   return (
     <div className="space-y-1">
-      <span className="block text-gray-400">{t('lenses:scope.folders')}</span>
+      <span className="block text-gray-500">{t('lenses:scope.folders')}</span>
       {loadError && (
-        <p className="text-[10px] text-red-400">{t('lenses:scope.foldersLoadError', { error: loadError })}</p>
+        <p className="text-[10px] text-red-600">{t('lenses:scope.foldersLoadError', { error: loadError })}</p>
       )}
       {showFilter && (
         <input
@@ -69,7 +69,7 @@ export function LensFolderChips({ accountId, selected, onToggle }: LensFolderChi
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t('lenses:scope.foldersFilter')}
           aria-label={t('lenses:scope.foldersFilter')}
-          className="w-full rounded border border-gray-600 bg-[#1e1e1e] px-2 py-1 text-gray-100 focus:border-blue-500 focus:outline-none"
+          className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 focus:border-blue-500 focus:outline-none"
         />
       )}
       {/* ~4 rows of chips; a long folder list scrolls here instead of pushing
@@ -83,10 +83,10 @@ export function LensFolderChips({ accountId, selected, onToggle }: LensFolderChi
             title={chip.missing ? t('lenses:scope.folderMissing') : chip.label}
             className={`rounded border px-2 py-0.5 text-[11px] ${
               chip.missing
-                ? 'border-yellow-600 text-yellow-300 line-through'
+                ? 'border-yellow-300 text-yellow-700 line-through'
                 : selected.includes(chip.value)
-                  ? 'border-blue-500 bg-blue-600/30 text-blue-200'
-                  : 'border-gray-600 text-gray-300 hover:bg-gray-700'
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-100'
             }`}
           >
             {chip.label}

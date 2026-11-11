@@ -1,6 +1,8 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
+import { Modal } from '@/components/common/Modal';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
@@ -8,8 +10,9 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useDraftFiles } from '@/hooks/useDraftFiles';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import type {
-  DraftAttachmentInput,
   DraftFailedEvent,
   DraftGeneratedEvent,
   EmailAttachment,
@@ -19,6 +22,7 @@ import type {
 import * as api from '@/lib/api';
 import {
   type ComposeDraftState,
+  canSend,
   createDraftAutosaver,
   type DraftAutosaver,
   shouldAutosaveDraft,
@@ -35,10 +39,17 @@ import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
 import type { Account } from '@/types';
 
+/** What the tab bar needs to close this tab the way its own × does. */
+export interface ComposeTabHandle {
+  /** Whether closing has to wait for the user, who has just been asked. */
+  askBeforeClosing: () => boolean;
+}
+
 interface ComposeTabViewProps {
   tab: ComposeTab;
   accounts: Account[];
   onClose: () => void;
+  ref?: Ref<ComposeTabHandle>;
 }
 
 function getDomain(email: string): string {
@@ -50,8 +61,9 @@ function extractEmail(raw: string): string {
   return (match ? match[1] : raw).trim().toLowerCase();
 }
 
-export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) {
-  const { t } = useTranslation(['compose']);
+type RecipientField = 'to' | 'cc' | 'bcc';
+export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewProps) {
+  const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
@@ -70,19 +82,27 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const [isDiscarding, setIsDiscarding] = useState(false);
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
   const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
+  const [bccRecipients, setBccRecipients] = useState<string[]>(tab.bccAddresses ?? []);
+  const [showBcc, setShowBcc] = useState((tab.bccAddresses ?? []).length > 0);
   const [attachments, setAttachments] = useState<EmailAttachment[]>(tab.fileAttachments ?? []);
-  // File-path attachments carried from the draft (e.g. added via the CLI).
-  // Shown as chips; preserved across auto-saves; sent via send_draft.
-  const [draftAttachments, setDraftAttachments] = useState<DraftAttachmentInput[]>(() =>
+  // The draft's files: those it opened with (a reopened draft, the CLI) and
+  // those attached here, stored for it as they arrive. Saved with the draft
+  // and sent from it.
+  const draftFiles = useDraftFiles(
+    fromAccountId,
     (tab.attachments ?? []).map((a) => ({ filePath: a.filePath, filename: a.filename, mimeType: a.mimeType })),
   );
-  const hasDraftAttachments = draftAttachments.length > 0;
+  const hasDraftAttachments = draftFiles.files.length > 0;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   // AI draft state. Request id in a ref so the once-registered listener below
   // matches the right response without re-binding per request — same contract
   // as ComposeModal, which this view replaces when the user maximizes.
@@ -90,7 +110,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
-  const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
+  const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
   // Auto-save, seeded with this tab's backing draft id when editing an existing
@@ -104,7 +124,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     );
   }
 
-  const allRecipients = [...toRecipients, ...ccRecipients];
+  const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
   const contextDomain = (() => {
     const domains = allRecipients.filter((r) => !selfEmails.includes(r.toLowerCase())).map(getDomain);
     if (domains.length === 0) return undefined;
@@ -125,14 +145,14 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       try {
         const results = await api.autocompleteRecipients(account.id, prefix, contextDomain, 8);
         if (suggestionsRef.current !== reqId) return;
-        const existing = new Set([...toRecipients, ...ccRecipients].map((r) => r.toLowerCase()));
+        const existing = new Set([...toRecipients, ...ccRecipients, ...bccRecipients].map((r) => r.toLowerCase()));
         setSuggestions(results.filter((r) => !existing.has(r.email.toLowerCase())));
         setSelectedIdx(0);
       } catch {
         setSuggestions([]);
       }
     },
-    [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
+    [fromAccountId, accounts, toRecipients, ccRecipients, bccRecipients, contextDomain],
   );
 
   // Debounced auto-save ~0.8s after the last edit. Upserts the backing draft
@@ -147,14 +167,13 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       // recipient the user means; the saved draft must not drop it.
       toAddresses: mergePendingRecipient(toRecipients, toInput),
       ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
-      // Manage (and thus preserve) the draft's file-path attachments across
-      // saves. When there are none, leave the field undefined so a text-only
-      // save doesn't clear anything.
-      attachments: hasDraftAttachments ? draftAttachments : undefined,
-      isSending,
+      attachments: draftFiles.forSave,
+      // A save landing after Discard would bring the draft back.
+      isSending: isSending || isDiscarding,
       sent,
     };
     // A body holding only the inserted signature is not something to save.
@@ -165,54 +184,47 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   }, [
     toRecipients,
     ccRecipients,
+    bccRecipients,
     toInput,
     ccInput,
+    bccInput,
     subject,
     bodyHtml,
     fromAccountId,
     isSending,
+    isDiscarding,
     sent,
-    draftAttachments,
-    hasDraftAttachments,
+    draftFiles.forSave,
     tab.replyToEmailId,
   ]);
 
-  const addRecipient = (field: 'to' | 'cc', email: string) => {
+  const recipientFields = {
+    to: { list: toRecipients, setList: setToRecipients, setInput: setToInput },
+    cc: { list: ccRecipients, setList: setCcRecipients, setInput: setCcInput },
+    bcc: { list: bccRecipients, setList: setBccRecipients, setInput: setBccInput },
+  };
+
+  const addRecipient = (field: RecipientField, email: string) => {
     const trimmed = extractEmail(email);
     if (!trimmed || !trimmed.includes('@')) return;
-    if (field === 'to') {
-      if (!toRecipients.includes(trimmed)) setToRecipients((prev) => [...prev, trimmed]);
-      setToInput('');
-    } else {
-      if (!ccRecipients.includes(trimmed)) setCcRecipients((prev) => [...prev, trimmed]);
-      setCcInput('');
-    }
+    const { list, setList, setInput } = recipientFields[field];
+    if (!list.includes(trimmed)) setList((prev) => [...prev, trimmed]);
+    setInput('');
     setSuggestions([]);
   };
 
-  const removeRecipient = (field: 'to' | 'cc', email: string) => {
-    if (field === 'to') setToRecipients((prev) => prev.filter((r) => r !== email));
-    else setCcRecipients((prev) => prev.filter((r) => r !== email));
+  const removeRecipient = (field: RecipientField, email: string) => {
+    recipientFields[field].setList((prev) => prev.filter((r) => r !== email));
   };
 
-  const handleFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        const data = result.split(',')[1] ?? '';
-        setAttachments((prev) => [
-          ...prev,
-          { filename: file.name, mimeType: file.type || 'application/octet-stream', data },
-        ]);
-      };
-      reader.readAsDataURL(file);
-    });
+  const handleFiles = (files: FileList | null) => {
+    draftFiles.addFiles(files);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
+  };
+  // A file dropped anywhere on the composer is attached, not opened.
+  const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
-  const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
+  const handleKeyDown = (field: RecipientField, e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1));
@@ -227,7 +239,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       addRecipient(field, input);
     } else if (e.key === 'Backspace' && input === '') {
       e.preventDefault();
-      const list = field === 'to' ? toRecipients : ccRecipients;
+      const { list } = recipientFields[field];
       if (list.length > 0) removeRecipient(field, list[list.length - 1]);
     }
   };
@@ -275,6 +287,17 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   }, [addLog]);
 
   const canDraftWithAi = mergePendingRecipient(toRecipients, toInput).length > 0 && !!subject.trim();
+  const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  const readyToSend = canSend({
+    to: mergePendingRecipient(toRecipients, toInput),
+    cc: mergePendingRecipient(ccRecipients, ccInput),
+    bcc: mergePendingRecipient(bccRecipients, bccInput),
+    subject,
+    requireSubject: true,
+    plainBody: outgoing.plainText,
+    inlineImages: outgoing.inlineImages.length,
+    attachments: attachments.length + draftFiles.files.length,
+  });
 
   const handleDraftWithAI = async () => {
     const to = mergePendingRecipient(toRecipients, toInput);
@@ -301,20 +324,37 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     // Same rule as ComposeModal: an address left in the input box counts.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
+    const bcc = mergePendingRecipient(bccRecipients, bccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
-    if (to.length === 0 || !subject.trim() || !plain) return;
+    const ready = canSend({
+      to,
+      cc,
+      bcc,
+      subject,
+      requireSubject: true,
+      plainBody: plain,
+      inlineImages: prepared.inlineImages.length,
+      attachments: attachments.length + draftFiles.files.length,
+    });
+    if (!ready || draftFiles.isStoring) return;
     setSendError(null);
     setIsSending(true);
     try {
       // Wait for any in-flight auto-save so the queued message and the draft
       // it replaces are the same text (auto-save stops while sending).
       const draftId = await autosaverRef.current?.flush();
+      // The draft's files go out from the draft, which queueing reads.
+      if (hasDraftAttachments && !draftId) {
+        setSendError(t('compose:draftFilesNotSaved'));
+        return;
+      }
       const message: OutgoingMessage = {
         accountId: fromAccountId,
         replyToEmailId: tab.replyToEmailId ?? null,
         to,
         cc,
+        bcc,
         subject: subject.trim(),
         body: plain,
         bodyHtml: prepared.bodyHtml,
@@ -331,6 +371,7 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
       }
       const outcome = await outbox.send(message, {
         draftId,
+        draftHoldsFiles: hasDraftAttachments,
         sendDirect: () => sendDirect(message, draftId, prepared.inlineImages),
       });
       if (outcome === 'queued') {
@@ -344,42 +385,38 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
     }
   };
 
-  /** Undo send off: send at once, as before the outbox existed. */
+  /** Undo send off and no files on the draft: send at once, as before the
+   *  outbox existed. A draft holding files is always queued, which adds them. */
   const sendDirect = async (message: OutgoingMessage, draftId: string | undefined, inlineImages: EmailAttachment[]) => {
-    if (hasDraftAttachments) {
-      // The draft's file-path attachments live on disk, not as base64 here —
-      // send through the draft so the backend reads their bytes (and removes
-      // the draft, local + provider, afterwards).
-      if (!draftId) throw new Error('draft not yet saved');
-      await api.sendDraft(draftId, fromAccountId);
+    if (message.replyToEmailId) {
+      await api.sendReply(
+        message.replyToEmailId,
+        message.body,
+        fromAccountId,
+        message.to,
+        message.cc,
+        message.bodyHtml ?? undefined,
+        inlineImages,
+        message.attachments,
+        message.bcc,
+        message.subject,
+      );
     } else {
-      if (message.replyToEmailId) {
-        await api.sendReply(
-          message.replyToEmailId,
-          message.body,
-          fromAccountId,
-          message.to,
-          message.cc,
-          message.bodyHtml ?? undefined,
-          inlineImages,
-          message.attachments,
-        );
-      } else {
-        await api.sendNewEmail(
-          fromAccountId,
-          message.to,
-          message.cc,
-          message.subject,
-          message.body,
-          message.attachments,
-          message.bodyHtml ?? undefined,
-          inlineImages,
-        );
-      }
-      // Drop the backing draft (local + provider copy) now that it's sent, so it
-      // doesn't linger in Drafts or get re-pulled on the next sync.
-      if (draftId) api.deleteDraft(draftId, fromAccountId).catch(() => {});
+      await api.sendNewEmail(
+        fromAccountId,
+        message.to,
+        message.cc,
+        message.subject,
+        message.body,
+        message.attachments,
+        message.bodyHtml ?? undefined,
+        inlineImages,
+        message.bcc,
+      );
     }
+    // Drop the backing draft (local + provider copy) now that it's sent, so it
+    // doesn't linger in Drafts or get re-pulled on the next sync.
+    if (draftId) api.deleteDraft(draftId, fromAccountId).catch(() => {});
     addLog('success', 'sync', `Email sent to ${message.to.join(', ')}`);
     setSent(true);
     // The backend stored the optimistic Sent row before returning — nudge
@@ -391,8 +428,31 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   const handleSend = () => void submit(null);
   const handleSendKey = useComposerSendKey(handleSend, isSending || sent);
 
+  // The autosaved draft keeps the text, not the files: those live here until
+  // the message goes out, so closing the tab with some asks first.
+  const askBeforeClosing = () => {
+    if (attachments.length === 0 || sent) return false;
+    setConfirmingClose(true);
+    return true;
+  };
+  useImperativeHandle(ref, () => ({ askBeforeClosing }));
+
+  /** The autosave has already written the message: discarding it means
+   *  removing that draft. Closing the tab is what keeps it. */
+  const handleDiscard = async () => {
+    setConfirmingDiscard(false);
+    setIsDiscarding(true);
+    const draftId = await autosaverRef.current?.flush();
+    if (draftId) {
+      await api
+        .deleteDraft(draftId, fromAccountId)
+        .catch((err) => addLog('error', 'sync', `Could not delete the draft: ${errorText(err)}`));
+    }
+    onClose();
+  };
+
   const renderTokenInput = (
-    field: 'to' | 'cc',
+    field: RecipientField,
     label: string,
     recipients: string[],
     input: string,
@@ -469,13 +529,20 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
   );
 
   return (
-    <div className="flex-1 bg-white flex flex-col overflow-hidden" onKeyDownCapture={handleSendKey}>
+    <div
+      className={`flex-1 bg-white flex flex-col overflow-hidden ${fileOver ? 'ring-2 ring-inset ring-primary-500' : ''}`}
+      onKeyDownCapture={handleSendKey}
+      {...dropProps}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 flex-shrink-0">
         <h2 className="text-base font-semibold text-gray-900">{t('compose:newEmail')}</h2>
         <button
           type="button"
-          onClick={onClose}
+          data-testid="compose-tab-close"
+          onClick={() => {
+            if (!askBeforeClosing()) onClose();
+          }}
           className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -483,6 +550,14 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           </svg>
         </button>
       </div>
+
+      {/* Outside the scrolling body, to be seen without scrolling past the message. */}
+      <InlineError message={sendError} className="mx-5 mt-3 flex-shrink-0" />
+      {sent && (
+        <div className="mx-5 mt-3 flex-shrink-0 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+          {t('compose:sentConfirm')}
+        </div>
+      )}
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto p-5">
@@ -496,23 +571,36 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
               options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
               ariaLabel={t('compose:from')}
               fullWidth
-              variant="light"
             />
           </div>
         </div>
 
-        {renderTokenInput('to', 'To', toRecipients, toInput, setToInput)}
+        {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
-        {!showCc && (
-          <button
-            type="button"
-            onClick={() => setShowCc(true)}
-            className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
-          >
-            + Cc
-          </button>
+        {(!showCc || !showBcc) && (
+          <div className="flex gap-3 mb-2 ml-16">
+            {!showCc && (
+              <button
+                type="button"
+                onClick={() => setShowCc(true)}
+                className="text-xs text-primary-500 hover:text-primary-600"
+              >
+                + {t('compose:cc')}
+              </button>
+            )}
+            {!showBcc && (
+              <button
+                type="button"
+                onClick={() => setShowBcc(true)}
+                className="text-xs text-primary-500 hover:text-primary-600"
+              >
+                + {t('compose:bcc')}
+              </button>
+            )}
+          </div>
         )}
-        {showCc && renderTokenInput('cc', 'Cc', ccRecipients, ccInput, setCcInput)}
+        {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
+        {showBcc && renderTokenInput('bcc', t('compose:bcc'), bccRecipients, bccInput, setBccInput)}
 
         <div className="flex items-center gap-2 mb-3">
           <span className="text-sm text-gray-500 w-14 flex-shrink-0">{t('compose:subject')}</span>
@@ -532,9 +620,10 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
           contentClassName="min-h-[300px]"
         />
 
-        {(attachments.length > 0 || draftAttachments.length > 0) && (
+        <InlineError message={draftFiles.error} className="mt-2" />
+        {(attachments.length > 0 || draftFiles.files.length > 0) && (
           <div className="mt-2 flex flex-wrap gap-2">
-            {draftAttachments.map((att, i) => (
+            {draftFiles.files.map((att, i) => (
               <div
                 key={att.filePath}
                 className="flex items-center gap-1.5 px-2.5 py-1 bg-primary-50 border border-primary-200 rounded-lg text-xs text-primary-700"
@@ -551,7 +640,8 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
                 <span className="max-w-[180px] truncate">{att.filename}</span>
                 <button
                   type="button"
-                  onClick={() => setDraftAttachments((prev) => prev.filter((_, j) => j !== i))}
+                  onClick={() => draftFiles.remove(i)}
+                  aria-label={t('compose:removeAttachment', { name: att.filename ?? '' })}
                   className="ml-0.5 text-primary-400 hover:text-red-500"
                 >
                   ×
@@ -575,28 +665,17 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
             ))}
           </div>
         )}
-
-        {sendError && (
-          <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-            {sendError}
-          </div>
-        )}
-        {sent && (
-          <div className="mt-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-            {t('compose:sentConfirm')}
-          </div>
-        )}
       </div>
 
       {/* Footer */}
       <div className="px-5 py-3 border-t border-gray-200 flex items-center gap-2 flex-shrink-0">
         <AttachMenu
           accountId={fromAccountId}
-          disabled={isSending || sent || hasDraftAttachments}
+          disabled={isSending || sent}
           onPickFiles={() => fileInputRef.current?.click()}
           onPickEoDocs={(docs) => setAttachments((prev) => [...prev, ...docs.map(eoDocAttachment)])}
           className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
-          title={hasDraftAttachments ? t('compose:attachFromDraftHint') : t('compose:attachFiles')}
+          title={t('compose:attachFiles')}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -645,26 +724,72 @@ export function ComposeTabView({ tab, accounts, onClose }: ComposeTabViewProps) 
         <div className="flex-1" />
         <button
           type="button"
-          onClick={onClose}
-          disabled={isSending || sent}
+          onClick={() => setConfirmingDiscard(true)}
+          disabled={isSending || sent || isDiscarding}
           className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50"
         >
-          Discard
+          {t('compose:discardDraft')}
         </button>
         <SendSplitButton
           testId="compose-tab-send"
           label={isSending ? t('compose:sending') : t('compose:send')}
           onSend={handleSend}
           onSchedule={(at) => void submit(at)}
-          disabled={
-            isSending ||
-            sent ||
-            mergePendingRecipient(toRecipients, toInput).length === 0 ||
-            !subject.trim() ||
-            !bodyHtml.trim()
-          }
+          disabled={isSending || sent || draftFiles.isStoring || !readyToSend}
         />
       </div>
+      <Modal
+        open={confirmingDiscard}
+        onClose={() => setConfirmingDiscard(false)}
+        title={t('compose:discardConfirm')}
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingDiscard(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100"
+            >
+              {t('common:actions.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDiscard()}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+            >
+              {t('compose:discardDraft')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700">{t('compose:discardHint')}</p>
+      </Modal>
+      <Modal
+        open={confirmingClose}
+        onClose={() => setConfirmingClose(false)}
+        title={t('compose:closeWithFiles.title')}
+        size="sm"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingClose(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100"
+            >
+              {t('compose:closeWithFiles.keep')}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+            >
+              {t('common:actions.close')}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-gray-700">{t('compose:closeWithFiles.body')}</p>
+      </Modal>
     </div>
   );
 }

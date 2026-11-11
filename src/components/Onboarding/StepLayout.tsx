@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { ThemeChoice } from '@/components/shared/ThemeChoice';
 import type { InboxLayout } from '@/types';
 
 export function StepLayout({
@@ -15,7 +16,7 @@ export function StepLayout({
   const { t } = useTranslation(['auth']);
   return (
     <div className="space-y-5">
-      <p className="text-sm text-gray-400">{t('auth:onboarding.layout.intro')}</p>
+      <p className="text-sm text-gray-500">{t('auth:onboarding.layout.intro')}</p>
 
       <div className="grid grid-cols-2 gap-3">
         <LayoutCard
@@ -34,10 +35,16 @@ export function StepLayout({
         />
       </div>
 
+      <div>
+        <h3 className="text-sm font-semibold text-gray-800">{t('auth:onboarding.layout.themeTitle')}</h3>
+        <p className="text-xs text-gray-500 mt-1 mb-3">{t('auth:onboarding.layout.themeHelp')}</p>
+        <ThemeChoice ariaLabel={t('auth:onboarding.layout.themeTitle')} />
+      </div>
+
       <div className="flex justify-between">
         <button
           onClick={onBack}
-          className="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
+          className="px-4 py-2 text-sm text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded transition-colors"
         >
           {t('auth:onboarding.layout.back')}
         </button>
@@ -67,11 +74,11 @@ function LayoutCard({
       type="button"
       onClick={onSelect}
       className={`text-left p-4 rounded-lg border-2 transition-colors ${
-        selected ? 'border-primary-500 bg-primary-900/15' : 'border-gray-700 bg-[#27272a] hover:border-gray-500'
+        selected ? 'border-primary-500 bg-primary-50' : 'border-gray-200 bg-white hover:border-gray-300'
       }`}
     >
-      <div className={`w-full ${selected ? 'text-primary-300' : 'text-gray-500'}`}>{icon}</div>
-      <div className="text-sm font-semibold text-gray-100 mt-3">{title}</div>
+      <div className={`w-full ${selected ? 'text-primary-600' : 'text-gray-500'}`}>{icon}</div>
+      <div className="text-sm font-semibold text-gray-900 mt-3">{title}</div>
       <div className="text-xs text-gray-500 mt-1">{description}</div>
     </button>
   );

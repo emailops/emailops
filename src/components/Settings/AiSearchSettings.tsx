@@ -106,16 +106,16 @@ export function AiSearchSettings({ activeAccountId }: AiSearchSettingsProps) {
   };
 
   if (!activeAccountId) {
-    return <p className="text-gray-400 text-sm p-4">{t('settings:aiSearch.selectAccount')}</p>;
+    return <p className="text-gray-500 text-sm p-4">{t('settings:aiSearch.selectAccount')}</p>;
   }
   if (loading) {
-    return <p className="text-gray-400 text-sm p-4">{t('common:state.loading')}</p>;
+    return <p className="text-gray-500 text-sm p-4">{t('common:state.loading')}</p>;
   }
 
   return (
     <SettingsPanel
       footer={
-        <div className="px-6 py-4 border-t border-gray-700 flex justify-end flex-shrink-0">
+        <div className="px-6 py-4 border-t border-gray-200 flex justify-end flex-shrink-0">
           <button
             onClick={() => void handleSave()}
             disabled={saving || !activeAccountId}
@@ -126,13 +126,13 @@ export function AiSearchSettings({ activeAccountId }: AiSearchSettingsProps) {
         </div>
       }
     >
-      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+      {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>}
       {success && (
-        <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
+        <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">{success}</div>
       )}
 
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:aiSearch.categoriesTitle')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:aiSearch.categoriesTitle')}</h3>
         <p className="text-xs text-gray-500 mb-3">{t('settings:aiSearch.categoriesHelp')}</p>
         <div className="flex flex-wrap gap-2">
           {ALL_CATEGORIES.map((cat) => {
@@ -155,7 +155,7 @@ export function AiSearchSettings({ activeAccountId }: AiSearchSettingsProps) {
                 className={`px-3 py-1.5 rounded border text-sm transition-colors ${
                   active
                     ? 'bg-primary-700 border-primary-600 text-white'
-                    : 'bg-[#2a2a2b] border-gray-700 text-gray-400 hover:border-gray-500'
+                    : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-400'
                 }`}
               >
                 {label}
@@ -164,18 +164,18 @@ export function AiSearchSettings({ activeAccountId }: AiSearchSettingsProps) {
           })}
         </div>
         {config.categories.length === 0 && (
-          <p className="text-xs text-amber-400 mt-2">{t('settings:aiSearch.noCategoriesWarn')}</p>
+          <p className="text-xs text-amber-600 mt-2">{t('settings:aiSearch.noCategoriesWarn')}</p>
         )}
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:aiSearch.rebuildTitle')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:aiSearch.rebuildTitle')}</h3>
         <p className="text-xs text-gray-500 mb-3">{t('settings:aiSearch.rebuildHelp')}</p>
         <button
           type="button"
           onClick={() => void handleRebuild()}
           disabled={isRebuilding || !activeAccountId}
-          className="px-3 py-2 rounded border border-gray-600 bg-[#2a2a2b] text-sm text-gray-200 hover:border-gray-500 hover:bg-[#333] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          className="px-3 py-2 rounded border border-gray-300 bg-gray-50 text-sm text-gray-800 hover:border-gray-400 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
           <svg
             className={`w-4 h-4 ${isRebuilding ? 'animate-spin' : ''}`}
@@ -192,7 +192,7 @@ export function AiSearchSettings({ activeAccountId }: AiSearchSettingsProps) {
           </svg>
           {isRebuilding ? t('settings:aiSearch.rebuilding') : t('settings:aiSearch.rebuildButton')}
         </button>
-        {rebuildProgress && <p className="text-xs text-gray-400 mt-2">{rebuildProgress}</p>}
+        {rebuildProgress && <p className="text-xs text-gray-500 mt-2">{rebuildProgress}</p>}
       </section>
     </SettingsPanel>
   );

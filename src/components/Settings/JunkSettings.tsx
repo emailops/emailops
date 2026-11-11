@@ -162,18 +162,18 @@ export function JunkSettings() {
     <SettingsPanel>
       {/* Errors sit above everything, never at the bottom of a scroll container. */}
       {error && (
-        <div className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-sm text-red-200">{error}</div>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>
       )}
 
       <ToggleSwitch
         checked={config.enabled}
         onChange={(v) => void save({ ...config, enabled: v })}
-        label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.enabled')}</span>}
+        label={<span className="text-sm font-medium text-gray-900">{t('settings:junk.enabled')}</span>}
         description={<span className="text-xs text-gray-500">{t('settings:junk.enabledDesc')}</span>}
       />
 
-      <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-        <h3 className="text-sm font-semibold text-gray-300 mb-2">{t('settings:junk.flaggedActionTitle')}</h3>
+      <section className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('settings:junk.flaggedActionTitle')}</h3>
         <div className="space-y-2">
           {ACTIONS.map((action) => (
             <label key={action} className="flex items-start gap-2 cursor-pointer">
@@ -186,7 +186,7 @@ export function JunkSettings() {
                 disabled={!config.enabled}
               />
               <span className="text-sm">
-                <span className="text-gray-200">{t(`settings:junk.action.${action}` as const)}</span>
+                <span className="text-gray-800">{t(`settings:junk.action.${action}` as const)}</span>
                 <span className="block text-xs text-gray-500">{t(`settings:junk.actionDesc.${action}` as const)}</span>
               </span>
             </label>
@@ -198,7 +198,7 @@ export function JunkSettings() {
       <ToggleSwitch
         checked={config.phishingEnabled}
         onChange={(v) => void save({ ...config, phishingEnabled: v })}
-        label={<span className="text-sm font-medium text-gray-100">{t('settings:junk.phishing')}</span>}
+        label={<span className="text-sm font-medium text-gray-900">{t('settings:junk.phishing')}</span>}
         description={<span className="text-xs text-gray-500">{t('settings:junk.phishingDesc')}</span>}
       />
 
@@ -211,46 +211,46 @@ export function JunkSettings() {
             address. */}
       <div className="space-y-3">
         {scoredAccounts.some((a) => statsByAccount[a.id]) && (
-          <h3 className="text-sm font-semibold text-gray-300">{t('settings:junk.statusTitle')}</h3>
+          <h3 className="text-sm font-semibold text-gray-700">{t('settings:junk.statusTitle')}</h3>
         )}
         {scoredAccounts.map((account) => {
           const stats = statsByAccount[account.id];
           if (!stats) return null;
           const isBackfilling = backfilling[account.id] === true;
           return (
-            <section key={account.id} className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-              <h4 className="mb-2 text-sm font-medium text-gray-200">{account.email}</h4>
+            <section key={account.id} className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+              <h4 className="mb-2 text-sm font-medium text-gray-800">{account.email}</h4>
 
               <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
-                <dt className="text-gray-400">{t('settings:junk.scored')}</dt>
-                <dd className="text-right tabular-nums text-gray-200">{stats.scored}</dd>
-                <dt className="text-gray-400">{t('settings:junk.unscored')}</dt>
-                <dd className="text-right tabular-nums text-gray-200">{stats.unscored}</dd>
-                <dt className="text-gray-400">{t('settings:junk.foundSpam')}</dt>
-                <dd className="text-right tabular-nums text-gray-200">{stats.spam}</dd>
-                <dt className="text-gray-400">{t('settings:junk.foundGraymail')}</dt>
-                <dd className="text-right tabular-nums text-gray-200">{stats.graymail}</dd>
+                <dt className="text-gray-500">{t('settings:junk.scored')}</dt>
+                <dd className="text-right tabular-nums text-gray-800">{stats.scored}</dd>
+                <dt className="text-gray-500">{t('settings:junk.unscored')}</dt>
+                <dd className="text-right tabular-nums text-gray-800">{stats.unscored}</dd>
+                <dt className="text-gray-500">{t('settings:junk.foundSpam')}</dt>
+                <dd className="text-right tabular-nums text-gray-800">{stats.spam}</dd>
+                <dt className="text-gray-500">{t('settings:junk.foundGraymail')}</dt>
+                <dd className="text-right tabular-nums text-gray-800">{stats.graymail}</dd>
                 {config.phishingEnabled && (
                   <>
-                    <dt className="text-gray-400">{t('settings:junk.foundPhishing')}</dt>
-                    <dd className="text-right tabular-nums text-gray-200">{stats.phishing}</dd>
+                    <dt className="text-gray-500">{t('settings:junk.foundPhishing')}</dt>
+                    <dd className="text-right tabular-nums text-gray-800">{stats.phishing}</dd>
                   </>
                 )}
-                <dt className="text-gray-400">{t('settings:junk.yourFeedback')}</dt>
-                <dd className="text-right tabular-nums text-gray-200">
+                <dt className="text-gray-500">{t('settings:junk.yourFeedback')}</dt>
+                <dd className="text-right tabular-nums text-gray-800">
                   {stats.markedJunk} / {stats.markedNotJunk}
                 </dd>
               </dl>
 
-              <div className="mt-3 space-y-1 border-t border-gray-700 pt-3">
+              <div className="mt-3 space-y-1 border-t border-gray-200 pt-3">
                 {stats.models
                   .filter((m) => isModelAxis(m.axis))
                   .map((m) => (
                     <div key={m.axis} className="flex items-baseline justify-between gap-4 text-xs">
-                      <span className="text-gray-400">{t(`settings:junk.model.${m.axis as ModelAxis}` as const)}</span>
+                      <span className="text-gray-500">{t(`settings:junk.model.${m.axis as ModelAxis}` as const)}</span>
                       {/* Amber, not red: "not enough labels yet" is the expected
                         state on a young mailbox, not a fault. */}
-                      <span className={m.inUse ? 'text-right text-gray-300' : 'text-right text-amber-400'}>
+                      <span className={m.inUse ? 'text-right text-gray-700' : 'text-right text-amber-600'}>
                         {m.inUse
                           ? t('settings:junk.modelInUse', { pos: m.positives, neg: m.negatives })
                           : t('settings:junk.modelNotYet', { pos: m.positives, neg: m.negatives })}
@@ -263,7 +263,7 @@ export function JunkSettings() {
                 type="button"
                 onClick={() => void handleBackfill(account.id)}
                 disabled={isBackfilling || !config.enabled || stats.unscored === 0}
-                className="mt-3 rounded bg-gray-700 px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-600 disabled:opacity-50"
+                className="mt-3 rounded bg-gray-100 px-3 py-1.5 text-sm text-gray-800 hover:bg-gray-200 disabled:opacity-50"
               >
                 {isBackfilling
                   ? t('settings:junk.backfillRunning', { count: stats.unscored })

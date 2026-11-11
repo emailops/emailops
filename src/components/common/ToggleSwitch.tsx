@@ -26,8 +26,8 @@ export function ToggleSwitch({ checked, onChange, label, description, disabled, 
       aria-label={ariaLabel}
       onClick={() => onChange(!checked)}
       disabled={disabled}
-      className={`relative mt-0.5 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-[#252526] disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? 'bg-primary-600' : 'bg-gray-600'
+      className={`relative mt-0.5 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+        checked ? 'bg-primary-600' : 'bg-gray-300'
       }`}
     >
       <span
@@ -43,7 +43,7 @@ export function ToggleSwitch({ checked, onChange, label, description, disabled, 
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
-        {label && <div className="text-sm font-medium text-gray-200">{label}</div>}
+        {label && <div className="text-sm font-medium text-gray-900">{label}</div>}
         {description && <div className="mt-0.5 text-xs text-gray-500">{description}</div>}
       </div>
       {button}

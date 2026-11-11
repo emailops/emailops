@@ -158,6 +158,7 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
         let today = case.today.clone().unwrap_or_else(|| default_today.clone());
         let started = Instant::now();
         let planned = plan_search(
+            &db,
             provider.as_ref(),
             &template,
             &user_email,
@@ -168,9 +169,6 @@ pub async fn run(cfg: PlanRunnerConfig) -> EvalResult<PlanEvalSummary> {
             // The harness scores the routing, so it always shows the model the
             // full catalog rather than whatever the copied DB happens to enable.
             &forms_catalog,
-            // Planner cases carry no user skills, so the prompt is the one
-            // every install without skills sends.
-            "",
         )
         .await;
         let latency_ms = started.elapsed().as_millis();

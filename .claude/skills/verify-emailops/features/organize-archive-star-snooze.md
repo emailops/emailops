@@ -50,4 +50,5 @@ archived message (*Studio key handover confirmed*) in `demo-acct-work` (`insert_
 | auto-advance planner, executor and race guard, setting, junk confirm race, block | vitest (`autoAdvance`, `autoAdvanceStore`, `AutoAdvanceSetting`, `JunkBanner.autoAdvance`, `EmailView.shortcuts`, `SenderDialogs`) |
 | command arguments | contract (`src/lib/apiContract/inbox.api.test.ts`, `emails.rs`) |
 | star, Starred, Archive, select, bulk archive + Undo, archive refused, snooze, Snoozed, Unsnooze | e2e (`Organizar/*`, `Vistas/Starred`, `Vistas/Snoozed`) |
+| contract | n/a as a layer of its own: the commands live in `commands/emails.rs`, checked by `src/lib/apiContract/inbox.api.test.ts`, which is attributed to Inbox |
 | eval | n/a: no model involved |

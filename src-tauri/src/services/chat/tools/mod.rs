@@ -62,6 +62,23 @@ pub struct ToolCtx<'a> {
     pub page: Option<&'a PageState>,
 }
 
+impl ToolCtx<'_> {
+    /// The email `email_id` names, when this turn may read it: one of the
+    /// chat's account, or of the thread the user has open, which in unified
+    /// mode can belong to another account. Any other id comes back as `None`,
+    /// like one that does not exist, so the answer never confirms that it is
+    /// valid elsewhere.
+    pub(crate) fn readable_email(&self, email_id: &str) -> crate::models::error::Result<Option<crate::models::Email>> {
+        let open_thread = self
+            .page
+            .is_some_and(|page| page.open_thread.iter().any(|id| id == email_id));
+        Ok(self
+            .db
+            .get_email_by_id(email_id)?
+            .filter(|email| open_thread || email.account_id == self.account_id))
+    }
+}
+
 /// One page of `search_emails` results: the call that produced it and where
 /// the next page starts. `args` is the original argument object, so the
 /// continuation re-runs the very same filters.
@@ -72,19 +89,34 @@ pub struct SearchPage {
     pub total: i32,
 }
 
-/// The conversation's current search page. Interior-mutable because tools
-/// run behind a shared `&ToolCtx`. A chat turn seeds it from the previous
-/// assistant message's trace, so "show me the next ones" works across turns.
+/// What a chat turn's tools see of the page in front of the user: the
+/// conversation's current search page and the thread open this turn. The
+/// search page is interior-mutable because tools run behind a shared
+/// `&ToolCtx`; a chat turn seeds it from the previous assistant message's
+/// trace, so "show me the next ones" works across turns.
 #[derive(Debug, Default)]
-pub struct PageState(std::sync::Mutex<Option<SearchPage>>);
+pub struct PageState {
+    search: std::sync::Mutex<Option<SearchPage>>,
+    /// Emails of the thread the user has open this turn.
+    open_thread: Vec<String>,
+}
 
 impl PageState {
     pub fn seeded(page: Option<SearchPage>) -> Self {
-        Self(std::sync::Mutex::new(page))
+        Self {
+            search: std::sync::Mutex::new(page),
+            open_thread: Vec::new(),
+        }
+    }
+
+    /// This turn's state with the thread the user has open.
+    pub fn with_open_thread(mut self, email_ids: Vec<String>) -> Self {
+        self.open_thread = email_ids;
+        self
     }
 
     pub fn remember(&self, page: SearchPage) {
-        if let Ok(mut slot) = self.0.lock() {
+        if let Ok(mut slot) = self.search.lock() {
             *slot = Some(page);
         }
     }
@@ -92,13 +124,13 @@ impl PageState {
     /// The page as the last search left it — exhausted or not — so a turn can
     /// persist it and the next turn continue (or not) from exactly there.
     pub fn snapshot(&self) -> Option<SearchPage> {
-        self.0.lock().ok().and_then(|slot| slot.clone())
+        self.search.lock().ok().and_then(|slot| slot.clone())
     }
 
     /// The page to continue, or `None` when the last search had no more
     /// results (or no search ran in this conversation).
     pub fn pending(&self) -> Option<SearchPage> {
-        self.0
+        self.search
             .lock()
             .ok()
             .and_then(|slot| slot.clone())
@@ -283,6 +315,13 @@ pub trait Tool: Send + Sync {
     /// small models pick tools off this list, so it must be precise but
     /// short. The rich `description()` still flows through
     /// `parameters_schema()` to the LLM's function-calling menu.
+    /// True when `execute` fences the mailbox text in its own output (with
+    /// `prompt_guard::frame_untrusted_email`) and keeps its notes to the model
+    /// outside the fence, so the chat must not fence the whole result again.
+    fn fences_its_output(&self) -> bool {
+        false
+    }
+
     fn prompt_summary(&self) -> &'static str {
         self.description()
     }
@@ -472,18 +511,6 @@ impl ToolRegistry {
             out.push_str("Tools:\n");
             for (_, line) in entries {
                 out.push_str(&line);
-                out.push('\n');
-            }
-        }
-
-        // The skills index, while `load_skill` is on the menu. It depends only
-        // on the skills folder, so the cached system prefix stays stable.
-        if self.get("load_skill", db).is_some() {
-            if let Some(index) =
-                crate::services::skills::render_skills_index(&crate::services::skills::catalog_for(db).skills)
-            {
-                out.push('\n');
-                out.push_str(&index);
                 out.push('\n');
             }
         }
@@ -935,13 +962,37 @@ mod tests {
     }
 
     #[test]
-    fn the_skills_index_follows_the_tool_list_while_load_skill_is_available() {
+    fn switched_on_skills_add_nothing_to_the_system_prompt() {
+        // Skills run only through `/name`, so the model is never told which
+        // exist. The prefix stays the one an install without skills sends.
         let tmp = tempfile::tempdir().expect("tmp");
         let db = Database::new(tmp.path().to_path_buf()).expect("db");
         let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
-        // No skills yet: load_skill is hidden and so is the index.
-        assert!(!registry.render_system_prompt_section(&db).contains("Skills ("));
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "false")
+            .expect("pref");
+        let before = registry.render_system_prompt_section(&db);
 
+        db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
+            .expect("pref");
+        crate::services::skills::set_bundled_skill_enabled(&db, "inbox-triage", true).expect("bundled");
+        let dir = tmp
+            .path()
+            .join(crate::services::skills::SKILLS_DIR)
+            .join("vendor-reply");
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(
+            dir.join(crate::services::skills::SKILL_FILE),
+            "---\nname: vendor-reply\ndescription: Reply to vendor quotes.\n---\nBe brief.",
+        )
+        .expect("write");
+
+        assert_eq!(registry.render_system_prompt_section(&db), before);
+    }
+
+    #[test]
+    fn a_skill_with_reference_files_adds_the_tool_but_no_description() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let db = Database::new(tmp.path().to_path_buf()).expect("db");
         db.set_preference(crate::services::skills::SKILLS_ENABLED_PREF, "true")
             .expect("pref");
         let dir = tmp
@@ -954,17 +1005,13 @@ mod tests {
             "---\nname: vendor-reply\ndescription: Reply to vendor quotes.\n---\nBe brief.",
         )
         .expect("write");
+        std::fs::write(dir.join("tone.md"), "Formal.").expect("write");
+
+        let registry = ToolRegistry::with_tools(vec![Arc::new(load_skill::LoadSkillTool)]);
         let section = registry.render_system_prompt_section(&db);
-        let list = section.find("  - load_skill(").expect("tool line");
-        let index = section
-            .find("- vendor-reply: Reply to vendor quotes.")
-            .expect("index rendered");
-        let tools_block = section.find("<tools>").expect("tools block");
-        assert!(list < index && index < tools_block, "{section}");
-        assert!(
-            !section.contains("Be brief."),
-            "a body leaked into the prefix: {section}"
-        );
+        assert!(section.contains("  - load_skill("), "{section}");
+        assert!(!section.contains("Reply to vendor quotes."), "{section}");
+        assert!(!section.contains("Be brief."), "{section}");
     }
 
     #[test]
@@ -3505,6 +3552,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn get_email_body_answers_for_another_accounts_email_as_for_an_unknown_id() {
+        let db = tools_test_db();
+        seed_email(
+            &db,
+            "foreign",
+            "other",
+            "t9",
+            "Z",
+            "z@example.com",
+            "subj",
+            "body of the other account",
+            1,
+        );
+        let call = |id: &str| {
+            execute_tool(
+                &db,
+                "acc",
+                &[],
+                "get_email_body",
+                &arg(serde_json::json!({ "email_id": id })),
+            )
+        };
+        assert_eq!(call("foreign"), call("does-not-exist"));
+    }
+
     // ── get_thread ──────────────────────────────────────────────────────
 
     #[test]
@@ -3654,6 +3727,29 @@ mod tests {
         assert!(out.contains("invoice.pdf"), "output was: {}", out);
         assert!(out.contains("attachment://meta/att-1"), "output was: {}", out);
         assert!(out.contains("application/pdf"), "output was: {}", out);
+    }
+
+    #[test]
+    fn get_attachments_answers_for_another_accounts_email_as_for_an_unknown_id() {
+        let db = tools_test_db();
+        seed_email(&db, "foreign", "other", "t9", "Z", "z@example.com", "s", "b", 1);
+        db.connection()
+            .execute(
+                "INSERT INTO email_attachment_meta (id, email_id, account_id, provider_attachment_id, filename, mime_type, file_size, file_path)
+                 VALUES ('att-9', 'foreign', 'other', 'pid', 'contract.pdf', 'application/pdf', 12345, NULL)",
+                [],
+            )
+            .unwrap();
+        let call = |id: &str| {
+            execute_tool(
+                &db,
+                "acc",
+                &[],
+                "get_attachments",
+                &arg(serde_json::json!({ "email_id": id })),
+            )
+        };
+        assert_eq!(call("foreign"), call("does-not-exist"));
     }
 
     // ── Unknown tool ────────────────────────────────────────────────────

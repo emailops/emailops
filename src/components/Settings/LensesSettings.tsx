@@ -15,13 +15,13 @@ export function LensesSettings({ enabled, onChangeEnabled }: LensesSettingsProps
   return (
     <SettingsPanel>
       {/* Header — owns the master enable toggle. */}
-      <section className="p-3 rounded-lg border border-gray-700 bg-[#1f1f20]">
+      <section className="p-3 rounded-lg border border-gray-200 bg-white">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-100">{t('settings:lenses.title')}</span>
+              <span className="text-sm font-medium text-gray-900">{t('settings:lenses.title')}</span>
             </div>
-            <p className="text-xs text-gray-400 mt-1">{t('settings:lenses.experimentalDesc')}</p>
+            <p className="text-xs text-gray-500 mt-1">{t('settings:lenses.experimentalDesc')}</p>
           </div>
           <button
             type="button"
@@ -29,7 +29,7 @@ export function LensesSettings({ enabled, onChangeEnabled }: LensesSettingsProps
             aria-checked={enabled}
             onClick={() => onChangeEnabled(!enabled)}
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 ${
-              enabled ? 'bg-primary-600' : 'bg-neutral-600'
+              enabled ? 'bg-primary-600' : 'bg-gray-300'
             }`}
           >
             <span
@@ -42,8 +42,8 @@ export function LensesSettings({ enabled, onChangeEnabled }: LensesSettingsProps
       </section>
 
       {enabled ? (
-        <section className="rounded-lg border border-gray-700 bg-[#1f1f20] px-4 py-3">
-          <p className="text-xs text-gray-400">{t('settings:lenses.enabledInfo')}</p>
+        <section className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+          <p className="text-xs text-gray-500">{t('settings:lenses.enabledInfo')}</p>
         </section>
       ) : (
         <p className="text-xs text-gray-500 italic">{t('settings:lenses.enablePrompt')}</p>

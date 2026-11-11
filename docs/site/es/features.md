@@ -40,6 +40,21 @@ La vista **Todas las cuentas** fusiona cada buzón activo en una sola lista, jun
 por cuenta. Las carpetas IMAP personalizadas también se sincronizan, y puedes crearlas,
 renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
 
+## Responder
+
+<!-- claim:reading-pane-reply -->
+**Responder** contesta al remitente, o a la dirección que el mensaje indica en su cabecera
+*Reply-To*, como hacen las listas de correo o la dirección *no-reply* de una tienda.
+**Responder a todos** añade al resto de la conversación. El asunto de una respuesta o de un
+reenvío se puede editar antes de enviarlo, y la respuesta sigue en su conversación. Todos los
+compositores tienen **Cc** y **Cco**: las copias ocultas llegan sin que el resto de
+destinatarios las vea, y un mensaje puede ir solo en Cc o en Cco.
+
+<!-- claim:compose-drafts-keep-files -->
+Lo que escribes se guarda como borrador mientras escribes, con los archivos adjuntos, así que
+cerrar el compositor o la aplicación lo conserva; un reenvío también se guarda. Un mensaje
+admite hasta 32 archivos de 25 MB como máximo cada uno.
+
 ## Reenviar
 
 <!-- claim:reading-pane-forward -->
@@ -66,6 +81,12 @@ archiva en su propia carpeta de archivo, que aparece junto a sus demás carpetas
 archivado solo sale de la bandeja de entrada: la búsqueda, los filtros inteligentes y las
 funciones de IA lo siguen alcanzando.
 
+<!-- claim:feat-list-sent-rows -->
+En todas las listas, la fila de un correo que enviaste nombra a quién iba dirigido («Para: Ana,
+Luis +1») en lugar de tu nombre, y su tooltip lista todos los destinatarios. El nombre de cada
+destinatario sale del propio correo o de cómo firma esa persona cuando te escribe; si no hay
+ninguno, la fila muestra la dirección.
+
 <!-- claim:feat-organize-3 -->
 Marca la casilla al principio de una fila para seleccionarla. Con una o más seleccionadas, una
 barra sobre la lista actúa sobre todas a la vez — archivar, posponer, eliminar, marcar como leídas
@@ -87,8 +108,8 @@ como no leída siempre vuelve a la lista.
 <!-- claim:feat-organize-6 -->
 **Todos** y **No leídos**, encima de la lista, eligen qué muestra. **No leídos** deja solo las
 conversaciones con algún mensaje sin leer — en las vistas que listan mensajes sueltos, como el
-correo enviado y las carpetas, solo los mensajes sin leer — en todas las vistas y también con un
-filtro inteligente; mientras buscas, no aparece. Una conversación que abres sigue en la lista
+correo enviado y las carpetas, solo los mensajes sin leer — en todas las vistas, con un filtro
+inteligente y mientras buscas. Una conversación que abres sigue en la lista
 hasta que esta se recarga, y la elección dura hasta que cierras EmailOps.
 
 ## Posponer {#snooze}
@@ -149,6 +170,11 @@ estándar `-- `, para que otras aplicaciones de correo la reconozcan. Cuando la 
 para ese tipo de mensaje, los borradores de la IA no incluyen tu nombre ni tus datos de contacto y
 dejan que firme la firma.
 
+<!-- claim:feat-signatures-4 -->
+Debajo de la firma, **Añadir «Enviado con EmailOps» al final de los mensajes que envío** decide
+si los mensajes que envías terminan con esa línea. Viene activado y se aplica a todas las
+cuentas; los mensajes ya enviados conservan su pie.
+
 ## Filtros inteligentes
 
 <!-- claim:feat-smart-filters-1 -->
@@ -160,16 +186,17 @@ que las muestra como una cuadrícula de bloques.
 <!-- claim:feat-smart-filters-2 -->
 Al hacer clic en un filtro, se escribe en el cuadro de búsqueda como una consulta que puedes
 ver y editar —`tag:priority=urgent`, `from:`, `domain:`, `ext:`— y un segundo clic la quita.
-Con el botón derecho, **Añadir a la búsqueda** lo combina con lo que ya hay. Un filtro funciona
-dentro de la vista en la que estás, así que en Enviados o en una carpeta lista solo su correo,
-y la búsqueda se mantiene al cambiar de cuenta; si no encuentra nada, la lista avisa de que hay
+Con el botón derecho, **Añadir a la búsqueda** lo combina con lo que ya hay. Un filtro o una
+búsqueda funcionan dentro de la vista en la que estás: Enviados, Spam, Papelera y las carpetas
+listan solo su correo, y la bandeja de entrada llega a todo menos a Spam y Papelera. La búsqueda se mantiene al cambiar de cuenta; si no encuentra nada, la lista avisa de que hay
 una búsqueda activa y ofrece quitarla. Cada grupo de etiquetas muestra primero sus diez valores
 más usados, con un botón debajo para ver el resto.
 
 ## Calendario {#calendar}
 
 <!-- claim:feat-calendar-1 -->
-Vistas de mes, semana y día por cuenta para Google Calendar y Outlook. Recibes recordatorios
+Vistas de mes, semana y día para Google Calendar y Outlook, de una cuenta o de **Todas las
+cuentas** juntas, donde cada evento lleva el color de su cuenta. Recibes recordatorios
 antes de cada evento con un botón **Unirse** de un clic para enlaces de Meet, Teams, Webex y
 Zoom. La sincronización de calendario está activada por defecto en las cuentas de Gmail y
 Outlook y puede desactivarse por cuenta, junto con la antelación del aviso, en
@@ -181,6 +208,16 @@ calendario que un compañero haya compartido contigo aparece aquí igual que en 
 Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sobre la
 cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
 **Ajustes → Calendario**.
+
+<!-- claim:feat-calendar-4 -->
+Las cuentas IMAP tienen calendario al suscribirse a un enlace de calendario publicado (ICS), por
+ejemplo la URL para compartir por enlace de Proton Calendar, en **Feeds de calendario (cuentas
+IMAP)** dentro de **Ajustes → Calendario**. Un feed es de solo lectura, se actualiza cada pocos
+minutos y su enlace se guarda en tu llavero, no en la base de datos.
+
+<!-- claim:feat-calendar-5 -->
+Junto al buzón, el calendario también se abre como un panel acoplado a la derecha, la
+**Agenda**; **Abrir calendario completo** pasa a la vista completa.
 
 <!-- claim:feat-calendar-3 -->
 Las notificaciones del sistema de un recordatorio omiten el título de la reunión salvo que
@@ -194,6 +231,9 @@ la app. El aviso dentro de EmailOps siempre muestra la reunión completa.
 Un único sitio con los adjuntos que te importan — facturas, contratos, recibos — con vista
 previa y descarga, en lugar de bucear otra vez en los hilos. Ábrela desde **Adjuntos** en la
 barra lateral.
+
+<!-- claim:feat-attachments-view-9 -->
+Un PDF se abre en su propia pestaña, donde **Acercar** y **Alejar** cambian su tamaño.
 
 <!-- claim:feat-attachments-view-2 -->
 La vista recopila adjuntos mediante **reglas**, así que empieza vacía. Pulsa **Gestionar
@@ -285,8 +325,8 @@ documento, lo que lo comparte con los destinatarios del email.
 ## Búsqueda
 
 <!-- claim:feat-search-1 -->
-Búsqueda de texto completo en asuntos, cuerpos, remitentes y adjuntos. Con la IA activada se
-suma la búsqueda semántica, que encuentra por significado en vez de por palabras exactas.
+Búsqueda de texto completo en asuntos, cuerpos y remitentes. La lista llega hasta la última
+coincidencia del correo descargado, y el correo que marca el detector de spam aparece con su aviso.
 
 <!-- claim:feat-search-2 -->
 Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
@@ -295,12 +335,22 @@ Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
 |---|---|
 | `from:ana` | dirección o nombre del remitente |
 | `to:ana` | destinatario |
+| `cc:ana` | alguien en copia (Cc) |
 | `subject:factura` | asunto |
 | `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
 | `id:<id del correo>` | un correo concreto |
 | `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
 | `domain:example.com` | el dominio del remitente |
 | `ext:pdf` | un adjunto de ese tipo de archivo |
+| `has:attachment` / `-has:attachment` | correo con / sin adjuntos |
+
+<!-- claim:feat-search-3 -->
+En el texto libre, una frase entre comillas busca sus palabras en ese orden, `OR` entre dos
+palabras busca cualquiera de las dos, un `-` (o `NOT`) delante de una palabra deja fuera el
+correo que la tiene, y los paréntesis agrupan: `(factura OR recibo) -borrador`. Las palabras
+seguidas tienen que estar todas y se agrupan antes que `OR`: `factura OR recibo marzo` es
+factura, o recibo y marzo. Los operadores van en mayúsculas; un «or» en minúsculas es una
+palabra más.
 
 ## Correo basura y masivo {#junk-and-bulk-mail}
 
@@ -368,6 +418,21 @@ sistema. Todo ello se detalla en [Privacidad y seguridad](../privacy-security/).
 Bandeja en vista dividida o a ancho completo, y una interfaz disponible en español, inglés,
 francés y alemán. El idioma de salida de la IA se configura aparte, así que puedes leer la
 interfaz en un idioma y que los borradores se redacten en otro.
+
+<!-- claim:feat-interface-2 -->
+EmailOps tiene un tema claro y uno oscuro. **Ajustes → Apariencia → Tema** ofrece **Claro**,
+**Oscuro** y **Sistema**, que sigue la apariencia del sistema operativo; la elección se
+conserva entre reinicios. Con el tema oscuro, los correos también se muestran oscuros siempre que
+es posible: un correo que trae su propio diseño oscuro lo usa, uno sencillo o de diseño claro se
+adapta, y uno que ya es oscuro se deja tal cual.
+
+<!-- claim:feat-interface-3 -->
+**Ajustes → Acerca de** muestra la versión que estás usando, con enlaces al sitio web, al código
+fuente en GitHub y a **Apoya el proyecto ♥**, que abre la página de GitHub Sponsors del proyecto.
+
+<!-- claim:feat-interface-4 -->
+La barra de herramientas de redacción tiene un selector de **Fuente** y otro de **Tamaño de
+fuente**. Los dos siguen al cursor, así que muestran la fuente y el tamaño del texto en el que estás.
 
 ## Atajos de teclado {#keyboard-shortcuts}
 

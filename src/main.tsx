@@ -6,7 +6,9 @@ import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary';
 import { FALLBACK_LANGUAGE, i18n, initI18n, isSupportedLanguage } from './i18n';
 import { getPref, getSystemLocale } from './lib/api';
+import { useThemeStore } from './stores/themeStore';
 import './index.css';
+import { installFileDropGuard } from '@/hooks/useFileDrop';
 
 // Resolve the initial UI language before mounting React so the very first
 // frame uses the correct bundle (no "flash of English"). Chain:
@@ -33,7 +35,10 @@ async function resolveInitialLanguage(): Promise<string> {
 }
 
 async function bootstrap() {
-  const initialLanguage = await resolveInitialLanguage();
+  // Language and theme are both read from SQLite before the first frame, so
+  // the app never flashes English or the light theme on the way in. The theme
+  // store never throws: a failed read logs and falls back to "system".
+  const [initialLanguage] = await Promise.all([resolveInitialLanguage(), useThemeStore.getState().init()]);
   await initI18n(initialLanguage);
 
   const rootEl = document.getElementById('root');
@@ -42,6 +47,9 @@ async function bootstrap() {
     // something is very wrong with index.html.
     throw new Error('Root element #root not found in document');
   }
+
+  // A file dropped where nothing takes it must not replace the app.
+  installFileDropGuard(window);
 
   ReactDOM.createRoot(rootEl).render(
     <React.StrictMode>

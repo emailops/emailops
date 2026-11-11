@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ActiveFilter } from '@/types';
-import { appendFilterToken, filterFromQuery, filterMailboxScope, filterToken, planListSource } from './filterQuery';
+import { appendFilterToken, filterFromQuery, filterToken, planListSource } from './filterQuery';
 
 describe('filterToken', () => {
   it('writes each smart filter as the search operator that lists the same mail', () => {
@@ -74,41 +74,14 @@ describe('appendFilterToken', () => {
   });
 });
 
-describe('filterMailboxScope', () => {
-  it('narrows to the view for Sent, Archive and custom folders', () => {
-    expect(filterMailboxScope('sent')).toBe('sent');
-    expect(filterMailboxScope('archive')).toBe('archive');
-    expect(filterMailboxScope('folder:Clients')).toBe('folder:Clients');
-  });
-
-  it('keeps every live mailbox for the inbox and views that are not a mailbox', () => {
-    // The inbox's filters reach archived and sent mail (DECISIONS 2026-10-02).
-    for (const view of ['inbox', 'starred', 'snoozed', 'spam', 'deleted'] as const) {
-      expect(filterMailboxScope(view), view).toBeUndefined();
-    }
-  });
-});
-
 describe('planListSource', () => {
-  it('lists a one-filter query through the paged smart-filter path, inside the view', () => {
-    expect(planListSource('tag:priority=urgent', 'sent')).toEqual({
-      kind: 'filter',
-      filter: { type: 'priority', value: 'urgent' },
-      mailbox: 'sent',
-    });
-  });
-
-  it('lists any other query through search, inside the view', () => {
-    expect(planListSource('tag:priority=urgent invoice', 'folder:Clients')).toEqual({
-      kind: 'search',
-      query: 'tag:priority=urgent invoice',
-      mailbox: 'folder:Clients',
-    });
-    expect(planListSource('invoice', 'inbox')).toEqual({ kind: 'search', query: 'invoice', mailbox: undefined });
+  it('sends any query, written or set by a filter, down one path', () => {
+    expect(planListSource('tag:priority=urgent')).toEqual({ kind: 'query', query: 'tag:priority=urgent' });
+    expect(planListSource(' invoice ')).toEqual({ kind: 'query', query: 'invoice' });
   });
 
   it('lists the mailbox when there is no query', () => {
-    expect(planListSource(null, 'archive')).toEqual({ kind: 'mailbox' });
-    expect(planListSource('   ', 'inbox')).toEqual({ kind: 'mailbox' });
+    expect(planListSource(null)).toEqual({ kind: 'mailbox' });
+    expect(planListSource('   ')).toEqual({ kind: 'mailbox' });
   });
 });

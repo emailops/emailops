@@ -7,6 +7,8 @@
 //! grow features (caching, enrichment, account-scoped authorization) without
 //! changing the command surface.
 
+use std::collections::HashMap;
+
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{CompanyContactsGroup, Contact, ContactDetail, ContactsPage, ContactsQuery};
@@ -25,6 +27,12 @@ pub fn get_contact_detail(db: &Database, account_id: &str, address: &str) -> Res
 
 pub fn list_contacts_by_company(db: &Database, account_id: &str) -> Result<Vec<CompanyContactsGroup>> {
     db.list_contacts_by_company(account_id)
+}
+
+/// Lowercased address → the name it uses when it writes to the account. Inbox
+/// rows name the recipients of the user's own messages with it.
+pub fn get_sender_names(db: &Database, account_id: &str) -> Result<HashMap<String, String>> {
+    db.get_sender_names(account_id)
 }
 
 /// Resolve an informal contact hint ("alice emailops", "smith@") to actual

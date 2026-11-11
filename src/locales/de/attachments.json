@@ -6,7 +6,6 @@
   },
   "viewer": {
     "selectAttachment": "Wähle einen Anhang zur Vorschau aus",
-    "pdfUnsupported": "PDF-Vorschau wird in diesem Browser nicht unterstützt",
     "previewUnavailable": "Vorschau für diesen Dateityp nicht verfügbar",
     "loadFailed": "Anhang konnte nicht geladen werden.",
     "imageLoadFailed": "Bild konnte nicht geladen werden.",
@@ -15,7 +14,10 @@
     "openExternally": "Extern öffnen",
     "openInDefaultApp": "In Standard-App öffnen",
     "previewLoadFailed": "Vorschau konnte nicht geladen werden: {{error}}",
-    "download": "Herunterladen"
+    "download": "Herunterladen",
+    "zoomOut": "Verkleinern",
+    "zoomIn": "Vergrößern",
+    "fitWidth": "An Breite anpassen"
   },
   "toolbar": {
     "title": "Anhänge",

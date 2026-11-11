@@ -15,7 +15,8 @@
 //!   3. [`new_text`]: a quoted or signature block is dropped when ~80% of its
 //!      5-word runs appear in the earlier messages ([`History`]); an own
 //!      paragraph when it repeats one of theirs. "Sent from my iPhone" stubs
-//!      always go. Everything else stays.
+//!      and the app's own "Sent with EmailOps" footer always go. Everything
+//!      else stays.
 //!
 //! [`clean_email_body`] reads a body with no thread around it, so only stubs
 //! and whitespace go; `thread_reader` supplies the history for a thread.
@@ -25,6 +26,8 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+use crate::services::i18n::Language;
+use crate::sync::provider::{footer_prefix, FOOTER_URL};
 use crate::util::html::decode_html_entities;
 
 /// Per-email ceiling. A single-message "chat about this email" shows the body
@@ -433,10 +436,19 @@ fn segment(text: &str) -> Vec<Block<'_>> {
             });
             continue;
         }
-        if t == "--" {
+        if t == "--" && lines.get(i + 1).is_some_and(|next| is_app_footer(next)) {
+            i += 1;
+            continue;
+        }
+        // `--` is the standard, and `---` what people type by hand.
+        if t == "--" || t == "---" {
             let start = i;
             i += 1;
-            while i < lines.len() && !lines[i].trim().starts_with('>') && quote_header_len(&lines, i).is_none() {
+            while i < lines.len()
+                && !lines[i].trim().starts_with('>')
+                && lines[i].trim() != "--"
+                && quote_header_len(&lines, i).is_none()
+            {
                 i += 1;
             }
             blocks.push(Block {
@@ -446,7 +458,7 @@ fn segment(text: &str) -> Vec<Block<'_>> {
             });
             continue;
         }
-        let kind = if t.chars().count() <= 60 && is_mobile_stub(t) {
+        let kind = if t.chars().count() <= 60 && is_mobile_stub(t) || is_app_footer(t) {
             BlockKind::Stub
         } else {
             BlockKind::Own
@@ -595,6 +607,16 @@ fn is_mobile_stub(line: &str) -> bool {
         || l.starts_with("von meinem ")
 }
 
+/// A line of the footer `sync::provider` appends on send, in any language.
+/// Whole-line match: a sentence that says "sent with EmailOps" is prose.
+fn is_app_footer(line: &str) -> bool {
+    let line = line.trim();
+    line == FOOTER_URL
+        || Language::ALL
+            .iter()
+            .any(|&language| line.eq_ignore_ascii_case(&format!("{} EmailOps", footer_prefix(language))))
+}
+
 // ── Whitespace + truncation ────────────────────────────────────────────────
 
 fn collapse_whitespace(text: &str) -> String {
@@ -738,6 +760,65 @@ mod tests {
     fn a_marker_line_framed_by_dashes_is_recognised() {
         let body = "Replying inline.\n\n-------- Mensaje original --------\nDe: Ana\nOld text.";
         assert_eq!(reply(body, &["Old text."]), "Replying inline.");
+    }
+
+    /// The two footers `sync::provider` appends on send, as the Sent copy
+    /// stores them.
+    fn sent_bodies(language: crate::services::i18n::Language) -> [String; 2] {
+        use crate::sync::provider::{email_footer_html, email_footer_plain};
+        [
+            format!(
+                "Hi Ana,\n\nIt is on its way.\n\nBest regards,\nUlises{}",
+                email_footer_plain(language)
+            ),
+            format!(
+                "<p>Hi Ana,</p><p>It is on its way.</p><p>Best regards,<br>Ulises</p>{}",
+                email_footer_html(language)
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_app_footer_is_not_what_the_sender_wrote() {
+        for language in crate::services::i18n::Language::ALL {
+            for body in sent_bodies(language) {
+                let own = own_text(&body);
+                assert!(own.ends_with("Ulises"), "{language:?}: {own:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_model_never_reads_the_app_footer() {
+        for language in crate::services::i18n::Language::ALL {
+            for body in sent_bodies(language) {
+                let clean = clean_email_body(&body, MAX_CHARS_PER_EMAIL);
+                assert!(clean.ends_with("Ulises"), "{language:?}: {clean:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_sentence_about_the_app_stays() {
+        let body = "Hi Ana,\n\nThe report was sent with EmailOps last week.\n\nBest,\nUlises";
+        assert!(clean_email_body(body, MAX_CHARS_PER_EMAIL).contains("sent with EmailOps last week"));
+    }
+
+    #[test]
+    fn a_signature_below_the_delimiter_stays_next_to_the_footer() {
+        let body = "It is on its way.\n\n--\nUlises Ortega\nExample Labs\n\n--\nSent with EmailOps\nhttps://getemailops.com/?utm_source=email_footer";
+        let clean = clean_email_body(body, MAX_CHARS_PER_EMAIL);
+        assert!(clean.contains("Example Labs"), "{clean:?}");
+        assert!(!clean.contains("EmailOps"), "{clean:?}");
+    }
+
+    #[test]
+    fn three_dashes_typed_by_hand_open_a_signature_too() {
+        assert_eq!(
+            own_text("Thanks for the call.\n\n---\n\nVisit my site"),
+            "Thanks for the call."
+        );
+        assert_eq!(own_text("---\n\nVisit my site"), "");
     }
 
     #[test]

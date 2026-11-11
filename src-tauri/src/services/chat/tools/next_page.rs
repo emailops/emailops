@@ -23,6 +23,12 @@ impl Tool for NextPageTool {
         "next_page"
     }
 
+    /// The result rows are fenced by `format_search_emails_output*`; the
+    /// page and coverage notes ahead of them are ours.
+    fn fences_its_output(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &'static str {
         "Return the next page of the last search_emails result in this conversation — same filters, the matches that came after the ones already shown. Takes no arguments. Call it when the user asks for more of a list you already showed ('the next ones', 'show me more', 'y los demás'). Only useful after a result that said another page exists; without one it says so."
     }
@@ -127,6 +133,7 @@ mod tests {
             steps: Vec::new(),
             search_page: None,
             budget: None,
+            answer_truncated: false,
         });
         message
     }

@@ -17,17 +17,28 @@
   "generatingDraft": "Entwurf wird erstellt…",
   "openInTab": "In Tab öffnen",
   "attachFiles": "Dateien anhängen",
-  "attachFromDraftHint": "Die Anhänge dieses Entwurfs wurden über die CLI hinzugefügt - entfernen Sie sie, um hier neue Dateien anzuhängen",
   "sameDomain": "gleiche Domain",
   "yourReply": "deine Antwort",
   "body": "Nachricht",
   "send": "Senden",
   "sending": "Senden…",
+  "sendReply": "Antwort senden",
+  "sendReplyAll": "Allen antworten",
+  "loadingFiles": "Dateien werden geladen…",
+  "readingFiles_one": "{{count}} Datei wird gelesen…",
+  "readingFiles_other": "{{count}} Dateien werden gelesen…",
+  "readingFiles_many": "{{count}} Dateien werden gelesen…",
   "sent": "Nachricht gesendet",
   "saveDraft": "Entwurf speichern",
   "draftSaved": "Entwurf gespeichert",
   "discardDraft": "Verwerfen",
   "discardConfirm": "Diesen Entwurf verwerfen?",
+  "discardHint": "Das lässt sich nicht rückgängig machen.",
+  "closeWithFiles": {
+    "title": "Ohne deine Dateien schließen?",
+    "body": "Dein Text bleibt in den Entwürfen, aber eine Datei, die noch angehängt wird, oder ein Dokument aus EO Docs wird nicht mit ihm gespeichert.",
+    "keep": "Weiter bearbeiten"
+  },
   "attachFile": "Datei anhängen",
   "insertImage": "Bild einfügen",
   "insertLink": "Link einfügen",
@@ -43,6 +54,8 @@
   "close": "Schließen",
   "newEmail": "Neue E-Mail",
   "unusualRecipients": "Ungewöhnliche Empfänger:",
+  "unusualRecipientsHint": "{{recipients}} – andere Domain als die übrigen Empfänger. Prüfe das vor dem Senden.",
+  "draftSources": "Ähnliche frühere Threads als Kontext ({{total}})",
   "sentConfirm": "E-Mail gesendet!",
   "errors": {
     "noRecipients": "Füge mindestens einen Empfänger hinzu",
@@ -84,7 +97,16 @@
     "emptyHint": "Entwürfe werden beim Verfassen von E-Mails automatisch gespeichert.",
     "selectAccount": "Wähle ein Konto, um die Entwürfe anzuzeigen.",
     "continueEditing": "Bearbeitung fortsetzen",
-    "delete": "Entwurf löschen"
+    "delete": "Entwurf löschen",
+    "count_one": "{{count}} Entwurf",
+    "count_other": "{{count}} Entwürfe",
+    "count_many": "{{count}} Entwürfe",
+    "edit": "Bearbeiten",
+    "noBody": "(leer)",
+    "toLine": "An: {{recipients}}",
+    "fromLine": "Von: {{account}}",
+    "loadFailed": "Entwürfe konnten nicht geladen werden: {{error}}",
+    "deleteFailed": "Entwurf konnte nicht gelöscht werden: {{error}}"
   },
   "translate": {
     "open": "Übersetzen in…",
@@ -155,5 +177,14 @@
     "sending": "Wird gesendet…"
   },
   "attachFromComputer": "Vom Computer",
-  "attachFromEoDocs": "Aus EO Docs"
+  "attachFromEoDocs": "Aus EO Docs",
+  "intake": {
+    "empty": "„{{name}}“ ist leer und wurde nicht angehängt.",
+    "tooLarge": "„{{name}}“ ist größer als 25 MB und wurde nicht angehängt.",
+    "tooMany": "„{{name}}“ wurde nicht angehängt: Eine Nachricht fasst höchstens 32 Dateien.",
+    "pendingTooLarge": "„{{name}}“ wurde nicht angehängt: Warte, bis die Dateien hinzugefügt sind (50 MB auf einmal).",
+    "failed": "„{{name}}“ konnte nicht angehängt werden: {{error}}"
+  },
+  "removeAttachment": "{{name}} entfernen",
+  "draftFilesNotSaved": "Der Entwurf mit den Anhängen konnte nicht gespeichert werden, deshalb wurde nichts gesendet. Versuche es erneut."
 }

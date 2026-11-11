@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/react';
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import { useSharedYDoc } from '@/hooks/useSharedYDoc';
 import { useSheetConflicts } from '@/hooks/useSheetConflicts';
@@ -20,7 +21,7 @@ import { HistoryPanel } from './HistoryPanel';
 import { ShareDialog } from './ShareDialog';
 import { SheetEditor } from './SheetEditor';
 
-const BUTTON = 'px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-gray-200 disabled:opacity-40';
+const BUTTON = 'px-2 py-1 text-xs rounded bg-gray-100 hover:bg-gray-200 text-gray-800 disabled:opacity-40';
 const NOOP = () => {};
 
 interface DocumentPaneProps {
@@ -112,9 +113,9 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
 
   return (
     <section className="flex-1 min-w-0 flex flex-col min-h-0">
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-700">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-200">
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-gray-100 truncate">{doc.title}</h2>
+          <h2 className="text-sm font-semibold text-gray-900 truncate">{doc.title}</h2>
           <p className="text-xs text-gray-500 truncate" data-testid="shared-doc-participants">
             {others.length === 0
               ? t('documents:status.private')
@@ -163,21 +164,22 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
             {t('documents:share')}
           </button>
         )}
-        <select
-          data-testid="shared-doc-move"
-          aria-label={t('documents:folders.moveTo')}
+        <Select
+          testId="shared-doc-move"
+          ariaLabel={t('documents:folders.moveTo')}
           title={t('documents:folders.moveTo')}
           value={doc.folderId ?? ''}
-          onChange={(e) => void act('The document could not be moved', () => moveDoc(doc.id, e.target.value || null))}
-          className="max-w-40 px-1 py-1 text-xs rounded bg-gray-700 text-gray-200 border border-gray-600"
-        >
-          <option value="">{t('documents:folders.none')}</option>
-          {folderOptions(folders).map(({ folder, depth }) => (
-            <option key={folder.id} value={folder.id}>
-              {`${'\u2003'.repeat(depth)}${folder.name}`}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: '', label: t('documents:folders.none') },
+            ...folderOptions(folders).map(({ folder, depth }) => ({
+              value: folder.id,
+              label: `${'\u2003'.repeat(depth)}${folder.name}`,
+            })),
+          ]}
+          onChange={(id) => void act('The document could not be moved', () => moveDoc(doc.id, id || null))}
+          size="xs"
+          className="max-w-40"
+        />
         <button
           type="button"
           data-testid="shared-doc-history-toggle"
@@ -186,7 +188,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
             setHistoryOpen((o) => !o);
             setVersion(null);
           }}
-          className={historyOpen ? 'px-2 py-1 text-xs rounded bg-gray-500 text-white' : BUTTON}
+          className={historyOpen ? 'px-2 py-1 text-xs rounded bg-primary-50 text-primary-700' : BUTTON}
         >
           {t('documents:history.open')}
         </button>
@@ -214,7 +216,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
           type="button"
           data-testid="shared-doc-delete"
           onClick={onDelete}
-          className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-red-800 text-gray-200"
+          className="px-2 py-1 text-xs rounded bg-gray-100 hover:bg-red-100 text-gray-800"
         >
           {t('documents:delete')}
         </button>
@@ -222,13 +224,13 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
       {shownError && (
         <div
           data-testid="shared-doc-error"
-          className="m-3 mb-0 p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm"
+          className="m-3 mb-0 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm"
         >
           {shownError}
         </div>
       )}
       {doc.status !== 'active' && (
-        <p className="mx-3 mt-3 p-2 rounded bg-gray-800 text-xs text-gray-400">
+        <p className="mx-3 mt-3 p-2 rounded bg-gray-50 text-xs text-gray-500">
           {doc.status === 'invited' ? t('documents:readOnlyInvitation') : t('documents:readOnlyLeft')}
         </p>
       )}
@@ -238,7 +240,7 @@ export function DocumentPane({ doc, accountEmail, onDelete }: DocumentPaneProps)
             <>
               <div
                 data-testid="shared-doc-version-banner"
-                className="flex items-center gap-3 mx-3 mt-3 p-2 rounded bg-amber-900/30 border border-amber-800 text-xs text-amber-200"
+                className="flex items-center gap-3 mx-3 mt-3 p-2 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800"
               >
                 <span className="flex-1">
                   {t('documents:history.viewing', { date: fmt.dateTime(version.createdAt) })}

@@ -14,6 +14,7 @@ pub mod import;
 mod mail_text;
 pub mod planner;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -24,7 +25,7 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::shared_docs::{DocFolder, DocKind, DocStatus, DocVersion, SharedDoc};
 use crate::models::{Account, Email};
-use crate::services::emails::{ProviderAccess, ThreadAction, ThreadActionReport, ThreadRef};
+use crate::services::emails::ProviderAccess;
 use crate::services::logger;
 use crate::services::outbox::OutboxProviders;
 use crate::services::ownership::{doc_folder_in_account, shared_doc_in_account};
@@ -32,7 +33,7 @@ use crate::sync::provider::{
     provider_supports_mailbox_writes, AttachmentInfo, EmailAttachment, EmailBody, EmailProvider,
 };
 use envelope::{Envelope, Purpose};
-use planner::{Arrival, FlushCandidate, KnownDoc};
+use planner::{Arrival, FlushCandidate, FlushRetry, KnownDoc};
 
 /// The preference that turns the feature off. Experimental, but on unless the
 /// user turns it off; while off nothing is ingested or mailed.
@@ -131,11 +132,9 @@ pub fn apply_local_update(db: &Database, account_id: &str, doc_id: &str, update:
         .decode(update)
         .map_err(|_| AppError::InvalidInput("Not a valid shared document update".into()))?;
     crdt::validate_update(&update)?;
-    let state = db
-        .shared_doc_state(doc_id)?
+    let merged = db
+        .merge_shared_doc_state(doc_id, true, now, |stored| crdt::merge(stored, &update))?
         .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;
-    let merged = crdt::merge(&state, &update)?;
-    db.set_shared_doc_state(doc_id, &merged, true, now)?;
     let author = db.get_account(account_id)?.map(|a| me(&a)).unwrap_or_default();
     db.record_doc_version(doc_id, &author, "local", &merged, now)?;
     reindex(db, doc_id)
@@ -338,6 +337,7 @@ async fn mail_envelope(
         &account.id,
         to.clone(),
         Vec::new(),
+        Vec::new(),
         &mail_text::subject(mail_language(db)?, &doc.title),
         &body,
         vec![attachment],
@@ -459,9 +459,19 @@ pub async fn flush(db: &Arc<Database>, account: &Account, provider: &dyn EmailPr
     }
 }
 
+/// Documents whose mail is failing, by id. Kept in memory by the caller of
+/// [`flush_due`]: a restart only earns each of them one more attempt.
+pub type FlushRetries = HashMap<String, FlushRetry>;
+
 /// Flush every document whose changes are due ([`planner::due_flushes`]).
-/// Never fails as a whole: each failure is logged and retried next pass.
-pub async fn flush_due(db: &Arc<Database>, now: i64, providers: &dyn OutboxProviders) -> usize {
+/// Never fails as a whole: each failure is logged and tried again after the
+/// wait in `retries` ([`planner::next_flush_retry`]).
+pub async fn flush_due(
+    db: &Arc<Database>,
+    now: i64,
+    providers: &dyn OutboxProviders,
+    retries: &mut FlushRetries,
+) -> usize {
     if !is_enabled(db) {
         return 0;
     }
@@ -472,6 +482,8 @@ pub async fn flush_due(db: &Arc<Database>, now: i64, providers: &dyn OutboxProvi
             return 0;
         }
     };
+    // Gone, or mailed by hand since it failed: nothing left to wait for.
+    retries.retain(|id, _| docs.iter().any(|d| d.id == *id && d.dirty_since.is_some()));
     let candidates: Vec<FlushCandidate> = docs
         .iter()
         .map(|d| FlushCandidate {
@@ -480,6 +492,7 @@ pub async fn flush_due(db: &Arc<Database>, now: i64, providers: &dyn OutboxProvi
             consented: d.consented_at.is_some(),
             dirty_since: d.dirty_since,
             updated_at: d.updated_at,
+            retry_at: retries.get(&d.id).map(|r| r.retry_at),
         })
         .collect();
     let mut sent = 0;
@@ -495,13 +508,23 @@ pub async fn flush_due(db: &Arc<Database>, now: i64, providers: &dyn OutboxProvi
             flush(db, &account, provider.as_ref(), &doc.id).await
         };
         match outcome.await {
-            Ok(true) => sent += 1,
-            Ok(false) => {}
-            Err(e) => logger::log(
-                "error",
-                "sync",
-                format!("Changes to \"{}\" could not be mailed, will retry: {e}", doc.title),
-            ),
+            Ok(went_out) => {
+                retries.remove(&doc.id);
+                sent += usize::from(went_out);
+            }
+            Err(e) => {
+                let retry = planner::next_flush_retry(retries.get(&doc.id), now);
+                logger::log(
+                    "error",
+                    "sync",
+                    format!(
+                        "Changes to \"{}\" could not be mailed, will retry in {} s: {e}",
+                        doc.title,
+                        retry.retry_at - now
+                    ),
+                );
+                retries.insert(doc.id.clone(), retry);
+            }
         }
     }
     sent
@@ -716,7 +739,7 @@ enum Applied {
 }
 
 /// Merge one envelope into this install, per [`planner::plan_arrival`].
-fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope, now: i64) -> Result<Applied> {
+fn apply_arrival(db: &Database, account: &Account, email: &Email, env: &Envelope, now: i64) -> Result<Applied> {
     if db.shared_doc_deleted(&account.id, &env.doc_id)? {
         logger::log(
             "debug",
@@ -738,8 +761,12 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
         status: d.status,
         participants: &d.participants,
     });
-    let sender = sender.trim().to_lowercase();
-    let state = match planner::plan_arrival(env, &sender, &account.email, known_doc.as_ref()) {
+    let sender = email.sender_email.trim().to_lowercase();
+    // Gmail labels a sent message wherever it sits; the others file it in Sent.
+    let is_sent_copy = email.is_sent || email.mailbox == "sent";
+    let arrival = planner::plan_arrival(env, &sender, &account.email, is_sent_copy, known_doc.as_ref());
+    let hold = arrival == Arrival::ApplyAndHold;
+    let state = match arrival {
         Arrival::Ignore(reason) => {
             logger::log(
                 "debug",
@@ -774,13 +801,22 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
             }
             state
         }
-        Arrival::Apply => {
-            let stored = db
-                .shared_doc_state(&env.doc_id)?
+        Arrival::Apply | Arrival::ApplyAndHold => {
+            let state = db
+                .merge_shared_doc_state(&env.doc_id, false, now, |stored| crdt::merge(stored, &env.update))?
                 .ok_or_else(|| AppError::NotFound(format!("Shared document {} not found", env.doc_id)))?;
-            let state = crdt::merge(&stored, &env.update)?;
-            db.set_shared_doc_state(&env.doc_id, &state, false, now)?;
             db.add_shared_doc_participants(&env.doc_id, &env.participants)?;
+            if hold {
+                db.set_shared_doc_status(&env.doc_id, DocStatus::Invited, None, now)?;
+                logger::log(
+                    "info",
+                    "sync",
+                    format!(
+                        "[{}] {sender} added people to \"{}\": nothing is mailed until you accept",
+                        account.email, env.title
+                    ),
+                );
+            }
             state
         }
     };
@@ -800,9 +836,10 @@ fn apply_arrival(db: &Database, account: &Account, sender: &str, env: &Envelope,
 
 /// Sync hook: apply the document messages of a freshly stored batch, then
 /// mark the background change messages read and archive them so they do not
-/// clutter the inbox. An invitation, or an email with a document attached,
-/// stays in the inbox. Never fails the sync:
-/// each failure is logged. Returns how many documents changed.
+/// clutter the inbox. Only those messages: an invitation, an email with a
+/// document attached and the rest of their conversations stay in the inbox.
+/// Never fails the sync: each failure is logged. Returns how many documents
+/// changed.
 pub async fn ingest_arrivals(
     db: &Arc<Database>,
     account: &Account,
@@ -814,7 +851,7 @@ pub async fn ingest_arrivals(
         return 0;
     }
     let mut changed: Vec<String> = Vec::new();
-    let mut tidy: Vec<ThreadRef> = Vec::new();
+    let mut tidy: Vec<&str> = Vec::new();
     // Oldest first: providers list newest first, and the first message of a
     // document is the invitation the user should see.
     let mut ordered: Vec<&(Email, Vec<AttachmentInfo>)> = batch.iter().collect();
@@ -845,7 +882,7 @@ pub async fn ingest_arrivals(
                 return Ok(None);
             }
             let env = envelope::decode(&envelope_bytes(provider, email, info).await?)?;
-            let applied = apply_arrival(db, account, &email.sender_email, &env, now)?;
+            let applied = apply_arrival(db, account, email, &env, now)?;
             db.record_shared_doc_message(&account.id, &email.id, &env.doc_id, now)?;
             Ok::<_, AppError>(Some((env.doc_id, env.purpose, applied)))
         };
@@ -858,10 +895,7 @@ pub async fn ingest_arrivals(
                 // invitation, or an email a person wrote with a document
                 // attached, is mail the user should see.
                 if purpose == Purpose::Update && email.mailbox == "inbox" && !email.is_sent {
-                    tidy.push(ThreadRef {
-                        account_id: account.id.clone(),
-                        thread_id: email.thread_id.clone(),
-                    });
+                    tidy.push(&email.id);
                 }
             }
             Ok(_) => {}
@@ -875,21 +909,21 @@ pub async fn ingest_arrivals(
             ),
         }
     }
-    tidy.dedup();
-    if !tidy.is_empty() {
-        let access = if provider_supports_mailbox_writes(&account.provider) {
-            ProviderAccess::Ready(provider)
-        } else {
-            ProviderAccess::LocalOnly
-        };
-        let threads: Vec<&ThreadRef> = tidy.iter().collect();
-        let mut report = ThreadActionReport::default();
-        for action in [ThreadAction::MarkRead, ThreadAction::Archive] {
-            let access = match &access {
-                ProviderAccess::Ready(p) => ProviderAccess::Ready(*p),
-                _ => ProviderAccess::LocalOnly,
-            };
-            crate::services::emails::apply_to_account(db, account, &threads, action, access, &mut report).await;
+    let access = if provider_supports_mailbox_writes(&account.provider) {
+        ProviderAccess::Ready(provider)
+    } else {
+        ProviderAccess::LocalOnly
+    };
+    for email_id in tidy {
+        if let Err(e) = crate::services::emails::read_and_archive_message(db, email_id, &access).await {
+            logger::log(
+                "error",
+                "sync",
+                format!(
+                    "[{}] A shared document message could not be archived: {e}",
+                    account.email
+                ),
+            );
         }
     }
     if !changed.is_empty() {

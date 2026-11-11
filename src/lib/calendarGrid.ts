@@ -5,6 +5,7 @@
 // anchor date / "now" as explicit parameters — no hidden clock reads.
 // Timestamps follow the app's DB convention: unix **seconds**.
 
+import { ALL_ACCOUNTS_ID } from '@/stores/accountStore';
 import type { CalendarEvent } from '@/types';
 
 /** One cell of the 6×7 month grid. */
@@ -71,6 +72,26 @@ function effectiveEnd(e: CalendarEvent): number {
 }
 
 /**
+ * The local midnight of the date a stored all-day time names. Rounded to the
+ * nearest date, in case a provider hands the midnight of the event's own zone.
+ */
+function localMidnightOfDate(secs: number): number {
+  const date = new Date(Math.round(secs / ONE_DAY_SECS) * ONE_DAY_SECS * 1000);
+  return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()).getTime() / 1000;
+}
+
+/**
+ * Where an event sits on the local timeline, exclusive end. An all-day event
+ * holds dates, stored as UTC midnights, so it covers those dates in any zone
+ * rather than the instants that happen to fall on them locally.
+ */
+export function eventBounds(e: CalendarEvent): { start: number; end: number } {
+  if (!e.isAllDay) return { start: e.startTime, end: effectiveEnd(e) };
+  const start = localMidnightOfDate(e.startTime);
+  return { start, end: Math.max(localMidnightOfDate(e.endTime), start + 1) };
+}
+
+/**
  * Events overlapping the **local** day of `day`, sorted for display:
  * all-day first, then by start time, longer events before shorter ones on ties.
  * `endTime` is exclusive — an event ending exactly at midnight belongs to the
@@ -80,7 +101,10 @@ export function eventsForDay(events: CalendarEvent[], day: Date): CalendarEvent[
   const dayStart = Math.floor(startOfDay(day).getTime() / 1000);
   const dayEnd = Math.floor(addDays(day, 1).getTime() / 1000);
   return events
-    .filter((e) => e.startTime < dayEnd && effectiveEnd(e) > dayStart)
+    .filter((e) => {
+      const { start, end } = eventBounds(e);
+      return start < dayEnd && end > dayStart;
+    })
     .sort((a, b) => {
       if (a.isAllDay !== b.isAllDay) return a.isAllDay ? -1 : 1;
       if (a.startTime !== b.startTime) return a.startTime - b.startTime;
@@ -181,10 +205,10 @@ export function layoutEventSpans(events: CalendarEvent[], days: Date[]): EventSp
 
   const candidates = events
     .filter(isMultiDayEvent)
-    .filter((e) => e.startTime < rangeEnd && effectiveEnd(e) > rangeStart)
-    .map((event) => {
-      const end = effectiveEnd(event);
-      const startIndex = dayEnds.findIndex((dayEnd) => dayEnd > event.startTime);
+    .map((event) => ({ event, ...eventBounds(event) }))
+    .filter(({ start, end }) => start < rangeEnd && end > rangeStart)
+    .map(({ event, start, end }) => {
+      const startIndex = dayEnds.findIndex((dayEnd) => dayEnd > start);
       // Last column the event still covers: exclusive end, so a span ending
       // exactly at midnight stops on the previous day.
       let endIndex = startIndex;
@@ -198,7 +222,7 @@ export function layoutEventSpans(events: CalendarEvent[], days: Date[]): EventSp
         event,
         startIndex: Math.max(startIndex, 0),
         endIndex,
-        continuesBefore: event.startTime < rangeStart,
+        continuesBefore: start < rangeStart,
         continuesAfter: end > rangeEnd,
       };
     })
@@ -298,15 +322,17 @@ export function startsIn(startTimeSec: number, nowSec: number): StartsIn {
 /**
  * Pick the calendar's account: the persisted selection if it still names an
  * enabled account, else the caller's preferred (effective) account, else the
- * first enabled account, else null.
+ * first enabled account, else null. "All accounts" (`ALL_ACCOUNTS_ID`) is a
+ * candidate only while two or more accounts have a calendar.
  */
 export function resolveCalendarAccountId(
   accounts: ReadonlyArray<{ id: string; enabled: boolean }>,
   persistedId: string | null,
   preferredId: string | null,
 ): string | null {
+  const canCombine = accounts.filter((a) => a.enabled).length >= 2;
   const isCandidate = (id: string | null): id is string =>
-    id !== null && accounts.some((a) => a.id === id && a.enabled);
+    id !== null && (id === ALL_ACCOUNTS_ID ? canCombine : accounts.some((a) => a.id === id && a.enabled));
   if (isCandidate(persistedId)) return persistedId;
   if (isCandidate(preferredId)) return preferredId;
   return accounts.find((a) => a.enabled)?.id ?? null;

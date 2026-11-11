@@ -1,7 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSenderNames } from '@/hooks/useSenderNames';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
+import { selectPageFailed } from '@/lib/listPaging';
+import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useFilterStore } from '@/stores/filterStore';
@@ -24,12 +27,13 @@ interface InboxProps {
   syncProgress: SyncProgress | null;
   isLoadingMore: boolean;
   hasMore: boolean;
-  totalCount: number;
   selectedEmailId: string | null;
   /** `auto` is set when the split layout picked the email itself (first load
    *  of a list), not the user — such a selection must not mark it read. */
   onSelectEmail: (email: Email, opts?: { auto?: boolean }) => void;
   onLoadMore: () => void;
+  /** Ask again for what failed: the first page or the next one. */
+  onRetry?: () => void;
   onAddSenderFilter?: (senderEmail: string) => void;
   onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
@@ -66,11 +70,12 @@ interface InboxProps {
   accountId?: string | null;
   /** Called when the user submits a search query from the inline search box. */
   onSearch?: (query: string) => void;
+  /** Sync now, offered by the empty list of an account with no mail yet. */
+  onSync?: () => void;
 }
 
 interface CategoryTabConfig {
   key: EmailCategory;
-  label: string;
   /** Tailwind color classes for the active tab (text + bottom-border). */
   activeColor: string;
   icon: ReactNode;
@@ -79,7 +84,6 @@ interface CategoryTabConfig {
 const CATEGORIES: CategoryTabConfig[] = [
   {
     key: 'primary',
-    label: 'Primary',
     activeColor: 'text-blue-600 border-blue-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -93,7 +97,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'social',
-    label: 'Social',
     activeColor: 'text-pink-600 border-pink-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -107,7 +110,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'updates',
-    label: 'Updates',
     activeColor: 'text-amber-600 border-amber-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -121,7 +123,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'forums',
-    label: 'Forums',
     activeColor: 'text-purple-600 border-purple-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -135,7 +136,6 @@ const CATEGORIES: CategoryTabConfig[] = [
   },
   {
     key: 'promotions',
-    label: 'Promotions',
     activeColor: 'text-emerald-600 border-emerald-600',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -158,6 +158,7 @@ export function Inbox({
   selectedEmailId,
   onSelectEmail,
   onLoadMore,
+  onRetry,
   onAddSenderFilter,
   onHideSenderFromFilters,
   onCreateAttachmentRule,
@@ -177,8 +178,9 @@ export function Inbox({
   isChatPanelOpen = true,
   accountId,
   onSearch,
+  onSync,
 }: InboxProps) {
-  const { t } = useTranslation(['inbox', 'common', 'chat']);
+  const { t } = useTranslation(['inbox', 'common', 'chat', 'sidebar']);
   // Only render tabs for categories the active account is actually
   // syncing. Unspecified → render no tabs. Previously this fell back to a
   // hard-coded Primary/Social/Updates trio, which on a fresh app start
@@ -193,6 +195,9 @@ export function Inbox({
 
   const searchQuery = useEmailStore((s) => s.searchQuery);
   const unreadOnly = useEmailStore((s) => s.unreadOnly);
+  const setUnreadOnly = useEmailStore((s) => s.setUnreadOnly);
+  const pageFailed = useEmailStore((s) => selectPageFailed(s.paging));
+  const listError = useEmailStore((s) => s.listError);
 
   // Active tab selection model:
   // - "all" while a search is active: search spans every category, and the
@@ -245,19 +250,24 @@ export function Inbox({
   const activeFilter = useFilterStore((s) => s.activeFilter);
   // Search results mix every account, so they also get a readable chip.
   const showAccountChip = Boolean(searchQuery);
+  const accountEmailById = useMemo(() => new Map(allAccounts.map((a) => [a.id, a.email])), [allAccounts]);
   const getAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
-    const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
     return (email: Email) => ({
-      colorClass: accountColorClass(email.accountId),
-      label: emailById.get(email.accountId) ?? email.accountId,
+      colorClass: accountColorClass(allAccounts, email.accountId),
+      label: accountEmailById.get(email.accountId) ?? email.accountId,
       chip: showAccountChip,
     });
-  }, [isUnified, allAccounts, showAccountChip]);
+  }, [isUnified, allAccounts, accountEmailById, showAccountChip]);
+  // Each row is judged against its own account, never the active one: the
+  // unified view mixes rows from several.
+  const getOwnerEmail = useCallback((email: Email) => accountEmailById.get(email.accountId), [accountEmailById]);
 
   // A selection belongs to the list it was made in: switching account,
   // mailbox, filter or search clears it.
   const listScope = useEmailStore((s) => s.listScope);
+  // A search or smart filter replaces the Sent list with its own results.
+  const inSentView = listScope === 'sent' && !searchQuery && !activeFilter;
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const clearSelection = useSelectionStore((s) => s.clear);
   const hasSelection = useSelectionStore((s) => s.ids.size > 0);
@@ -297,6 +307,9 @@ export function Inbox({
     if (searchQuery || activeFilter) return filteredEmails;
     return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
   }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
+  // Rows of the user's own messages name their recipients the way those
+  // people sign when they write in.
+  const nameOf = useSenderNames(visibleEmails);
 
   // Whether any of the loaded messages are flagged, regardless of the current
   // setting — the toggle only appears when it would do something.
@@ -403,34 +416,13 @@ export function Inbox({
     if (!container || isLoadingMore || !hasMore || isLoading) return;
 
     const { scrollHeight, clientHeight } = container;
+    // A hidden list reads as empty; `onVisible` asks again when it is back.
+    if (clientHeight === 0) return;
     // If content doesn't fill the container (no scrollbar), load more
     if (scrollHeight <= clientHeight + 10) {
       onLoadMore();
     }
   }, [isLoadingMore, hasMore, isLoading, onLoadMore]);
-
-  // Infinite scroll handler
-  const handleScroll = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (!container || isLoadingMore || !hasMore) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-
-    // Load more when user scrolls to within 200px of the bottom
-    if (distanceFromBottom < 200) {
-      onLoadMore();
-    }
-  }, [isLoadingMore, hasMore, onLoadMore]);
-
-  // Attach scroll listener
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      return () => container.removeEventListener('scroll', handleScroll);
-    }
-  }, [handleScroll]);
 
   // Auto-load more if content doesn't fill the container
   useEffect(() => {
@@ -459,21 +451,34 @@ export function Inbox({
   const hasCategoryFilter =
     showCategoryFilter && selectedCategories.size > 0 && selectedCategories.size < visibleCategories.length;
   // A sidebar filter travels as a one-token query; anything else is a
-  // free-text search, which the Unread toggle does not apply to.
+  // free-text search.
   const isTextSearch = Boolean(searchQuery?.trim()) && !filterFromQuery(searchQuery);
-  const emptyStateMessage: string = isSyncing
-    ? 'Syncing emails...'
-    : isTextSearch
-      ? 'No emails match your search'
+  const emptyStateMessage: string = listError
+    ? t('inbox:list.firstPageFailed')
+    : isSyncing
+      ? t('inbox:emptyState.syncing')
       : unreadOnly
         ? t('inbox:readFilter.empty')
-        : hasActiveFilter || hasCategoryFilter
-          ? 'No emails match the selected filters'
-          : 'No emails yet — try syncing or adding an account';
+        : isTextSearch
+          ? t('inbox:emptyState.noSearchResults')
+          : hasActiveFilter || hasCategoryFilter
+            ? t('inbox:emptyState.noFilterResults')
+            : t('inbox:emptyState.noEmails');
+  // A search has its own way out (ActiveSearchNotice) and a sync is filling
+  // the list, so neither gets a button here.
+  const emptyStateAction = (() => {
+    if (listError) return onRetry ? { label: t('common:actions.retry'), onClick: onRetry } : undefined;
+    if (isSyncing || hasActiveFilter) return undefined;
+    if (unreadOnly) return { label: t('inbox:emptyState.showAll'), onClick: () => setUnreadOnly(false) };
+    if (hasCategoryFilter) {
+      return { label: t('inbox:emptyState.showAllCategories'), onClick: () => handleTabClick('all') };
+    }
+    return onSync ? { label: t('inbox:emptyState.syncNow'), onClick: onSync } : undefined;
+  })();
 
   const showTabs = showCategoryFilter && visibleCategories.length > 0;
   return (
-    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50/30 flex flex-col`}>
+    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50 flex flex-col`}>
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
         {/* While rows are selected the bulk toolbar takes the header row's
             place (count, select-all, actions); the tabs stay below it. */}
@@ -486,10 +491,10 @@ export function Inbox({
             {/* Title */}
             {/* The title gives way before the search: it truncates, the
                 search keeps room to type (the header also holds the
-                All / Unread toggle and Load more). */}
+                All / Unread toggle). */}
             <div className="flex items-center gap-1.5 max-w-[45%] min-w-0">
               <h2 className="text-lg font-semibold text-gray-900 truncate">
-                {title ?? (accountName ? `Inbox — ${accountName}` : 'Inbox')}
+                {title ?? mailboxTitle('inbox', accountName, (key) => t(key as 'sidebar:inbox'))}
               </h2>
               {isSyncing && (
                 <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-primary-600 flex-shrink-0" />
@@ -512,21 +517,7 @@ export function Inbox({
 
             {/* Action buttons */}
             <div className="flex items-center gap-1 flex-shrink-0">
-              {!isTextSearch && <ReadFilterToggle />}
-              {hasMore && !isLoadingMore && (
-                <button
-                  onClick={onLoadMore}
-                  className="px-3 py-1.5 text-xs font-medium text-primary-600 hover:text-primary-700 hover:bg-primary-50 border border-primary-200 rounded-lg transition-colors"
-                >
-                  {t('inbox:loadMore')}
-                </button>
-              )}
-              {isLoadingMore && (
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-                  {t('common:state.loading')}
-                </div>
-              )}
+              <ReadFilterToggle />
               {/* Always-visible new-chat affordance. Sits in the list toolbar
                   rather than the AI FEATURES sidebar section so starting a chat
                   never depends on that section being expanded or scrolled into
@@ -593,14 +584,14 @@ export function Inbox({
                 }
               />
             )}
-            {visibleCategories.map(({ key, label, activeColor, icon }) => (
+            {visibleCategories.map(({ key, activeColor, icon }) => (
               <CategoryTab
                 key={key}
                 isActive={activeTabKey === key}
                 disabled={Boolean(searchQuery)}
                 onClick={() => handleTabClick(key)}
                 activeColor={activeColor}
-                label={label}
+                label={t(`inbox:categoryFilter.${key}` as const)}
                 icon={icon}
               />
             ))}
@@ -618,7 +609,7 @@ export function Inbox({
           <span>{t('inbox:junk.hideFlagged')}</span>
         </label>
       )}
-      {searchQuery && !isLoading && visibleEmails.length === 0 && (
+      {searchQuery && !isLoading && !listError && visibleEmails.length === 0 && (
         <ActiveSearchNotice query={searchQuery} onClear={clearSearchQuery} />
       )}
       <VirtualEmailList
@@ -631,7 +622,11 @@ export function Inbox({
         isLoadingMore={isLoadingMore}
         hasMore={hasMore}
         isSyncing={isSyncing}
+        pageFailed={pageFailed && emails.length > 0}
+        onRetry={onRetry}
+        onVisible={checkIfNeedMoreEmails}
         emptyStateMessage={emptyStateMessage}
+        emptyStateAction={emptyStateAction}
         onSelectEmail={handleSelectEmail}
         onLoadMore={onLoadMore}
         onAddSenderFilter={onAddSenderFilter}
@@ -642,6 +637,9 @@ export function Inbox({
         onChatAboutThread={onChatAboutThread}
         compact={fullWidth}
         getAccountBadge={getAccountBadge}
+        getOwnerEmail={getOwnerEmail}
+        nameOf={nameOf}
+        inSentView={inSentView}
       />
     </div>
   );

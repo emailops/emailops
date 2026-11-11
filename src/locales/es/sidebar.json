@@ -51,7 +51,13 @@
     "button": "Enviar comentarios",
     "general": "Comentarios generales",
     "bug": "Informe de error",
-    "idea": "Idea"
+    "idea": "Idea",
+    "star": "Dar una estrella en GitHub",
+    "starDialog": {
+      "title": "Apoya EmailOps con una estrella en GitHub",
+      "body": "¿Quieres visitar {{url}}?",
+      "visit": "Visitar GitHub"
+    }
   },
   "accountActions": {
     "sync": "Sincronizar ahora",

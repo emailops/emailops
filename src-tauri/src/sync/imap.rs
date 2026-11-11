@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use mailparse::{parse_mail, MailHeaderMap};
 use sha2::{Digest, Sha256};
@@ -6,6 +8,7 @@ use crate::models::error::{AppError, Result};
 use crate::models::Email;
 use crate::sync::folder_plan::{self, resolve_role_folder, ListedFolder, WellKnownFolder};
 use crate::sync::imap_search;
+use crate::sync::imap_session::{self, ConnectStage, SessionSlot};
 use crate::sync::provider::{
     self, AttachmentInfo, EmailAttachment, EmailBody, EmailCategory, EmailProvider, MessageRef,
 };
@@ -65,12 +68,6 @@ pub(crate) fn folder_email_id_prefix(account_id: &str, server_path: &str) -> Str
         format!("{account_id}::{FOLDER_ID_PREFIX}{encoded}::")
     }
 }
-
-/// Upper bound on INBOX pages one sync may walk through the backfill window.
-/// 10 x `PAGE_SIZE` (100) keeps a first sync against a huge mailbox bounded;
-/// progress is resumable because the next sync's window starts from the new
-/// oldest stored email.
-const MAX_INBOX_PAGES_PER_SYNC: u32 = 10;
 
 /// Most mailboxes whose UIDVALIDITY one sync checks: the inbox, the three role
 /// folders and the custom folders the sync walks
@@ -136,26 +133,19 @@ fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64
 
 /// Cut one page out of an INBOX `SEARCH` result, newest UID first.
 ///
-/// IMAP has no server-side cursor, so the page token carries our own:
-/// `"{last_uid_returned}:{pages_taken}"`. The next page resumes strictly below
-/// that UID, which is what lets the backfill pass walk *older* mail instead of
-/// re-listing the newest window forever. Returns `None` for the token once the
-/// result set is exhausted or [`MAX_INBOX_PAGES_PER_SYNC`] is reached.
+/// IMAP has no server-side cursor, so the page token carries our own: the last
+/// UID returned. The next page resumes strictly below it, which is what lets the
+/// backfill pass walk *older* mail instead of re-listing the newest window
+/// forever. Returns `None` for the token only once the result set is exhausted,
+/// because the sync takes that as having listed everything.
 fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32) -> (Vec<u32>, Option<String>) {
     if max_results == 0 {
         return (Vec::new(), None);
     }
 
     // Tokens are only ever minted here, so parse leniently: a malformed one
-    // degrades to "first page" rather than aborting the sync. The page counter
-    // still advances, so a bad token can never spin forever.
-    let (cursor, pages_taken) = match page_token {
-        Some(token) => {
-            let (uid, pages) = token.split_once(':').unwrap_or((token, "0"));
-            (uid.parse::<u32>().ok(), pages.parse::<u32>().unwrap_or(0))
-        }
-        None => (None, 0),
-    };
+    // degrades to "first page" rather than aborting the sync.
+    let cursor = page_token.and_then(|token| token.parse::<u32>().ok());
 
     // UIDs are monotonically increasing per mailbox, so descending UID order is
     // newest-first.
@@ -168,18 +158,200 @@ fn select_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32)
     let more_remain = sorted.len() > max_results as usize;
     sorted.truncate(max_results as usize);
 
-    let pages_taken = pages_taken.saturating_add(1);
     let next_token = match sorted.last() {
-        Some(last) if more_remain && pages_taken < MAX_INBOX_PAGES_PER_SYNC => Some(format!("{last}:{pages_taken}")),
+        Some(last) if more_remain => Some(last.to_string()),
         _ => None,
     };
 
     (sorted, next_token)
 }
 
+/// One page of an inbox listing, and whether the Sent folder goes with it.
+#[derive(Debug, PartialEq)]
+struct InboxPage {
+    uids: Vec<u32>,
+    next_token: Option<String>,
+    with_sent: bool,
+}
+
+/// [`select_inbox_page`], plus where the Sent folder is listed: with the last
+/// page of the pass. Sent spans the account's whole range and has no cursor of
+/// its own, so it is listed once per pass — and listed last, a large Sent
+/// folder downloads after the inbox instead of between its newest page and
+/// the rest.
+fn plan_inbox_page(uids: Vec<u32>, page_token: Option<&str>, max_results: u32) -> InboxPage {
+    let (uids, next_token) = select_inbox_page(uids, page_token, max_results);
+    let with_sent = next_token.is_none();
+    InboxPage {
+        uids,
+        next_token,
+        with_sent,
+    }
+}
+
+/// The inbox `UID SEARCH` answer of a listing, kept for its later pages.
+#[derive(Debug, Clone, PartialEq)]
+struct InboxSearch {
+    query: String,
+    uids: Vec<u32>,
+}
+
+/// The UIDs a page can take from its listing's earlier search instead of
+/// asking the server again — every page of a pass searches the same window,
+/// and only the cursor in the page token moves. The first page always
+/// searches, so each pass sees the mail that arrived since the last one.
+fn reusable_inbox_uids(cached: Option<&InboxSearch>, query: &str, page_token: Option<&str>) -> Option<Vec<u32>> {
+    match (cached, page_token) {
+        (Some(search), Some(_)) if search.query == query => Some(search.uids.clone()),
+        _ => None,
+    }
+}
+
 /// Read/write timeout on every IMAP socket, so an unresponsive server cannot
 /// hang a blocking task forever.
 const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// A blocking IMAP task that did not finish: a panic there is an ordinary error
+/// of that operation, without the panic's text (see `util::panic_guard`).
+fn task_failed(error: tokio::task::JoinError) -> AppError {
+    crate::util::panic_guard::join_failed("IMAP operation", &error)
+}
+
+/// How an IMAP connection reaches TLS. 993 is IMAPS (TLS on connect); any
+/// other port (143, Proton Mail Bridge's 1143) greets in clear text and is
+/// upgraded with STARTTLS — the same port rule `test_smtp` applies to 465.
+/// A TLS handshake sent to a clear-text greeting fails with "record overflow".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImapTlsMode {
+    Implicit,
+    StartTls,
+}
+
+impl ImapTlsMode {
+    fn for_port(port: u16) -> Self {
+        if port == 993 {
+            Self::Implicit
+        } else {
+            Self::StartTls
+        }
+    }
+}
+
+/// Read the clear-text greeting and issue `STARTTLS`, leaving `stream` at the
+/// point where the TLS handshake starts. Never falls back to clear text: a
+/// server that refuses STARTTLS is an error, so the password is not sent
+/// unencrypted.
+fn negotiate_starttls<S: std::io::Read + std::io::Write>(stream: &mut S) -> std::io::Result<()> {
+    use std::io;
+
+    let greeting = read_imap_line(stream)?;
+    if !greeting.starts_with("* OK") {
+        return Err(io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            format!("unexpected IMAP greeting: {greeting}"),
+        ));
+    }
+    stream.write_all(b"a0 STARTTLS\r\n")?;
+    stream.flush()?;
+    loop {
+        let line = read_imap_line(stream)?;
+        if line.starts_with("a0 OK") {
+            return Ok(());
+        }
+        if line.starts_with("a0 ") {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("server refused STARTTLS: {line}"),
+            ));
+        }
+    }
+}
+
+/// One CRLF-terminated response line, read a byte at a time so nothing past
+/// it is buffered away from the TLS layer that takes over the socket next.
+fn read_imap_line<S: std::io::Read>(stream: &mut S) -> std::io::Result<String> {
+    use std::io;
+
+    const MAX_LINE: usize = 8 * 1024;
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    while !line.ends_with(b"\r\n") {
+        if line.len() >= MAX_LINE {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "IMAP response line too long",
+            ));
+        }
+        if stream.read(&mut byte)? == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "IMAP server closed the connection before STARTTLS",
+            ));
+        }
+        line.push(byte[0]);
+    }
+    Ok(String::from_utf8_lossy(&line).trim_end().to_string())
+}
+
+/// Why one address did not connect, and whether the next one is worth trying.
+#[derive(Debug)]
+struct AddressFailure {
+    message: String,
+    try_next: bool,
+}
+
+impl AddressFailure {
+    /// A failure that may be particular to this address: a TCP connect
+    /// error, a timeout.
+    fn next(message: String) -> Self {
+        Self {
+            message,
+            try_next: true,
+        }
+    }
+
+    /// A failure every address would repeat: a certificate, a refused STARTTLS.
+    fn stop(message: String) -> Self {
+        Self {
+            message,
+            try_next: false,
+        }
+    }
+}
+
+/// The first stream `attempt` opens on `addrs`, tried in order until
+/// `deadline`. An unreachable first address (IPv6 or IPv4) no longer fails
+/// the whole connect. The error names every address tried and what happened
+/// on it, which is what a failed sync needs to be diagnosed.
+fn connect_any_address<S>(
+    addrs: &[std::net::SocketAddr],
+    deadline: std::time::Instant,
+    now: impl Fn() -> std::time::Instant,
+    mut attempt: impl FnMut(std::net::SocketAddr, std::time::Instant) -> std::result::Result<S, AddressFailure>,
+) -> std::result::Result<S, String> {
+    let mut failures = Vec::new();
+    let mut tried = 0;
+    for &addr in addrs {
+        if now() >= deadline {
+            failures.push(format!("{} more not tried before the deadline", addrs.len() - tried));
+            break;
+        }
+        tried += 1;
+        match attempt(addr, deadline) {
+            Ok(stream) => return Ok(stream),
+            Err(failure) => {
+                failures.push(format!("{addr}: {}", failure.message));
+                if !failure.try_next {
+                    break;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "IMAP connection failed on {tried} address(es): {}",
+        failures.join("; ")
+    ))
+}
 
 /// Stream wrapper for the IDLE session. imap 2.4.1's `Handle::wait_with_timeout`
 /// sets the read timeout for the wait and then resets it to `None`, after
@@ -254,7 +426,18 @@ pub struct ImapClient {
     /// Only the Sent listing needs it — every other pass is handed an explicit
     /// window by the caller. `None` means "All mail".
     sync_from_timestamp: Option<i64>,
+    /// The sessions this client's operations share. A sync pass builds one
+    /// client and walks every folder and fetch chunk with it, so this turns a
+    /// TCP + TLS + LOGIN per operation into one per pass (issue #181:
+    /// handshakes timing out mid-sync on an account with many folders) — two
+    /// when a chunk downloads while the previous one is processed. Closed
+    /// when the client is dropped.
+    session: Arc<SessionSlot<ImapSession>>,
+    /// The inbox search of the listing in progress (see [`reusable_inbox_uids`]).
+    inbox_search: std::sync::Mutex<Option<InboxSearch>>,
 }
+
+type ImapSession = imap::Session<native_tls::TlsStream<std::net::TcpStream>>;
 
 /// One chunk of message IDs, resolved into per-folder UID batches.
 /// See [`ImapClient::plan_batch_fetch`].
@@ -339,6 +522,8 @@ impl ImapClient {
             email,
             display_name,
             sync_from_timestamp: None,
+            session: Arc::new(SessionSlot::new()),
+            inbox_search: std::sync::Mutex::new(None),
         }
     }
 
@@ -481,8 +666,8 @@ impl ImapClient {
     /// the pure planner's [`ListedFolder`] shape (attributes rendered back to
     /// their wire spelling, SPECIAL-USE attrs arrive via
     /// `NameAttribute::Custom`).
-    fn list_entries_blocking(
-        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    fn list_entries_blocking<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
     ) -> std::result::Result<Vec<ListedFolder>, imap::Error> {
         let names = session.list(None, Some("*"))?;
         Ok(names
@@ -522,11 +707,7 @@ impl ImapClient {
         if has_role_attr {
             return Ok(entries);
         }
-        let advertises_special_use = session
-            .capabilities()
-            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("SPECIAL-USE")))
-            .unwrap_or(false);
-        if !advertises_special_use {
+        if !imap_search::advertises(session, "SPECIAL-USE") {
             return Ok(entries);
         }
         match session.run_command_and_read_response("LIST \"\" \"*\" RETURN (SPECIAL-USE)") {
@@ -577,6 +758,86 @@ impl ImapClient {
         }
     }
 
+    /// [`Self::select_folder_blocking`] for listings: `Ok(false)` only when the
+    /// folder is not there. Anything else is an error, because the backfill
+    /// reads an empty listing as having reached the start of the folder.
+    fn select_folder_checked<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
+        folder: &ImapFolder,
+    ) -> Result<bool> {
+        match folder {
+            ImapFolder::Inbox => imap_search::select_if_exists(session, "INBOX"),
+            ImapFolder::Custom(path) => imap_search::select_if_exists(session, path),
+            role_folder => {
+                let entries = Self::list_entries_blocking(session)
+                    .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                let resolved = role_folder
+                    .well_known()
+                    .and_then(|role| resolve_role_folder(role, &entries));
+                if let Some(resolved) = resolved {
+                    if imap_search::select_if_exists(session, &resolved)? {
+                        return Ok(true);
+                    }
+                }
+                for &candidate in role_folder.legacy_candidates() {
+                    if imap_search::select_if_exists(session, candidate)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// The blocking half of [`EmailProvider::locate_message`]. `Ok(None)` only
+    /// once every place was searched: the sync reads that as the message being
+    /// gone, so a step that could not be answered is an error, never a miss.
+    fn locate_on_session<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
+        source: &ImapFolder,
+        uid: u32,
+        header: Option<&str>,
+    ) -> Result<Option<(ImapFolder, u32)>> {
+        if Self::select_folder_checked(session, source)?
+            && imap_search::uid_search(session, &format!("UID {uid}"))?.contains(&uid)
+        {
+            return Ok(Some((source.clone(), uid)));
+        }
+
+        let Some(header) = header.map(str::trim).filter(|h| !h.is_empty()) else {
+            return Ok(None);
+        };
+        // Quotes inside a Message-ID would break the SEARCH syntax.
+        if header.contains('"') {
+            return Err(AppError::SyncError(
+                "This Message-ID cannot be searched for on an IMAP server".to_string(),
+            ));
+        }
+        // Custom folders count too: "not spam any more" often means "filed
+        // somewhere". Bounded so a mailbox with many folders cannot turn one
+        // lookup into a hundred SELECTs.
+        let entries =
+            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let custom = folder_plan::plan_folders(&entries)
+            .custom
+            .into_iter()
+            .take(MAX_LOCATE_FOLDERS)
+            .map(|f| ImapFolder::Custom(f.raw_name));
+        for folder in [ImapFolder::Inbox, ImapFolder::Trash, ImapFolder::Spam]
+            .into_iter()
+            .chain(custom)
+        {
+            if !Self::select_folder_checked(session, &folder)? {
+                continue;
+            }
+            let hits = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\""))?;
+            if let Some(new_uid) = hits.into_iter().max() {
+                return Ok(Some((folder, new_uid)));
+            }
+        }
+        Ok(None)
+    }
+
     /// Move `uid` out of the selected folder into `target`: `UID MOVE` when the
     /// server advertises it, else the RFC 3501 fallback (`COPY`, flag the
     /// original `\Deleted`, expunge it). Either way the message ends up in
@@ -588,11 +849,7 @@ impl ImapClient {
         target: &str,
     ) -> Result<()> {
         let uid_set = uid.to_string();
-        let has_move = session
-            .capabilities()
-            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("MOVE")))
-            .unwrap_or(false);
-        if has_move {
+        if imap_search::advertises(session, "MOVE") {
             session
                 .uid_mv(&uid_set, target)
                 .map_err(|e| AppError::SyncError(format!("IMAP MOVE to '{target}' failed: {e}")))?;
@@ -604,11 +861,7 @@ impl ImapClient {
             session
                 .uid_store(&uid_set, "+FLAGS (\\Deleted)")
                 .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;
-            let has_uidplus = session
-                .capabilities()
-                .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("UIDPLUS")))
-                .unwrap_or(false);
-            let expunged = if has_uidplus {
+            let expunged = if imap_search::advertises(session, "UIDPLUS") {
                 session
                     .run_command_and_read_response(format!("UID EXPUNGE {uid}"))
                     .map(|_| ())
@@ -681,8 +934,8 @@ impl ImapClient {
         uid: u32,
         message_id_header: Option<&str>,
     ) -> Result<(String, Option<u32>)> {
-        let entries =
-            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let entries = Self::list_entries_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
         let archive_path = folder_plan::resolve_archive_folder(&entries).ok_or(AppError::NoArchiveFolder)?;
         if *source == ImapFolder::Custom(archive_path.clone()) {
             return Ok((archive_path, Some(uid)));
@@ -724,8 +977,8 @@ impl ImapClient {
         if *source == ImapFolder::Spam {
             return Ok(Some(uid));
         }
-        let entries =
-            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let entries = Self::list_entries_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
         let spam_path = resolve_role_folder(WellKnownFolder::Spam, &entries).ok_or(AppError::NoSpamFolder)?;
         if !Self::select_folder_blocking(session, source) {
             return Err(AppError::SyncError(format!(
@@ -781,17 +1034,43 @@ impl ImapClient {
         }
     }
 
-    /// TCP connect (with timeout) + TLS handshake, with [`IO_TIMEOUT`] set on
-    /// the socket. Shared by [`Self::connect_sync`] and the IDLE session.
+    /// The shared session for one operation: the kept one if it still answers
+    /// `NOOP`, otherwise a new connection, retried while the failure is
+    /// transient. Hand it back with `slot.checkin` when the operation succeeds.
+    fn checkout_session(
+        slot: &SessionSlot<ImapSession>,
+        creds: &ImapCredentials,
+    ) -> std::result::Result<ImapSession, imap::Error> {
+        slot.checkout(
+            |session| session.noop().is_ok(),
+            || {
+                imap_session::connect_with_retry(
+                    || {
+                        let stream = Self::open_tls_stream(creds).map_err(|e| (ConnectStage::Stream, e))?;
+                        imap::Client::new(stream)
+                            .login(&creds.username, &creds.password)
+                            .map_err(|(e, _)| (ConnectStage::Login, e))
+                    },
+                    std::thread::sleep,
+                )
+            },
+        )
+    }
+
+    /// TCP connect (with timeout) + STARTTLS when the port needs it + TLS
+    /// handshake, with [`IO_TIMEOUT`] set on the socket. Tries each address
+    /// the host resolves to in turn (see [`connect_any_address`]). Shared by
+    /// [`Self::connect_sync`] and the IDLE session.
     fn open_tls_stream(
         creds: &ImapCredentials,
     ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, imap::Error> {
         use std::io;
-        use std::net::{TcpStream, ToSocketAddrs};
+        use std::net::ToSocketAddrs;
         use std::time::{Duration, Instant};
 
-        const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-        const OVERALL_TIMEOUT: Duration = Duration::from_secs(30);
+        // Below `test_connection`'s 25 s, so "Test connection" shows what
+        // happened on each address rather than its own timeout.
+        const OVERALL_TIMEOUT: Duration = Duration::from_secs(20);
 
         let tls = native_tls::TlsConnector::new().map_err(|e| imap::Error::Bad(format!("TLS init failed: {e}")))?;
 
@@ -807,60 +1086,72 @@ impl ImapClient {
         }
 
         let deadline = Instant::now() + OVERALL_TIMEOUT;
-        let mut failures = Vec::new();
-        let mut attempted = 0;
-        for addr in addrs {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            attempted += 1;
-            let tcp = match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT.min(remaining)) {
-                Ok(tcp) => tcp,
-                Err(err) => {
-                    failures.push(format!("{addr}: TCP connect failed: {err}"));
-                    continue;
-                }
-            };
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                failures.push(format!("{addr}: overall connection deadline exceeded"));
-                break;
-            }
-            let timeout = IO_TIMEOUT.min(remaining);
-            tcp.set_read_timeout(Some(timeout)).map_err(imap::Error::Io)?;
-            tcp.set_write_timeout(Some(timeout)).map_err(imap::Error::Io)?;
+        connect_any_address(&addrs, deadline, Instant::now, |addr, deadline| {
+            Self::open_on_address(&tls, creds, addr, deadline)
+        })
+        .map_err(imap::Error::Bad)
+    }
 
-            let started = Instant::now();
-            match tls.connect(creds.host.as_str(), tcp) {
-                Ok(stream) => return Ok(stream),
-                Err(err) => {
-                    let message = format!("{addr}: TLS handshake failed: {err}");
-                    // Certificate/protocol failures are terminal. native-tls
-                    // WouldBlock is how a socket read/write timeout surfaces.
-                    if !Self::is_retryable_tls_timeout(&err, started.elapsed(), timeout) {
-                        failures.push(message);
-                        return Err(imap::Error::Bad(format!(
-                            "IMAP connection failed after {} address(es): {}",
-                            failures.len(),
-                            failures.join("; ")
-                        )));
-                    }
-                    failures.push(message);
-                }
+    /// One address of [`Self::open_tls_stream`]. A TCP connect that fails or
+    /// a timeout lets the next address be tried; a refused STARTTLS or a TLS
+    /// error (a certificate, a protocol) would fail on every address.
+    fn open_on_address(
+        tls: &native_tls::TlsConnector,
+        creds: &ImapCredentials,
+        addr: std::net::SocketAddr,
+        deadline: std::time::Instant,
+    ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, AddressFailure> {
+        use std::io;
+        use std::net::TcpStream;
+        use std::time::{Duration, Instant};
+
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+        // `cap`, or what is left before the deadline when that is shorter.
+        let within_deadline = |cap: Duration| {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                Err(AddressFailure::next("connection deadline reached".to_string()))
+            } else {
+                Ok(cap.min(left))
             }
+        };
+
+        let mut tcp = TcpStream::connect_timeout(&addr, within_deadline(CONNECT_TIMEOUT)?)
+            .map_err(|e| AddressFailure::next(format!("TCP connect failed: {e}")))?;
+        let timeout = within_deadline(IO_TIMEOUT)?;
+        tcp.set_read_timeout(Some(timeout))
+            .and_then(|()| tcp.set_write_timeout(Some(timeout)))
+            .map_err(|e| AddressFailure::stop(format!("socket timeout not set: {e}")))?;
+
+        if ImapTlsMode::for_port(creds.port) == ImapTlsMode::StartTls {
+            negotiate_starttls(&mut tcp).map_err(|e| match e.kind() {
+                // How a socket read or write timeout surfaces: WouldBlock on
+                // Unix, TimedOut on Windows.
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {
+                    AddressFailure::next(format!("STARTTLS timed out: {e}"))
+                }
+                _ => AddressFailure::stop(format!("STARTTLS failed: {e}")),
+            })?;
         }
-        if deadline.saturating_duration_since(Instant::now()).is_zero() {
-            failures.push(format!(
-                "overall connection deadline of {}s exceeded",
-                OVERALL_TIMEOUT.as_secs()
-            ));
-        }
-        Err(imap::Error::Bad(format!(
-            "IMAP connection failed after {} address attempt(s): {}",
-            attempted,
-            failures.join("; ")
-        )))
+
+        let started = Instant::now();
+        let stream = tls.connect(creds.host.as_str(), tcp).map_err(|e| {
+            let message = format!("TLS handshake failed: {e}");
+            if Self::is_retryable_tls_timeout(&e, started.elapsed(), timeout) {
+                AddressFailure::next(message)
+            } else {
+                AddressFailure::stop(message)
+            }
+        })?;
+        // The handshake may have run on what was left of the deadline; the
+        // session gets the full timeout, or a long FETCH would time out.
+        stream
+            .get_ref()
+            .set_read_timeout(Some(IO_TIMEOUT))
+            .and_then(|()| stream.get_ref().set_write_timeout(Some(IO_TIMEOUT)))
+            .map_err(|e| AddressFailure::stop(format!("socket timeout not set: {e}")))?;
+        Ok(stream)
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
@@ -925,13 +1216,24 @@ impl ImapClient {
             Ok(())
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking join error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(())
     }
 
     // ── Parse raw RFC 5322 bytes ──────────────────────────────────────────────
 
+    /// One message that panics on parse is an error for that message only; the
+    /// sync skips it and carries on (see `util::panic_guard`).
     fn parse_message(uid: u32, fetched: &imap_search::FetchedMessage) -> Result<(Email, Vec<AttachmentInfo>)> {
+        crate::util::panic_guard::call_isolated(&format!("Reading IMAP message UID {uid}"), || {
+            Self::parse_message_unguarded(uid, fetched)
+        })
+    }
+
+    fn parse_message_unguarded(
+        uid: u32,
+        fetched: &imap_search::FetchedMessage,
+    ) -> Result<(Email, Vec<AttachmentInfo>)> {
         let parsed =
             parse_mail(&fetched.raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP message: {e}")))?;
 
@@ -1294,27 +1596,50 @@ impl EmailProvider for ImapClient {
         _label_filter: Option<&str>,
     ) -> Result<(Vec<MessageRef>, Option<String>)> {
         let creds = self.credentials.clone();
-        // Sent is listed once per pass, on the first page only — it spans the
-        // whole account range (see below) and re-listing it per page would
-        // multiply the work for no gain.
-        let include_sent = page_token.is_none();
+        let slot = Arc::clone(&self.session);
+        // Both bounds matter: the backfill pass asks for the window *older*
+        // than everything stored, and dropping `before` there made the server
+        // return the whole mailbox — whose newest-first cap then discarded
+        // exactly the old mail we were after.
+        let query = build_search_query(after_timestamp, before_timestamp);
+        let cached = reusable_inbox_uids(
+            self.inbox_search
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref(),
+            &query,
+            page_token,
+        );
         // The Sent listing is bounded by the *account's* floor rather than by
         // this pass's window (see below). Resolved out here so the blocking
         // closure captures a plain query string.
         let sent_query = self.sent_search_query();
-        let (inbox_uids, sent_uids): (Vec<u32>, Vec<u32>) =
-            tokio::task::spawn_blocking(move || -> Result<(Vec<u32>, Vec<u32>)> {
-                let mut session =
-                    Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+        let page_token_owned = page_token.map(str::to_string);
+        let inbox_query = query.clone();
+        let (inbox_uids, page, sent_uids): (Vec<u32>, InboxPage, Vec<u32>) =
+            tokio::task::spawn_blocking(move || -> Result<(Vec<u32>, InboxPage, Vec<u32>)> {
+                // A later page of a listing whose search is cached and that
+                // does not carry Sent needs no round trip at all.
+                if let Some(uids) = cached.clone() {
+                    let page = plan_inbox_page(uids.clone(), page_token_owned.as_deref(), max_results);
+                    if !page.with_sent {
+                        return Ok((uids, page, Vec::new()));
+                    }
+                }
 
-                // Both bounds matter: the backfill pass asks for the window
-                // *older* than everything stored, and dropping `before` there
-                // made the server return the whole mailbox — whose newest-first
-                // cap then discarded exactly the old mail we were after.
-                let query = build_search_query(after_timestamp, before_timestamp);
+                let mut session = Self::checkout_session(&slot, &creds)
+                    .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
-                imap_search::select(&mut session, "INBOX")?;
-                let inbox_uids = imap_search::uid_search(&mut session, &query)?;
+                let inbox_uids: Vec<u32> = match cached {
+                    Some(uids) => uids,
+                    None => {
+                        imap_search::select(&mut session, "INBOX")?;
+                        imap_search::uid_search(&mut session, &inbox_query)?
+                            .into_iter()
+                            .collect()
+                    }
+                };
+                let page = plan_inbox_page(inbox_uids.clone(), page_token_owned.as_deref(), max_results);
 
                 // Fetch Sent folder UIDs bounded only by the account's sync range.
                 //
@@ -1328,7 +1653,7 @@ impl EmailProvider for ImapClient {
                 // "last 7 days" kept pulling years of mail and the range looked ignored
                 // (issue #50).
                 let mut sent_uids: Vec<u32> = Vec::new();
-                if include_sent && Self::select_folder_blocking(&mut session, &ImapFolder::Sent) {
+                if page.with_sent && Self::select_folder_blocking(&mut session, &ImapFolder::Sent) {
                     match imap_search::uid_search(&mut session, &sent_query) {
                         Ok(uids) => sent_uids = uids,
                         // The Sent pass is best-effort — INBOX results still stand.
@@ -1338,17 +1663,29 @@ impl EmailProvider for ImapClient {
                     }
                 }
 
-                let _ = session.logout();
-                Ok((inbox_uids.into_iter().collect(), sent_uids))
+                slot.checkin(session);
+                Ok((inbox_uids, page, sent_uids))
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
+
+        *self
+            .inbox_search
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(InboxSearch {
+            query,
+            uids: inbox_uids,
+        });
 
         // INBOX and Sent UIDs live in separate UID namespaces so sorting them together
         // is meaningless. Page through INBOX independently (newest first, resuming
-        // below the cursor), then append all Sent (no cap — already-synced ones are
-        // dropped by emails_exist_batch).
-        let (inbox_page, next_token) = select_inbox_page(inbox_uids, page_token, max_results);
+        // below the cursor); the last page appends all Sent (no cap — already-synced
+        // ones are dropped by emails_exist_batch).
+        let InboxPage {
+            uids: inbox_page,
+            next_token,
+            ..
+        } = page;
 
         let refs = inbox_page
             .into_iter()
@@ -1392,6 +1729,7 @@ impl EmailProvider for ImapClient {
 
         if !plan.groups.is_empty() {
             let creds = self.credentials.clone();
+            let slot = Arc::clone(&self.session);
             let groups = plan.groups.clone();
             let fetched: Vec<(usize, Parsed)> = tokio::task::spawn_blocking(move || -> Vec<(usize, Parsed)> {
                 let mut out: Vec<(usize, Parsed)> = Vec::new();
@@ -1399,7 +1737,7 @@ impl EmailProvider for ImapClient {
                 // A connect failure retires the chunk, not the sync: the caller
                 // records these as failed emails and retries them, which is
                 // what the per-message path did before this batched one.
-                let mut session = match Self::connect_sync(&creds) {
+                let mut session = match Self::checkout_session(&slot, &creds) {
                     Ok(session) => session,
                     Err(e) => {
                         let message = format!("IMAP connect failed: {e}");
@@ -1445,11 +1783,11 @@ impl EmailProvider for ImapClient {
                     }
                 }
 
-                let _ = session.logout();
+                slot.checkin(session);
                 out
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?;
+            .map_err(task_failed)?;
 
             for (index, parsed) in fetched {
                 slots[index] = Some(parsed);
@@ -1495,10 +1833,11 @@ impl EmailProvider for ImapClient {
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
 
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let folder_for_select = folder.clone();
         let (mut email, attachments) = tokio::task::spawn_blocking(move || -> Result<(Email, Vec<AttachmentInfo>)> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
             if !Self::select_folder_blocking(&mut session, &folder_for_select) {
                 return Err(AppError::SyncError(format!(
@@ -1509,11 +1848,11 @@ impl EmailProvider for ImapClient {
 
             let fetched = imap_search::uid_fetch_body(&mut session, uid)?;
 
-            let _ = session.logout();
+            slot.checkin(session);
             Self::parse_message(uid, &fetched)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         // Use the full (prefixed) message_id so the stored ID is globally unique
         email.id = message_id.to_string();
@@ -1544,15 +1883,16 @@ impl EmailProvider for ImapClient {
         };
 
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let uids: Vec<u32> = tokio::task::spawn_blocking(move || -> Result<Vec<u32>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
             // Resolve + SELECT the role folder. Folder absence is not an
             // error — some providers simply don't expose Spam or Trash; we
             // return an empty list so the caller logs and moves on.
-            if !Self::select_folder_blocking(&mut session, &folder) {
-                let _ = session.logout();
+            if !Self::select_folder_checked(&mut session, &folder)? {
+                slot.checkin(session);
                 return Ok(Vec::new());
             }
 
@@ -1560,11 +1900,11 @@ impl EmailProvider for ImapClient {
 
             let uids = imap_search::uid_search(&mut session, &query)?;
 
-            let _ = session.logout();
+            slot.checkin(session);
             Ok(uids)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         // Newest UIDs first (IMAP UIDs are monotonically increasing per folder),
         // then cap at max_results so the initial sync pulls the most recent
@@ -1590,11 +1930,12 @@ impl EmailProvider for ImapClient {
     /// is retried next sync instead of being marked done on a partial answer.
     async fn list_message_ids_with_attachments(&self) -> Result<Option<Vec<String>>> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let hits = tokio::task::spawn_blocking(move || -> Result<Vec<(ImapFolder, Vec<u32>)>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session)
-                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
             let mut hits = Vec::new();
             for (folder, path) in attachment_search_folders(&folder_plan::plan_folders(&entries)) {
                 if let Err(e) = imap_search::select(&mut session, &path) {
@@ -1604,28 +1945,27 @@ impl EmailProvider for ImapClient {
                 let uids = imap_search::uid_search(&mut session, ATTACHMENT_SEARCH_QUERY)?;
                 hits.push((folder, uids));
             }
-            if let Err(e) = session.logout() {
-                eprintln!("[imap] logout after attachment search failed: {e}");
-            }
+            slot.checkin(session);
             Ok(hits)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(Some(self.attachment_hit_ids(hits)))
     }
 
     async fn list_folders(&self) -> Result<Vec<ListedFolder>> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         tokio::task::spawn_blocking(move || -> Result<Vec<ListedFolder>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session)
-                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
-            let _ = session.logout();
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
+            slot.checkin(session);
             Ok(entries)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn list_folder_messages(
@@ -1636,15 +1976,16 @@ impl EmailProvider for ImapClient {
         before_timestamp: Option<i64>,
     ) -> Result<Vec<MessageRef>> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let path = server_path.to_string();
         let uids: Vec<u32> = tokio::task::spawn_blocking(move || -> Result<Vec<u32>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
             // A folder deleted server-side between LIST and this SELECT is not
             // an error — return empty so the caller logs and moves on.
-            if imap_search::select(&mut session, &path).is_err() {
-                let _ = session.logout();
+            if !imap_search::select_if_exists(&mut session, &path)? {
+                slot.checkin(session);
                 return Ok(Vec::new());
             }
 
@@ -1652,11 +1993,11 @@ impl EmailProvider for ImapClient {
 
             let uids = imap_search::uid_search(&mut session, &query)?;
 
-            let _ = session.logout();
+            slot.checkin(session);
             Ok(uids)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         let mut sorted = uids;
         sorted.sort_unstable_by(|a, b| b.cmp(a));
@@ -1677,6 +2018,7 @@ impl EmailProvider for ImapClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -1687,6 +2029,8 @@ impl EmailProvider for ImapClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: false,
             subject,
             in_reply_to: target.message_id.filter(|s| !s.trim().is_empty()),
             references: target.references.filter(|s| !s.trim().is_empty()),
@@ -1711,6 +2055,7 @@ impl EmailProvider for ImapClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1720,6 +2065,8 @@ impl EmailProvider for ImapClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: false,
             subject,
             in_reply_to: None,
             references: None,
@@ -1744,51 +2091,54 @@ impl EmailProvider for ImapClient {
 
     async fn create_folder(&self, server_path: &str) -> Result<()> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let path = server_path.to_string();
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = session
                 .create(&path)
                 .map_err(|e| AppError::SyncError(format!("IMAP CREATE '{path}' failed: {e}")));
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn rename_folder(&self, old_server_path: &str, new_server_path: &str) -> Result<()> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let old_path = old_server_path.to_string();
         let new_path = new_server_path.to_string();
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = session
                 .rename(&old_path, &new_path)
                 .map_err(|e| AppError::SyncError(format!("IMAP RENAME '{old_path}' -> '{new_path}' failed: {e}")));
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn delete_folder(&self, server_path: &str) -> Result<()> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let path = server_path.to_string();
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = session
                 .delete(&path)
                 .map_err(|e| AppError::SyncError(format!("IMAP DELETE '{path}' failed: {e}")));
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// `UID STORE ±FLAGS.SILENT (\Seen)` in the folder the message's id names.
@@ -1798,9 +2148,10 @@ impl EmailProvider for ImapClient {
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = if Self::select_folder_blocking(&mut session, &folder) {
                 imap_search::uid_store_seen(&mut session, uid, read)
             } else {
@@ -1808,11 +2159,11 @@ impl EmailProvider for ImapClient {
                     "IMAP {folder:?} folder not found on server"
                 )))
             };
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// `UID STORE ±FLAGS.SILENT (\Flagged)` in the folder the message's id names.
@@ -1822,9 +2173,10 @@ impl EmailProvider for ImapClient {
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = if Self::select_folder_blocking(&mut session, &folder) {
                 imap_search::uid_store_flagged(&mut session, uid, starred)
             } else {
@@ -1832,11 +2184,11 @@ impl EmailProvider for ImapClient {
                     "IMAP {folder:?} folder not found on server"
                 )))
             };
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// Move the message to the account's archive folder (`\Archive`, else
@@ -1860,15 +2212,16 @@ impl EmailProvider for ImapClient {
             .filter(|h| !h.is_empty() && !h.contains('"'))
             .map(str::to_string);
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let (archive_path, new_uid) = tokio::task::spawn_blocking(move || -> Result<(String, Option<u32>)> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = Self::archive_uid_blocking(&mut session, &source, uid, header.as_deref());
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(provider::MessageLocation {
             id: new_uid.map_or_else(
                 || message_id.to_string(),
@@ -1896,15 +2249,16 @@ impl EmailProvider for ImapClient {
             .filter(|h| !h.is_empty() && !h.contains('"'))
             .map(str::to_string);
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let new_uid = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = Self::spam_uid_blocking(&mut session, &source, uid, header.as_deref());
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(provider::MessageLocation {
             id: new_uid.map_or_else(|| message_id.to_string(), |u| self.located_id(&ImapFolder::Spam, u)),
             mailbox: ImapFolder::Spam.mailbox_value(),
@@ -1934,29 +2288,34 @@ impl EmailProvider for ImapClient {
             .filter(|h| !h.is_empty() && !h.contains('"'))
             .map(str::to_string);
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         tokio::task::spawn_blocking(move || -> Result<()> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = Self::trash_uid_blocking(&mut session, &source, uid, header.as_deref());
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// One connection: `LIST`, then an `EXAMINE` per stored mailbox. A failed
     /// `LIST` still checks the inbox; a mailbox that will not open is skipped.
     async fn folder_uid_validities(&self) -> Result<Vec<provider::FolderUidValidity>> {
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let found = tokio::task::spawn_blocking(move || -> Result<Vec<(ImapFolder, u32)>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session).unwrap_or_else(|e| {
                 crate::services::logger::log(
                     "debug",
                     "sync",
-                    format!("IMAP LIST failed, checking UIDVALIDITY of the inbox only: {e}"),
+                    format!(
+                        "IMAP LIST failed, checking UIDVALIDITY of the inbox only: {}",
+                        imap_search::describe_error(&e)
+                    ),
                 );
                 Vec::new()
             });
@@ -1976,11 +2335,11 @@ impl EmailProvider for ImapClient {
                     ),
                 }
             }
-            let _ = session.logout();
+            slot.checkin(session);
             Ok(found)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(found
             .into_iter()
@@ -1995,10 +2354,11 @@ impl EmailProvider for ImapClient {
     async fn list_mailbox_identities(&self, mailbox: &str) -> Result<Vec<provider::MessageIdentity>> {
         let folder = ImapFolder::from_mailbox_value(mailbox);
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let folder_for_select = folder.clone();
         let fetched = tokio::task::spawn_blocking(move || -> Result<Vec<imap_search::FetchedIdentity>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = if Self::select_folder_blocking(&mut session, &folder_for_select) {
                 imap_search::uid_fetch_identities(&mut session)
             } else {
@@ -2006,11 +2366,11 @@ impl EmailProvider for ImapClient {
                     "IMAP {folder_for_select:?} folder not found on server"
                 )))
             };
-            let _ = session.logout();
+            slot.checkin(session);
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(fetched
             .into_iter()
@@ -2037,10 +2397,11 @@ impl EmailProvider for ImapClient {
         }
 
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let checked: Vec<(usize, Option<imap_search::MessageFlags>)> =
             tokio::task::spawn_blocking(move || -> Result<Vec<(usize, Option<imap_search::MessageFlags>)>> {
-                let mut session =
-                    Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+                let mut session = Self::checkout_session(&slot, &creds)
+                    .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
                 let mut checked = Vec::new();
                 for (folder, items) in &groups {
                     if !Self::select_folder_blocking(&mut session, folder) {
@@ -2058,11 +2419,11 @@ impl EmailProvider for ImapClient {
                         ),
                     }
                 }
-                let _ = session.logout();
+                slot.checkin(session);
                 Ok(checked)
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         Ok(Some(
             checked
@@ -2093,61 +2454,21 @@ impl EmailProvider for ImapClient {
         let uid: u32 = uid_str
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
-        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
-        // don't occur in practice, so we just skip the header lookup for them.
-        let header = message_id_header
-            .map(str::trim)
-            .filter(|h| !h.is_empty() && !h.contains('"'))
-            .map(str::to_string);
+        let header = message_id_header.map(str::to_string);
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         let source = source.clone();
 
         let found: Option<(ImapFolder, u32)> =
             tokio::task::spawn_blocking(move || -> Result<Option<(ImapFolder, u32)>> {
-                let mut session =
-                    Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-
-                if Self::select_folder_blocking(&mut session, &source) {
-                    if let Ok(hits) = imap_search::uid_search(&mut session, &format!("UID {uid}")) {
-                        if hits.contains(&uid) {
-                            let _ = session.logout();
-                            return Ok(Some((source, uid)));
-                        }
-                    }
-                }
-
-                let mut located = None;
-                if let Some(h) = header {
-                    // Custom folders count too: "not spam any more" often means
-                    // "filed somewhere". Bounded so a mailbox with many folders
-                    // cannot turn one lookup into a hundred SELECTs.
-                    let mut candidates = vec![ImapFolder::Inbox, ImapFolder::Trash];
-                    if let Ok(entries) = Self::list_entries_blocking(&mut session) {
-                        candidates.extend(
-                            folder_plan::plan_folders(&entries)
-                                .custom
-                                .into_iter()
-                                .take(MAX_LOCATE_FOLDERS)
-                                .map(|f| ImapFolder::Custom(f.raw_name)),
-                        );
-                    }
-                    for folder in candidates {
-                        if !Self::select_folder_blocking(&mut session, &folder) {
-                            continue;
-                        }
-                        if let Ok(hits) = imap_search::uid_search(&mut session, &format!("HEADER Message-ID \"{h}\"")) {
-                            if let Some(new_uid) = hits.into_iter().max() {
-                                located = Some((folder, new_uid));
-                                break;
-                            }
-                        }
-                    }
-                }
-                let _ = session.logout();
-                Ok(located)
+                let mut session = Self::checkout_session(&slot, &creds)
+                    .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+                let found = Self::locate_on_session(&mut session, &source, uid, header.as_deref())?;
+                slot.checkin(session);
+                Ok(found)
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         Ok(found.map(|(folder, uid)| provider::MessageLocation {
             id: self.located_id(&folder, uid),
@@ -2171,6 +2492,7 @@ impl EmailProvider for ImapClient {
         };
 
         let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
         // Quotes inside a Message-ID would break the SEARCH syntax; such ids
         // don't occur in practice, so we just skip UID resolution for them.
         let header = message_id_header
@@ -2179,11 +2501,11 @@ impl EmailProvider for ImapClient {
             .map(str::to_string);
         let target_for_select = target_name.clone();
         let new_uid: Option<u32> = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
-            let mut session =
-                Self::connect_sync(&creds).map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
 
             if !Self::select_folder_blocking(&mut session, &source) {
-                let _ = session.logout();
+                slot.checkin(session);
                 return Err(AppError::SyncError(format!(
                     "IMAP source folder {source:?} not found on server"
                 )));
@@ -2201,11 +2523,11 @@ impl EmailProvider for ImapClient {
                     }
                 }
             }
-            let _ = session.logout();
+            slot.checkin(session);
             Ok(new_uid)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(new_uid.map(|u| MessageRef {
             id: match target {
@@ -2333,7 +2655,7 @@ impl ImapClient {
         let creds = self.credentials.clone();
         let outcome = tokio::task::spawn_blocking(move || Self::append_to_sent_blocking(&creds, &raw))
             .await
-            .unwrap_or_else(|e| Err(AppError::SyncError(format!("sent-copy task join error: {e}"))));
+            .unwrap_or_else(|e| Err(task_failed(e)));
 
         if let Err(e) = outcome {
             crate::services::logger::log(
@@ -2372,6 +2694,199 @@ impl ImapClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tls_mode_is_implicit_only_on_imaps_port() {
+        assert_eq!(ImapTlsMode::for_port(993), ImapTlsMode::Implicit);
+        // Plain IMAP port and Proton Mail Bridge's default greet in clear text.
+        assert_eq!(ImapTlsMode::for_port(143), ImapTlsMode::StartTls);
+        assert_eq!(ImapTlsMode::for_port(1143), ImapTlsMode::StartTls);
+    }
+
+    /// In-memory stream: reads come from a scripted server, writes are captured.
+    struct ScriptedServer {
+        input: std::io::Cursor<Vec<u8>>,
+        written: Vec<u8>,
+    }
+
+    impl ScriptedServer {
+        fn new(server_says: &str) -> Self {
+            Self {
+                input: std::io::Cursor::new(server_says.as_bytes().to_vec()),
+                written: Vec::new(),
+            }
+        }
+    }
+
+    impl std::io::Read for ScriptedServer {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(buf)
+        }
+    }
+
+    impl std::io::Write for ScriptedServer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // ── locate_message ────────────────────────────────────────────────────
+
+    const SELECTED: &str = "{tag} OK [READ-WRITE] done\r\n";
+    const NO_HITS: &str = "* SEARCH\r\n{tag} OK done\r\n";
+    const LISTED: &str = "* LIST () \"/\" \"INBOX\"\r\n\
+                          * LIST () \"/\" \"Trash\"\r\n\
+                          * LIST () \"/\" \"Junk\"\r\n\
+                          * LIST () \"/\" \"Projects\"\r\n\
+                          {tag} OK done\r\n";
+
+    /// A session whose server answers each command with the next reply; `{tag}`
+    /// stands for that command's tag. Past the last reply the connection is
+    /// gone, as when a server drops it mid-operation.
+    fn session_answering(replies: &[&str]) -> imap::Session<ScriptedServer> {
+        let mut script = "a1 OK Logged in.\r\n".to_string();
+        for (i, reply) in replies.iter().enumerate() {
+            script.push_str(&reply.replace("{tag}", &format!("a{}", i + 2)));
+        }
+        match imap::Client::new(ScriptedServer::new(&script)).login("u", "p") {
+            Ok(session) => session,
+            Err((e, _)) => panic!("scripted login failed: {e}"),
+        }
+    }
+
+    fn locate(replies: &[&str], header: Option<&str>) -> Result<Option<(ImapFolder, u32)>> {
+        ImapClient::locate_on_session(&mut session_answering(replies), &ImapFolder::Inbox, 7, header)
+    }
+
+    /// Every step of a lookup that ends in "the provider does not have it".
+    const NOT_FOUND_ANYWHERE: [&str; 13] = [
+        SELECTED, NO_HITS, // INBOX, by UID
+        LISTED,  //
+        SELECTED, NO_HITS, // INBOX, by header
+        LISTED, SELECTED, NO_HITS, // Trash
+        LISTED, SELECTED, NO_HITS, // Junk
+        SELECTED, NO_HITS, // Projects
+    ];
+
+    #[test]
+    fn a_lookup_that_searched_everywhere_reports_the_message_gone() {
+        assert!(matches!(locate(&NOT_FOUND_ANYWHERE, Some("<m@example.com>")), Ok(None)));
+    }
+
+    /// The caller soft-deletes on "not found", so a lookup cut short at any
+    /// step has to say it could not finish.
+    #[test]
+    fn a_lookup_cut_short_at_any_step_is_not_a_not_found() {
+        for answered in 0..NOT_FOUND_ANYWHERE.len() {
+            let result = locate(&NOT_FOUND_ANYWHERE[..answered], Some("<m@example.com>"));
+            assert!(
+                result.is_err(),
+                "connection lost after {answered} replies, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_the_server_refused_is_not_a_not_found() {
+        let refused = "{tag} NO [SERVERBUG] Internal error\r\n";
+        for step in (1..NOT_FOUND_ANYWHERE.len()).filter(|i| NOT_FOUND_ANYWHERE[*i] == NO_HITS) {
+            let mut replies = NOT_FOUND_ANYWHERE;
+            replies[step] = refused;
+            let result = locate(&replies, Some("<m@example.com>"));
+            assert!(result.is_err(), "search {step} refused, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_the_server_cannot_open_right_now_is_not_a_not_found() {
+        let unavailable = "{tag} NO [UNAVAILABLE] Try again later\r\n";
+        for step in (0..NOT_FOUND_ANYWHERE.len()).filter(|i| NOT_FOUND_ANYWHERE[*i] == SELECTED) {
+            let mut replies = NOT_FOUND_ANYWHERE;
+            replies[step] = unavailable;
+            let result = locate(&replies, Some("<m@example.com>"));
+            assert!(result.is_err(), "SELECT {step} unavailable, got {result:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_that_does_not_exist_is_skipped() {
+        let missing = "{tag} NO Mailbox does not exist\r\n";
+        let replies = [
+            SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, missing,
+        ];
+        assert!(matches!(locate(&replies, Some("<m@example.com>")), Ok(None)));
+    }
+
+    #[test]
+    fn a_message_still_at_its_uid_is_found_there() {
+        let at_its_uid = "* SEARCH 7\r\n{tag} OK done\r\n";
+        let found = locate(&[SELECTED, at_its_uid], Some("<m@example.com>")).expect("lookup");
+        assert_eq!(found, Some((ImapFolder::Inbox, 7)));
+    }
+
+    #[test]
+    fn a_message_moved_to_junk_is_found_there() {
+        // Filing a message as spam in another client re-keys it like any move.
+        let hit = "* SEARCH 40\r\n{tag} OK done\r\n";
+        let replies = [
+            SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, NO_HITS, LISTED, SELECTED, hit,
+        ];
+        let found = locate(&replies, Some("<m@example.com>")).expect("lookup");
+        assert_eq!(found, Some((ImapFolder::Spam, 40)));
+    }
+
+    #[test]
+    fn a_message_id_that_cannot_be_searched_is_not_a_not_found() {
+        let replies = [SELECTED, NO_HITS];
+        assert!(locate(&replies, Some("<\"quoted\"@example.com>")).is_err());
+    }
+
+    #[test]
+    fn without_a_message_id_only_its_uid_can_be_checked() {
+        assert!(matches!(locate(&[SELECTED, NO_HITS], None), Ok(None)));
+    }
+
+    #[test]
+    fn starttls_sends_command_after_greeting_and_stops_at_tagged_ok() {
+        let mut server = ScriptedServer::new(
+            "* OK [CAPABILITY IMAP4rev1 STARTTLS] ready\r\na0 OK Begin TLS negotiation now\r\n\x16\x03\x01",
+        );
+        negotiate_starttls(&mut server).expect("starttls");
+        assert_eq!(server.written, b"a0 STARTTLS\r\n");
+        // Bytes after the tagged OK belong to the TLS layer and must stay unread.
+        assert_eq!(server.input.position() as usize, server.input.get_ref().len() - 3);
+    }
+
+    #[test]
+    fn starttls_skips_untagged_lines_before_the_tagged_reply() {
+        let mut server = ScriptedServer::new("* OK hi\r\n* CAPABILITY IMAP4rev1\r\na0 OK go\r\n");
+        negotiate_starttls(&mut server).expect("starttls");
+    }
+
+    #[test]
+    fn starttls_fails_when_server_refuses() {
+        // A server without STARTTLS must not fall back to a clear-text login.
+        let mut server = ScriptedServer::new("* OK hi\r\na0 BAD unknown command\r\n");
+        let err = negotiate_starttls(&mut server).expect_err("refused");
+        assert!(err.to_string().contains("a0 BAD"), "{err}");
+    }
+
+    #[test]
+    fn starttls_fails_on_bye_greeting() {
+        let mut server = ScriptedServer::new("* BYE too many connections\r\n");
+        assert!(negotiate_starttls(&mut server).is_err());
+        assert!(server.written.is_empty());
+    }
+
+    #[test]
+    fn starttls_fails_on_closed_connection() {
+        let mut server = ScriptedServer::new("* OK hi\r\n");
+        assert!(negotiate_starttls(&mut server).is_err());
+    }
 
     fn entries(names: &[&str]) -> Vec<ListedFolder> {
         names
@@ -2717,19 +3232,19 @@ mod tests {
     fn inbox_page_returns_newest_first_and_a_cursor_when_more_remain() {
         let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], None, 2);
         assert_eq!(uids, vec![5, 4]);
-        assert_eq!(token.as_deref(), Some("4:1"));
+        assert_eq!(token.as_deref(), Some("4"));
     }
 
     #[test]
     fn inbox_page_resumes_strictly_below_the_cursor() {
-        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("4:1"), 2);
+        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("4"), 2);
         assert_eq!(uids, vec![3, 2]);
-        assert_eq!(token.as_deref(), Some("2:2"));
+        assert_eq!(token.as_deref(), Some("2"));
     }
 
     #[test]
     fn inbox_page_has_no_token_once_the_window_is_exhausted() {
-        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("2:2"), 2);
+        let (uids, token) = select_inbox_page(vec![1, 2, 3, 4, 5], Some("2"), 2);
         assert_eq!(uids, vec![1]);
         assert_eq!(token, None);
     }
@@ -2754,21 +3269,97 @@ mod tests {
     }
 
     #[test]
-    fn inbox_pagination_is_capped_per_sync_so_one_run_cannot_walk_forever() {
-        // A 100k-message mailbox must not download in a single sync. Progress is
-        // resumable: the next sync's backfill window starts from the new oldest.
-        let all: Vec<u32> = (1..=100_000).collect();
-        let mut pages = 0;
+    fn inbox_pagination_never_calls_a_longer_mailbox_finished() {
+        // The token running out is what tells the sync it listed everything,
+        // so a mailbox of any size has to reach its last UID.
+        let all: Vec<u32> = (1..=1_200).collect();
+        let mut seen = 0;
         let mut token: Option<String> = None;
         loop {
-            let (_, next) = select_inbox_page(all.clone(), token.as_deref(), 100);
-            pages += 1;
+            let (page, next) = select_inbox_page(all.clone(), token.as_deref(), 100);
+            seen += page.len();
             match next {
                 Some(t) => token = Some(t),
                 None => break,
             }
         }
-        assert_eq!(pages, MAX_INBOX_PAGES_PER_SYNC as usize);
+        assert_eq!(seen, all.len());
+    }
+
+    #[test]
+    fn a_listing_that_fits_one_page_carries_the_sent_folder() {
+        let page = plan_inbox_page(vec![1, 2, 3], None, 100);
+        assert_eq!(page.uids, vec![3, 2, 1]);
+        assert!(page.with_sent);
+    }
+
+    #[test]
+    fn the_sent_folder_waits_for_the_last_inbox_page() {
+        // Sent used to ride on the first page, so a large Sent folder was
+        // downloaded between the newest hundred inbox messages and the rest.
+        let first = plan_inbox_page((1..=250).collect(), None, 100);
+        assert!(!first.with_sent);
+        let second = plan_inbox_page((1..=250).collect(), first.next_token.as_deref(), 100);
+        assert!(!second.with_sent);
+        let last = plan_inbox_page((1..=250).collect(), second.next_token.as_deref(), 100);
+        assert_eq!(last.next_token, None);
+        assert!(last.with_sent);
+    }
+
+    #[test]
+    fn the_page_that_reaches_the_per_sync_cap_carries_the_sent_folder() {
+        let all: Vec<u32> = (1..=100_000).collect();
+        let mut token: Option<String> = None;
+        let mut sent_pages = 0;
+        loop {
+            let page = plan_inbox_page(all.clone(), token.as_deref(), 100);
+            sent_pages += usize::from(page.with_sent);
+            match page.next_token {
+                Some(t) => token = Some(t),
+                None => break,
+            }
+        }
+        assert_eq!(sent_pages, 1);
+    }
+
+    #[test]
+    fn the_first_page_of_a_listing_always_searches_the_server() {
+        let cached = InboxSearch {
+            query: "SINCE 01-Jan-2024".to_string(),
+            uids: vec![1, 2, 3],
+        };
+        assert_eq!(reusable_inbox_uids(Some(&cached), "SINCE 01-Jan-2024", None), None);
+    }
+
+    #[test]
+    fn later_pages_of_the_same_listing_reuse_its_search() {
+        let cached = InboxSearch {
+            query: "SINCE 01-Jan-2024".to_string(),
+            uids: vec![1, 2, 3],
+        };
+        assert_eq!(
+            reusable_inbox_uids(Some(&cached), "SINCE 01-Jan-2024", Some("3:1")),
+            Some(vec![1, 2, 3])
+        );
+    }
+
+    #[test]
+    fn a_page_of_another_window_searches_again() {
+        // The backfill and the incremental pass list different windows with
+        // the same client.
+        let cached = InboxSearch {
+            query: "SINCE 01-Jan-2024 BEFORE 01-Jun-2024".to_string(),
+            uids: vec![1, 2, 3],
+        };
+        assert_eq!(
+            reusable_inbox_uids(Some(&cached), "SINCE 01-Jun-2024", Some("3:1")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_page_with_nothing_cached_searches() {
+        assert_eq!(reusable_inbox_uids(None, "SINCE 01-Jan-2024", Some("3:1")), None);
     }
 
     #[test]
@@ -3037,11 +3628,12 @@ mod tests {
 
         let events = logger.events();
         crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        // Tests running alongside log their own sync warnings through the same
+        // global logger, so look for the one about this account.
         let warn = events
             .iter()
-            .find(|e| e.level == "warn" && e.source == "sync")
-            .unwrap_or_else(|| panic!("no warn logged: {events:?}"));
-        assert!(warn.message.contains("idle-user@example.com"), "{}", warn.message);
+            .find(|e| e.level == "warn" && e.source == "sync" && e.message.contains("idle-user@example.com"))
+            .unwrap_or_else(|| panic!("no warn naming the account: {events:?}"));
         assert!(!warn.message.contains("not-a-real-secret"), "{}", warn.message);
     }
 
@@ -3167,6 +3759,111 @@ mod tests {
         }
     }
 
+    // ── connect_any_address ───────────────────────────────────────────────
+
+    fn addresses() -> Vec<std::net::SocketAddr> {
+        ["192.0.2.1:993", "192.0.2.2:993", "192.0.2.3:993"]
+            .iter()
+            .map(|a| a.parse().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_timeout_on_one_address_moves_on_to_the_next() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let connected = connect_any_address(
+            &addrs,
+            start + std::time::Duration::from_secs(20),
+            || start,
+            |addr, _| {
+                if addr == addrs[0] {
+                    Err(AddressFailure::next("TLS handshake failed: timed out".to_string()))
+                } else {
+                    Ok(addr)
+                }
+            },
+        );
+        assert_eq!(connected, Ok(addrs[1]));
+    }
+
+    #[test]
+    fn a_failure_every_address_would_repeat_tries_no_other() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let mut tried = Vec::new();
+        let result: std::result::Result<(), String> = connect_any_address(
+            &addrs,
+            start + std::time::Duration::from_secs(20),
+            || start,
+            |addr, _| {
+                tried.push(addr);
+                Err(AddressFailure::stop(
+                    "TLS handshake failed: bad certificate".to_string(),
+                ))
+            },
+        );
+        assert_eq!(tried, vec![addrs[0]]);
+        assert_eq!(
+            result,
+            Err(
+                "IMAP connection failed on 1 address(es): 192.0.2.1:993: TLS handshake failed: bad certificate"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn the_error_names_what_happened_on_every_address() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let result: std::result::Result<(), String> = connect_any_address(
+            &addrs,
+            start + std::time::Duration::from_secs(20),
+            || start,
+            |addr, _| {
+                Err(AddressFailure::next(format!(
+                    "TCP connect failed on port {}",
+                    addr.port()
+                )))
+            },
+        );
+        assert_eq!(
+            result,
+            Err("IMAP connection failed on 3 address(es): \
+                 192.0.2.1:993: TCP connect failed on port 993; \
+                 192.0.2.2:993: TCP connect failed on port 993; \
+                 192.0.2.3:993: TCP connect failed on port 993"
+                .to_string())
+        );
+    }
+
+    #[test]
+    fn no_address_is_tried_after_the_deadline() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let deadline = start + std::time::Duration::from_secs(20);
+        let clock = std::cell::Cell::new(start);
+        let result: std::result::Result<(), String> = connect_any_address(
+            &addrs,
+            deadline,
+            || clock.get(),
+            |_, _| {
+                // The first attempt uses up the whole deadline.
+                clock.set(deadline);
+                Err(AddressFailure::next("TLS handshake failed: timed out".to_string()))
+            },
+        );
+        assert_eq!(
+            result,
+            Err(
+                "IMAP connection failed on 1 address(es): 192.0.2.1:993: TLS handshake failed: timed out; \
+                 2 more not tried before the deadline"
+                    .to_string()
+            )
+        );
+    }
+
     #[test]
     fn tls_timeout_fallback_classifies_real_handshakes() {
         use std::io::Write;
@@ -3205,7 +3902,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            stream.write_all(b"HTTP/1.1 400 Bad Request\\r\\n\\r\\n").unwrap();
+            stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").unwrap();
         });
         let tcp = TcpStream::connect(addr).unwrap();
         tcp.set_read_timeout(Some(timeout)).unwrap();

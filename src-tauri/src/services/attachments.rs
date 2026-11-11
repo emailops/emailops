@@ -133,7 +133,7 @@ fn is_windows_reserved_name(name: &str) -> bool {
 /// `attachments/<account_id>/<file>` layout. Sanitizing through
 /// `sanitize_download_filename` first strips any path separators, so the
 /// result can never contain `/` or `\`.
-fn safe_extension(filename: &str) -> String {
+pub(crate) fn safe_extension(filename: &str) -> String {
     let safe_name = sanitize_download_filename(filename);
     Path::new(&safe_name)
         .extension()
@@ -525,6 +525,40 @@ pub fn plan_retroactive_apply(
 
 // --- Attachment processing during sync ---
 
+/// The bytes of a recorded attachment, cheapest source first: the file it was
+/// downloaded to (inside the data dir, next to the database), the copy stored
+/// inline with its row (IMAP, small Gmail parts, the copy kept of a sent
+/// message), and last the provider. Such a row may have no provider id, so the
+/// order matters: it is never sent to the provider.
+pub async fn fetch_meta_bytes(
+    db: &Arc<Database>,
+    meta: &crate::models::EmailAttachmentMeta,
+    app: Option<AppHandle>,
+) -> Result<Vec<u8>> {
+    if let (Some(file_path), Some(data_dir)) = (meta.file_path.as_deref(), db.db_path().parent()) {
+        // A downloaded file the user has since deleted is not an error: the
+        // other sources still have it.
+        match safe_attachment_path(data_dir, file_path) {
+            Ok(path) => {
+                return std::fs::read(&path)
+                    .map_err(|e| AppError::IoError(format!("Failed to read attachment {}: {e}", path.display())))
+            }
+            Err(AppError::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    if let Some(inline) = db.get_attachment_inline_data(&meta.email_id, &meta.filename)? {
+        return decode_inline_base64(&inline);
+    }
+    let account = db
+        .get_account(&meta.account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {} not found", meta.account_id)))?;
+    let provider = build_provider(&account, app).await?;
+    provider
+        .fetch_attachment_bytes(&meta.email_id, &meta.provider_attachment_id)
+        .await
+}
+
 /// Re-fetch a single message from its provider and re-extract its attachment
 /// metadata into `email_attachment_meta`. Repairs emails whose attachments were
 /// missed at original sync time — incremental sync skips already-stored messages,
@@ -718,7 +752,7 @@ pub(crate) async fn store_collected_attachment(
 
 /// Remove a stored attachment file, logging (not failing on) an error: the
 /// row it belonged to is already gone.
-fn remove_attachment_file(path: &Path) {
+pub(crate) fn remove_attachment_file(path: &Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -1018,7 +1052,7 @@ impl RuleApplies {
 
 impl RuleApplyTicket {
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed) || crate::services::task_queue::cancel_requested()
     }
 }
 
@@ -1488,7 +1522,7 @@ async fn apply_planned(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::models::AttachmentRule;
 
@@ -1738,7 +1772,7 @@ mod tests {
     use crate::models::Email;
     use crate::sync::provider::{AttachmentInfo, EmailCategory, FakeEmailProvider};
 
-    fn make_account(db: &Database, id: &str, provider: &str, email: &str) {
+    pub(crate) fn make_account(db: &Database, id: &str, provider: &str, email: &str) {
         db.connection()
             .execute(
                 "INSERT INTO accounts (id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp) \
@@ -1748,7 +1782,7 @@ mod tests {
             .expect("insert account");
     }
 
-    fn make_email(account_id: &str, id: &str, sender_email: &str, subject: &str) -> Email {
+    pub(crate) fn make_email(account_id: &str, id: &str, sender_email: &str, subject: &str) -> Email {
         Email {
             id: id.into(),
             account_id: account_id.into(),
@@ -1840,6 +1874,35 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("standard"), "missing standard hint: {}", msg);
         assert!(msg.contains("url-safe"), "missing url-safe hint: {}", msg);
+    }
+
+    /// A Gmail attachment whose bytes came with the message (a small part, or
+    /// the copy kept when the message was sent) has no provider id: reading it
+    /// uses those bytes, never a Gmail request for an empty attachment id. The
+    /// account has no tokens, so reaching the provider would fail the test.
+    #[tokio::test]
+    async fn fetch_meta_bytes_reads_a_row_that_holds_its_bytes_and_no_provider_id() {
+        use base64::Engine;
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        make_account(&db, "acc-gmail", "gmail", "me@gmail.example");
+        let email = make_email("acc-gmail", "msg-1", "me@gmail.example", "Plan");
+        db.insert_email(&email).expect("insert email");
+        let payload: &[u8] = b"\xfb\xff\xbf plan";
+        db.insert_email_attachment_metas_batch(&[(
+            email.id.clone(),
+            "acc-gmail".into(),
+            String::new(),
+            "plan.pdf".into(),
+            "application/pdf".into(),
+            payload.len() as i64,
+            Some(base64::engine::general_purpose::URL_SAFE.encode(payload)),
+        )])
+        .expect("insert meta");
+        let meta = db.get_email_attachment_metas(&email.id).expect("metas").remove(0);
+
+        let bytes = fetch_meta_bytes(&db, &meta, None).await.expect("bytes from the row");
+
+        assert_eq!(bytes, payload);
     }
 
     /// End-to-end: `process_attachments_for_email` persists an inline
@@ -2460,6 +2523,17 @@ mod tests {
 
         assert_eq!(outcome.status, ApplyStatus::Failed);
         assert!(outcome.error.is_some_and(|e| e.message.contains("r1")));
+    }
+
+    /// Moving the data folder stops the queues, and an apply can scan for long.
+    #[tokio::test]
+    async fn stopping_the_queue_cancels_the_running_apply() {
+        let applies = Arc::new(RuleApplies::default());
+        let ticket = applies.begin("rule-1");
+
+        let cancelled = crate::services::task_queue::run_cancelled(async { ticket.is_cancelled() }).await;
+
+        assert!(cancelled);
     }
 
     #[test]

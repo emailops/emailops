@@ -25,13 +25,13 @@ function ResetConfirmModal({
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div className="bg-[#2d2d2e] border border-gray-600 rounded-lg p-5 shadow-xl max-w-sm w-full mx-4">
-        <h3 className="text-sm font-semibold text-gray-100 mb-2">{t('settings:promptEditor.resetTitle')}</h3>
-        <p className="text-xs text-gray-400 mb-4">{t('settings:promptEditor.resetBody', { label: promptLabel })}</p>
+      <div className="bg-white border border-gray-300 rounded-lg p-5 shadow-xl max-w-sm w-full mx-4">
+        <h3 className="text-sm font-semibold text-gray-900 mb-2">{t('settings:promptEditor.resetTitle')}</h3>
+        <p className="text-xs text-gray-500 mb-4">{t('settings:promptEditor.resetBody', { label: promptLabel })}</p>
         <div className="flex gap-2 justify-end">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors"
+            className="px-3 py-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
           >
             {t('common:actions.cancel')}
           </button>
@@ -62,9 +62,9 @@ function VariablesPanel({ prompt, onInsert }: { prompt: PromptInfo; onInsert: (p
             type="button"
             onClick={() => onInsert(`{{${v.name}}}`)}
             title={t('settings:promptEditor.insertAtCursor')}
-            className="w-full text-left bg-[#1f1f20] border border-gray-700 hover:border-primary-500 rounded px-2 py-1.5 transition-colors group"
+            className="w-full text-left bg-white border border-gray-200 hover:border-primary-500 rounded px-2 py-1.5 transition-colors group"
           >
-            <code className="text-[11px] text-primary-300 group-hover:text-primary-200">{`{{${v.name}}}`}</code>
+            <code className="text-[11px] text-primary-700 group-hover:text-primary-600">{`{{${v.name}}}`}</code>
             <div className="text-[11px] text-gray-500 mt-0.5 leading-snug">{v.description}</div>
           </button>
         </li>
@@ -167,15 +167,15 @@ export function PromptEditorBlock({ promptId, title, description, bodyHeightPx =
 
   if (loadError) {
     return (
-      <div className="border border-red-800 bg-red-900/20 rounded p-3">
-        <p className="text-xs text-red-300">{t('settings:promptEditor.loadFailed', { error: loadError })}</p>
+      <div className="border border-red-200 bg-red-50 rounded p-3">
+        <p className="text-xs text-red-700">{t('settings:promptEditor.loadFailed', { error: loadError })}</p>
       </div>
     );
   }
 
   if (!prompt) {
     return (
-      <div className="border border-gray-700 rounded p-3">
+      <div className="border border-gray-200 rounded p-3">
         <p className="text-xs text-gray-500">{t('settings:promptEditor.loading')}</p>
       </div>
     );
@@ -185,19 +185,19 @@ export function PromptEditorBlock({ promptId, title, description, bodyHeightPx =
   const subheading = description ?? prompt.description;
 
   return (
-    <div className="border border-gray-700 rounded-lg bg-[#252526] overflow-hidden">
+    <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 px-4 py-3 border-b border-gray-700 bg-[#2a2a2b]">
+      <div className="flex items-start justify-between gap-4 px-4 py-3 border-b border-gray-200 bg-gray-50">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h4 className="text-sm font-semibold text-gray-100">{heading}</h4>
+            <h4 className="text-sm font-semibold text-gray-900">{heading}</h4>
             {prompt.isOverridden && (
-              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-amber-900/40 border border-amber-700/60 text-amber-300 rounded">
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-amber-50 border border-amber-200 text-amber-700 rounded">
                 {t('settings:promptEditor.modified')}
               </span>
             )}
             {prompt.advanced && (
-              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-gray-700/60 border border-gray-600 text-gray-300 rounded">
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 bg-gray-100 border border-gray-300 text-gray-700 rounded">
                 {t('settings:promptEditor.advanced')}
               </span>
             )}
@@ -209,7 +209,7 @@ export function PromptEditorBlock({ promptId, title, description, bodyHeightPx =
             <button
               type="button"
               onClick={() => setResetOpen(true)}
-              className="px-3 py-1.5 text-xs text-gray-300 border border-gray-600 hover:bg-gray-700 hover:text-white rounded transition-colors"
+              className="px-3 py-1.5 text-xs text-gray-700 border border-gray-300 hover:bg-gray-100 hover:text-gray-900 rounded transition-colors"
             >
               {t('settings:promptEditor.resetToDefault')}
             </button>
@@ -226,8 +226,8 @@ export function PromptEditorBlock({ promptId, title, description, bodyHeightPx =
       </div>
 
       {saveError && (
-        <div className="px-4 py-2 border-b border-gray-700 bg-red-900/20">
-          <p className="text-xs text-red-300">{t('settings:promptEditor.saveFailed', { error: saveError })}</p>
+        <div className="px-4 py-2 border-b border-gray-200 bg-red-50">
+          <p className="text-xs text-red-700">{t('settings:promptEditor.saveFailed', { error: saveError })}</p>
         </div>
       )}
 
@@ -238,14 +238,14 @@ export function PromptEditorBlock({ promptId, title, description, bodyHeightPx =
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
-          className="w-full h-full px-4 py-3 bg-[#1e1e1e] text-gray-100 text-[12.5px] leading-relaxed font-mono resize-none focus:outline-none border-r border-gray-700"
+          className="w-full h-full px-4 py-3 bg-white text-gray-900 text-[12.5px] leading-relaxed font-mono resize-none focus:outline-none border-r border-gray-200"
         />
-        <aside className="h-full overflow-y-auto px-3 py-3 bg-[#1f1f20]">
+        <aside className="h-full overflow-y-auto px-3 py-3 bg-white">
           <h5 className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">
             {t('settings:promptEditor.variables')}
           </h5>
           <p className="text-[11px] text-gray-500 mb-3 leading-snug">
-            {t('settings:promptEditor.variablesHelp')} <code className="text-primary-300">{`{{name}}`}</code>{' '}
+            {t('settings:promptEditor.variablesHelp')} <code className="text-primary-700">{`{{name}}`}</code>{' '}
             {variablesHelpSuffix}
           </p>
           <VariablesPanel prompt={prompt} onInsert={handleInsert} />

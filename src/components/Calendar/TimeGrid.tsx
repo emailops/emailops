@@ -5,6 +5,7 @@ import { eventBlockStyle, eventChipStyle } from '@/lib/calendarColor';
 import {
   addDays,
   EVENT_MIN_BLOCK_PX,
+  eventBounds,
   eventColumnGeometry,
   eventsForDay,
   eventTextMode,
@@ -31,7 +32,7 @@ interface TimeGridProps {
   events: CalendarEvent[];
   /** Resolved colour per `calendarId`, so each calendar's events are tinted
    *  with the colour the provider shows them in. */
-  colorFor: (calendarId: string) => string;
+  colorFor: (event: CalendarEvent) => string;
   onSelectEvent: (event: CalendarEvent) => void;
   /** Double-click on an empty slot → propose a new event `[start, end)` (unix seconds). */
   onCreateSlot: (start: number, end: number) => void;
@@ -114,15 +115,16 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
     [i18n.language],
   );
   const spanTooltip = (event: (typeof events)[number]) => {
-    const lastMoment = event.isAllDay ? event.endTime - 1 : event.endTime;
-    const range = `${spanRangeFmt.format(event.startTime * 1000)} – ${spanRangeFmt.format(lastMoment * 1000)}`;
+    const { start, end } = eventBounds(event);
+    const lastMoment = event.isAllDay ? end - 1 : end;
+    const range = `${spanRangeFmt.format(start * 1000)} – ${spanRangeFmt.format(lastMoment * 1000)}`;
     return event.isAllDay
       ? `${event.title} · ${range}`
       : `${event.title} · ${range} · ${time(event.startTime)} – ${time(event.endTime)}`;
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div data-testid="time-grid" className="flex flex-col flex-1 min-h-0">
       {/* Day headers, multi-day band, all-day row */}
       <div className="border-b border-gray-200 flex-shrink-0">
         {/* Day labels */}
@@ -160,7 +162,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                     left: `calc(${(startIndex / days.length) * 100}% + 2px)`,
                     width: `calc(${((endIndex - startIndex + 1) / days.length) * 100}% - 4px)`,
                     height: SPAN_LANE_PX - 2,
-                    ...eventChipStyle(colorFor(event.calendarId)),
+                    ...eventChipStyle(colorFor(event)),
                   }}
                 >
                   {continuesBefore && <span aria-hidden="true">‹</span>}
@@ -184,7 +186,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                     onClick={() => onSelectEvent(event)}
                     title={`${event.title} · ${t('calendar:allDay')}`}
                     className="w-full text-left px-1.5 py-0.5 rounded text-[11px] leading-tight truncate transition-opacity hover:opacity-80"
-                    style={eventChipStyle(colorFor(event.calendarId))}
+                    style={eventChipStyle(colorFor(event))}
                   >
                     {event.title || '—'}
                   </button>
@@ -260,7 +262,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
                         height,
                         left: `${leftPct}%`,
                         width: `calc(${widthPct}% - 2px)`,
-                        ...eventBlockStyle(colorFor(event.calendarId), event.status === 'tentative'),
+                        ...eventBlockStyle(colorFor(event), event.status === 'tentative'),
                       }}
                     >
                       {textMode === 'two-lines' && (

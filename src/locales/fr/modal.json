@@ -50,6 +50,18 @@
     "senderNameHeading": "Nom de l'expéditeur",
     "senderNameHint": "Affiché comme expéditeur des e-mails que vous envoyez depuis ce compte. Laissez vide pour envoyer uniquement avec l'adresse.",
     "senderNamePlaceholder": "Votre nom",
+    "colorHeading": "Couleur",
+    "colorHint": "Signale ce compte dans la barre latérale, la boîte unifiée et le calendrier « Tous les comptes ».",
+    "colors": {
+      "blue": "Bleu",
+      "emerald": "Émeraude",
+      "amber": "Ambre",
+      "purple": "Violet",
+      "rose": "Rose",
+      "cyan": "Cyan",
+      "indigo": "Indigo",
+      "orange": "Orange"
+    },
     "syncHeading": "Synchronisation",
     "categoriesHeading": "Catégories à synchroniser",
     "autoDownloadHeading": "Téléchargement automatique des pièces jointes",

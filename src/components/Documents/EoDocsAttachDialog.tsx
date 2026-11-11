@@ -7,7 +7,7 @@ import type { SharedDoc } from '@/types';
 
 const PRIMARY =
   'rounded bg-primary-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50';
-const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-300 hover:bg-gray-700';
+const SECONDARY = 'rounded px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100';
 
 interface EoDocsAttachDialogProps {
   /** The account the email is sent from: only its documents can be attached. */
@@ -61,7 +61,7 @@ export function EoDocsAttachDialog({ accountId, onAttach, onClose }: EoDocsAttac
       onClose={onClose}
       size="md"
       title={t('documents:attachDialog.title')}
-      subtitle={error ? <span className="text-red-300">{error}</span> : undefined}
+      subtitle={error ? <span className="text-red-700">{error}</span> : undefined}
       footer={
         <>
           <button type="button" onClick={onClose} className={SECONDARY}>
@@ -81,7 +81,7 @@ export function EoDocsAttachDialog({ accountId, onAttach, onClose }: EoDocsAttac
     >
       <p
         data-testid="eodocs-attach-warning"
-        className="mb-3 rounded border border-amber-700 bg-amber-900/30 p-2 text-xs text-amber-200"
+        className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
       >
         {t('documents:attachDialog.warning')}
       </p>
@@ -91,7 +91,7 @@ export function EoDocsAttachDialog({ accountId, onAttach, onClose }: EoDocsAttac
         onChange={(e) => setQuery(e.target.value)}
         placeholder={t('documents:attachDialog.search')}
         aria-label={t('documents:attachDialog.search')}
-        className="w-full rounded border border-gray-600 bg-gray-800 px-2 py-1 text-sm text-gray-200"
+        className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-800"
       />
       <ul className="mt-2 max-h-64 overflow-y-auto">
         {docs !== null && shown.length === 0 && (
@@ -99,7 +99,7 @@ export function EoDocsAttachDialog({ accountId, onAttach, onClose }: EoDocsAttac
         )}
         {shown.map((d) => (
           <li key={d.id}>
-            <label className="flex items-center gap-2 rounded px-1 py-1.5 text-sm text-gray-200 hover:bg-gray-700">
+            <label className="flex items-center gap-2 rounded px-1 py-1.5 text-sm text-gray-800 hover:bg-gray-100">
               <input
                 type="checkbox"
                 data-testid={`eodocs-attach-${d.id}`}
@@ -112,7 +112,7 @@ export function EoDocsAttachDialog({ accountId, onAttach, onClose }: EoDocsAttac
           </li>
         ))}
       </ul>
-      <label className="mt-3 flex items-start gap-2 text-sm text-gray-300">
+      <label className="mt-3 flex items-start gap-2 text-sm text-gray-700">
         <input
           type="checkbox"
           data-testid="eodocs-attach-consent"

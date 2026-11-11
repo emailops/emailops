@@ -24,8 +24,8 @@ const email: Email = {
   isRead: true,
   triageStatus: null,
   category: 'primary',
-  mailbox: 'sent',
-  isSent: true,
+  mailbox: 'inbox',
+  isSent: false,
   isStarred: false,
 };
 

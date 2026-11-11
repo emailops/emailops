@@ -153,6 +153,35 @@ describe('buildFlow for an ordinary turn', () => {
   });
 });
 
+describe('buildFlow — a long open document', () => {
+  it('shows each part read as its own numbered call, before the answer', () => {
+    const trace: ChatTrace = {
+      route: { mode: 'tools_first', reason: '', matchedKeywords: [], classifier: 'ambient' },
+      toolCalls: [],
+      model: 'qwen',
+      totalElapsedMs: 9000,
+      llmCalls: [
+        llm('document_part', 0, { promptTokens: 4964 }),
+        llm('document_part', 1, { promptTokens: 1198 }),
+        llm('tool_round', 0),
+      ],
+      steps: [
+        { type: 'route' },
+        { type: 'llm', index: 0, kvCache: null, cacheAction: null },
+        { type: 'llm', index: 1, kvCache: null, cacheAction: null },
+        { type: 'llm', index: 2, kvCache: null, cacheAction: null },
+      ],
+    };
+    const flow = buildFlow(trace);
+    expect(flow.map((s) => [s.kind, s.phase, s.ordinal])).toEqual([
+      ['router', null, null],
+      ['documentPart', null, { n: 1, total: 2 }],
+      ['documentPart', null, { n: 2, total: 2 }],
+      ['llmRound', null, null],
+    ]);
+  });
+});
+
 describe('formatCall', () => {
   it('skips empty arguments and truncates long ones', () => {
     expect(formatCall('f', { a: 'x', b: null, c: '' })).toBe('f(a: x)');

@@ -8,6 +8,7 @@
 // Everything here is pure and React-free — `TagBoardView` owns the effects and
 // dispatches into `tagBoardReducer`.
 import type { Email, EmailWindow, TagStat } from '@/types';
+import { isOwnMessage } from './emailFormatting';
 
 /** Tag types the classifier emits and the board can group by. Mirrors the Rust
  *  `services::filters::CLASSIFIED_TAG_TYPES`. */
@@ -23,7 +24,7 @@ export const TAG_BOARD_PAGE_SIZE = 8;
  *  sidebar's smart filters already use. */
 export const TAG_BOARD_MAX_COLUMNS = 15;
 
-/** Column pages fetched at once. The tag branch of `get_filtered_emails` is
+/** Column pages fetched at once. `get_filtered_emails` is
  *  index-driven and fast, but 15 simultaneous IPC round-trips on view entry
  *  still stutters the webview. */
 export const TAG_BOARD_FETCH_CONCURRENCY = 4;
@@ -529,13 +530,12 @@ export function planColumnLoads(
  * What to show as a card's sender.
  *
  * The user's own address on their own message is noise — every mail client
- * writes "Me" there instead. Matches on the provider's sent flag as well as the
- * address, so aliases and send-as identities are still recognised.
+ * writes "Me" there instead. "Own" is the inbox rows' rule (`isOwnMessage`):
+ * the provider's sent flag recognises aliases and send-as identities, and a
+ * forged From in Inbox or Spam keeps its sender.
  */
 export function senderLabel(email: Email, ownerEmail: string, meLabel: string): string {
-  const owner = ownerEmail.trim().toLowerCase();
-  const from = email.senderEmail.trim().toLowerCase();
-  if (email.isSent || (owner !== '' && from === owner)) return meLabel;
+  if (isOwnMessage(email, ownerEmail)) return meLabel;
   return email.sender || email.senderEmail;
 }
 

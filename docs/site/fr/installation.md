@@ -245,8 +245,9 @@ applicatives de votre système :
   clair. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-Pour déplacer ou partager un répertoire de données (pour des tests, ou un second profil),
-définissez la variable d'environnement `EMAILOPS_DATA_DIR` avant le lancement. Les chemins
+Pour conserver les données sur un autre disque, choisissez **Paramètres → Confidentialité et sécurité →
+Emplacement des données → Modifier…**. Pour des tests ou un second profil, définissez plutôt la
+variable d'environnement `EMAILOPS_DATA_DIR` avant le lancement. Les chemins
 exacts par plateforme, et ce qui est écrit où, figurent dans
 [Confidentialité et sécurité](../privacy-security/#where-your-data-is-stored).
 
@@ -255,7 +256,8 @@ exacts par plateforme, et ce qui est écrit où, figurent dans
 <!-- claim:inst-uninstalling-1 -->
 Supprimer l'application laisse volontairement votre base de courrier et les modèles
 téléchargés en place : une réinstallation reprend là où vous en étiez. Supprimez aussi le
-répertoire de données pour repartir de zéro.
+répertoire de données pour repartir de zéro ; cela supprime aussi les skills que vous avez créés,
+comme toute option du désinstalleur qui efface les données de l'application.
 
 <!-- claim:inst-uninstalling-2 -->
 Rien n'est supprimé chez votre fournisseur de messagerie dans un cas comme dans l'autre —

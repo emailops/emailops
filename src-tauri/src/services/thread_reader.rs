@@ -428,6 +428,20 @@ mod tests {
     }
 
     #[test]
+    fn a_forward_quotes_what_was_written_without_the_app_footer() {
+        // `get_thread_new_content` is what a forward quotes. A message sent
+        // from the app stores the footer of its send, and a second one would
+        // follow the quote out.
+        use crate::services::i18n::Language;
+        use crate::sync::provider::{email_footer_html, email_footer_plain};
+        for footer in [email_footer_html(Language::En), email_footer_plain(Language::Es)] {
+            let sent = msg("e1", 1, &format!("It is on its way.\n\nBest regards,\nUlises{footer}"));
+            let texts = new_content(&[sent]);
+            assert_eq!(texts, vec!["It is on its way.\n\nBest regards,\nUlises"], "{footer}");
+        }
+    }
+
+    #[test]
     fn a_one_message_thread_keeps_a_forwarded_message() {
         let body = "FYI\n\n---------- Forwarded message ---------\nFrom: Ana <ana@example.com>\nSubject: Budget\n\nThe budget is 4,000 EUR.";
         assert!(new_content(&[msg("m1", 1, body)])[0].contains("The budget is 4,000 EUR."));

@@ -81,7 +81,7 @@ describe('ReplyCompose with a recipient typed but not tokenised', () => {
     expect(sendButton().disabled).toBe(true);
 
     await typeInto('to-input', 'bob@example.com');
-    const ccToggle = [...container.querySelectorAll('button')].find((b) => b.textContent === '+ Cc');
+    const ccToggle = [...container.querySelectorAll('button')].find((b) => b.textContent === '+ compose:cc');
     await act(async () => ccToggle?.click());
     await typeInto('cc-input', 'carol@example.com');
     expect(sendButton().disabled).toBe(false);

@@ -51,7 +51,13 @@
     "button": "Feedback geben",
     "general": "Allgemeines Feedback",
     "bug": "Fehler melden",
-    "idea": "Idee"
+    "idea": "Idee",
+    "star": "Auf GitHub mit einem Stern markieren",
+    "starDialog": {
+      "title": "Unterstützen Sie EmailOps mit einem Stern auf GitHub",
+      "body": "Möchten Sie {{url}} besuchen?",
+      "visit": "GitHub besuchen"
+    }
   },
   "accountActions": {
     "sync": "Jetzt synchronisieren",

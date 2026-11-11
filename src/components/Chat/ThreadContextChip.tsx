@@ -20,13 +20,16 @@ interface ThreadContextChipProps {
 export function ThreadContextChip({ context, active, onToggle }: ThreadContextChipProps) {
   const { t } = useTranslation('chat');
   const subject = context.subject.trim() || t('panel.context.noSubject');
+  const isDocument = Boolean(context.attachmentId);
+  const hint = isDocument ? t('panel.context.hintDocument') : t('panel.context.hint');
+  const restore = isDocument ? t('panel.context.restoreDocument') : t('panel.context.restore');
 
   return (
     <div className="mb-2">
       <button
         type="button"
         onClick={() => onToggle(!active)}
-        title={active ? t('panel.context.hint') : t('panel.context.restore')}
+        title={active ? hint : restore}
         aria-pressed={active}
         className={`group flex w-full items-center gap-1.5 rounded-md border px-2 py-1 text-left text-xs transition-colors ${
           active
@@ -42,12 +45,18 @@ export function ThreadContextChip({ context, active, onToggle }: ThreadContextCh
           strokeWidth={1.5}
           aria-hidden="true"
         >
-          <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
-          <path d="M2 4.5l6 4 6-4" strokeLinecap="round" strokeLinejoin="round" />
+          {isDocument ? (
+            <path d="M4 1.5h5.5L12.5 4.5v10h-8.5zM9.5 1.5v3h3" strokeLinejoin="round" />
+          ) : (
+            <>
+              <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
+              <path d="M2 4.5l6 4 6-4" strokeLinecap="round" strokeLinejoin="round" />
+            </>
+          )}
         </svg>
         <span className="truncate font-medium">{subject}</span>
         <span className="ml-auto flex-shrink-0 pl-1 text-[10px] uppercase tracking-wide opacity-70">
-          {active ? t('panel.context.using') : t('panel.context.restore')}
+          {active ? t('panel.context.using') : restore}
         </span>
         {active && (
           <svg

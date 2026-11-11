@@ -191,14 +191,14 @@ export function TasksSettings({
   }
 
   if (loading) {
-    return <p className="text-gray-400 text-sm p-4">{t('common:state.loading')}</p>;
+    return <p className="text-gray-500 text-sm p-4">{t('common:state.loading')}</p>;
   }
 
   return (
     <SettingsPanel
       footer={
         experimentalEnabled && (
-          <div className="px-6 py-4 border-t border-gray-700 flex justify-end flex-shrink-0">
+          <div className="px-6 py-4 border-t border-gray-200 flex justify-end flex-shrink-0">
             <button
               onClick={() => void handleSave()}
               disabled={saving}
@@ -210,22 +210,22 @@ export function TasksSettings({
         )
       }
     >
-      {error && <div className="p-3 bg-red-900/30 border border-red-800 rounded text-red-300 text-sm">{error}</div>}
+      {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">{error}</div>}
       {success && (
-        <div className="p-3 bg-green-900/30 border border-green-800 rounded text-green-300 text-sm">{success}</div>
+        <div className="p-3 bg-green-50 border border-green-200 rounded text-green-700 text-sm">{success}</div>
       )}
 
       {/* Experimental header */}
-      <section className="p-3 rounded-lg border border-amber-700/50 bg-amber-900/10">
+      <section className="p-3 rounded-lg border border-amber-200 bg-amber-50">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-100">{t('settings:tasks.title')}</span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-900/40 text-amber-300 border border-amber-700/50">
+              <span className="text-sm font-medium text-gray-900">{t('settings:tasks.title')}</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
                 {t('settings:dialog.experimental')}
               </span>
             </div>
-            <p className="text-xs text-gray-400 mt-1">{t('settings:tasks.experimentalDesc')}</p>
+            <p className="text-xs text-gray-500 mt-1">{t('settings:tasks.experimentalDesc')}</p>
           </div>
           <button
             type="button"
@@ -233,7 +233,7 @@ export function TasksSettings({
             aria-checked={experimentalEnabled}
             onClick={() => onChangeExperimentalEnabled(!experimentalEnabled)}
             className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors mt-0.5 ${
-              experimentalEnabled ? 'bg-primary-600' : 'bg-neutral-600'
+              experimentalEnabled ? 'bg-primary-600' : 'bg-gray-300'
             }`}
           >
             <span
@@ -269,11 +269,11 @@ export function TasksSettings({
 
           {/* Backfill controls */}
           <section>
-            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:tasks.backfill')}</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:tasks.backfill')}</h3>
             <p className="text-xs text-gray-500 mb-3">{t('settings:tasks.backfillDescription')}</p>
             <div className="flex items-center gap-3 text-sm">
-              <span className="text-gray-400">
-                {t('settings:tasks.remaining')} <span className="text-gray-200 font-mono">{status.remaining}</span>
+              <span className="text-gray-500">
+                {t('settings:tasks.remaining')} <span className="text-gray-800 font-mono">{status.remaining}</span>
               </span>
               <button
                 type="button"
@@ -287,7 +287,7 @@ export function TasksSettings({
                 <button
                   type="button"
                   onClick={() => void handleCancelBackfill()}
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-sm"
+                  className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded text-sm"
                 >
                   {t('common:actions.cancel')}
                 </button>
@@ -296,7 +296,7 @@ export function TasksSettings({
                 type="button"
                 disabled={!activeAccountId || status.running}
                 onClick={() => void handleResetExtraction()}
-                className="px-3 py-1.5 bg-red-900/40 hover:bg-red-900/60 disabled:opacity-50 text-red-200 border border-red-800 rounded text-sm"
+                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-800 border border-red-200 rounded text-sm"
               >
                 {t('settings:tasks.resetExtraction')}
               </button>
@@ -305,7 +305,7 @@ export function TasksSettings({
 
           {/* Categories */}
           <section>
-            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:tasks.gmailCategories')}</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:tasks.gmailCategories')}</h3>
             <p className="text-xs text-gray-500 mb-2">{t('settings:tasks.gmailCategoriesDesc')}</p>
             <div className="flex flex-wrap gap-2">
               {ALL_CATEGORIES.map((cat) => {
@@ -318,7 +318,7 @@ export function TasksSettings({
                     className={`px-3 py-1.5 rounded border text-sm transition-colors ${
                       active
                         ? 'bg-primary-700 border-primary-600 text-white'
-                        : 'bg-[#2a2a2b] border-gray-700 text-gray-400 hover:border-gray-500'
+                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-400'
                     }`}
                   >
                     {cat.label}
@@ -330,10 +330,10 @@ export function TasksSettings({
 
           {/* Excluded senders */}
           <section>
-            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:tasks.excludedSenders')}</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:tasks.excludedSenders')}</h3>
             <p className="text-xs text-gray-500 mb-2">
               {t('settings:tasks.excludedSendersDescStart')}{' '}
-              <code className="text-gray-400">{t('settings:tasks.excludedSendersExample1')}</code>{' '}
+              <code className="text-gray-500">{t('settings:tasks.excludedSendersExample1')}</code>{' '}
               {t('settings:tasks.excludedSendersDescEnd')}
             </p>
             <div className="flex gap-2">
@@ -348,7 +348,7 @@ export function TasksSettings({
                   }
                 }}
                 placeholder={t('settings:tasks.excludedSendersPlaceholder')}
-                className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+                className="flex-1 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
               />
               <button
                 type="button"
@@ -363,13 +363,13 @@ export function TasksSettings({
                 {config.excludedSenders.map((p) => (
                   <span
                     key={p}
-                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2b] border border-gray-700 rounded text-xs text-gray-300 font-mono"
+                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 font-mono"
                   >
                     {p}
                     <button
                       type="button"
                       onClick={() => removeExcluded(p)}
-                      className="text-gray-500 hover:text-red-400"
+                      className="text-gray-500 hover:text-red-600"
                       aria-label={t('settings:tasks.removeAria', { value: p })}
                     >
                       × {/* i18n-ignore */}
@@ -382,7 +382,7 @@ export function TasksSettings({
 
           {/* Excluded tags */}
           <section>
-            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:tasks.excludedTags')}</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:tasks.excludedTags')}</h3>
             <p className="text-xs text-gray-500 mb-2">{t('settings:tasks.excludedTagsDesc')}</p>
             <div className="flex gap-2">
               <input
@@ -396,7 +396,7 @@ export function TasksSettings({
                   }
                 }}
                 placeholder={t('settings:tasks.tagPlaceholder')}
-                className="flex-1 bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
+                className="flex-1 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none font-mono"
               />
               <button
                 type="button"
@@ -411,13 +411,13 @@ export function TasksSettings({
                 {config.excludedTags.map((tag) => (
                   <span
                     key={tag}
-                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-[#2a2a2b] border border-gray-700 rounded text-xs text-gray-300 font-mono"
+                    className="inline-flex items-center gap-1.5 px-2 py-1 bg-gray-50 border border-gray-200 rounded text-xs text-gray-700 font-mono"
                   >
                     {tag}
                     <button
                       type="button"
                       onClick={() => removeExcludedTag(tag)}
-                      className="text-gray-500 hover:text-red-400"
+                      className="text-gray-500 hover:text-red-600"
                       aria-label={t('settings:tasks.removeAria', { value: tag })}
                     >
                       × {/* i18n-ignore */}
@@ -434,7 +434,7 @@ export function TasksSettings({
                     key={tag}
                     type="button"
                     onClick={() => addExcludedTag(tag)}
-                    className="px-2 py-0.5 bg-transparent border border-gray-700 text-gray-400 hover:border-primary-500 hover:text-primary-300 rounded text-xs font-mono"
+                    className="px-2 py-0.5 bg-transparent border border-gray-200 text-gray-500 hover:border-primary-500 hover:text-primary-700 rounded text-xs font-mono"
                   >
                     + {tag} {/* i18n-ignore */}
                   </button>
@@ -445,7 +445,7 @@ export function TasksSettings({
 
           {/* Tuning */}
           <section>
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t('settings:tasks.tuning')}</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('settings:tasks.tuning')}</h3>
             <div className="grid grid-cols-2 gap-4">
               <NumberField
                 label={t('settings:tasks.maxTasksPerEmail')}
@@ -469,7 +469,7 @@ export function TasksSettings({
 
           {/* Task extraction prompt */}
           <section>
-            <h3 className="text-sm font-semibold text-gray-300 mb-1">{t('settings:tasks.extractionPrompt')}</h3>
+            <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('settings:tasks.extractionPrompt')}</h3>
             <p className="text-xs text-gray-500 mb-3">{t('settings:tasks.extractionPromptDesc')}</p>
             <PromptEditorBlock
               promptId="tasks.extract"
@@ -497,14 +497,14 @@ function ToggleRow({
   return (
     <div className="flex items-center justify-between py-2">
       <div>
-        <label className="block text-sm font-medium text-gray-300">{label}</label>
+        <label className="block text-sm font-medium text-gray-700">{label}</label>
         <p className="text-xs text-gray-500 mt-0.5">{description}</p>
       </div>
       <button
         type="button"
         onClick={onToggle}
         className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-          enabled ? 'bg-primary-600' : 'bg-gray-600'
+          enabled ? 'bg-primary-600' : 'bg-gray-300'
         }`}
       >
         <span
@@ -536,7 +536,7 @@ function NumberField({
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
       <input
         type="number"
         value={value}
@@ -547,7 +547,7 @@ function NumberField({
           const n = parseFloat(e.target.value);
           if (!Number.isNaN(n)) onChange(n);
         }}
-        className="w-full bg-[#333] text-gray-200 border border-gray-600 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+        className="w-full bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
       />
       {hint && <p className="text-xs text-gray-500 mt-1">{hint}</p>}
     </div>
