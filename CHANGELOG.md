@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **New mail is ready for AI search before older mail.** Embeddings are now
+  generated newest first, across all your accounts. Mail that arrives while a
+  large mailbox is still being processed goes ahead of that backlog.
+
 ### Fixed
 
 - **A draft Gmail refuses is no longer sent again every minute.** Each sync used
