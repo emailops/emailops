@@ -587,7 +587,7 @@ export function EmailView({
             skipped.push(meta.filename);
             continue;
           }
-          const data = await api.fetchEmailAttachmentBytes(email.accountId, email.id, meta.providerAttachmentId);
+          const data = await api.fetchEmailAttachmentBytes(email.accountId, meta.id);
           carried.push({ filename: meta.filename, mimeType: meta.mimeType, data });
           bytes += meta.fileSize;
         }
