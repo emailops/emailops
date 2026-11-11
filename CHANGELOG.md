@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **New mail is ready for AI search before older mail.** Embeddings are now
+  generated newest first, across all your accounts. Mail that arrives while a
+  large mailbox is still being processed goes ahead of that backlog.
+
 ### Fixed
 
 - **Gmail attachments kept with the message open again.** A small attachment,
