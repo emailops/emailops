@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Deleting, archiving or filing a message can no longer erase others on
+  older IMAP servers.** On a server without the MOVE and UIDPLUS extensions,
+  moving one message purged every message another mail app had marked for
+  deletion in that folder. EXPUNGE now runs only when no other message there
+  is marked; otherwise the original stays marked for deletion, its copy is
+  already in the new folder, and the log says so. Sync skips messages marked
+  for deletion, so that original does not come back as a new message.
 - **A long brief for a new AI email is no longer cut short.** When the brief
   did not fit the prompt, its end and the instruction after it were dropped
   without a word, and the draft ignored them. Now the brief is never cut: the
