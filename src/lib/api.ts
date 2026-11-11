@@ -768,8 +768,11 @@ export async function getSyncStatus(accountId: string): Promise<SyncStatus> {
 // Search commands
 export interface ParsedSearchQuery {
   keywords: string[];
+  /** The free text as typed: phrases, brackets and AND / OR / NOT kept. */
+  text: string;
   fromFilter: string | null;
   toFilter: string | null;
+  ccFilter: string | null;
   subjectFilter: string | null;
   hasAttachment: boolean | null;
   isUnread: boolean | null;
@@ -1074,13 +1077,10 @@ export async function getEmailAttachmentMetas(accountId: string, emailId: string
   return invoke('get_email_attachment_metas', { accountId, emailId });
 }
 
-/** Fetch attachment bytes from the provider; returns standard base64. */
-export async function fetchEmailAttachmentBytes(
-  accountId: string,
-  emailId: string,
-  providerAttachmentId: string,
-): Promise<string> {
-  return invoke('fetch_email_attachment_bytes', { accountId, emailId, providerAttachmentId });
+/** The bytes of an attachment, by its row id, as standard base64: from its
+ *  downloaded file, its stored bytes or the provider. */
+export async function fetchEmailAttachmentBytes(accountId: string, metaId: string): Promise<string> {
+  return invoke('fetch_email_attachment_bytes', { accountId, metaId });
 }
 
 /** Open a locally-cached email attachment with the OS default app; `confirmed` as in `openAttachmentExternally`. */

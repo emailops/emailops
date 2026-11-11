@@ -983,6 +983,9 @@ fn format_search_trace_lines(trace: &SearchTrace<'_>) -> Vec<String> {
         if let Some(f) = &p.to_filter {
             filters.push(format!("to={f}"));
         }
+        if let Some(f) = &p.cc_filter {
+            filters.push(format!("cc={f}"));
+        }
         if let Some(f) = &p.subject_filter {
             filters.push(format!("subject={f}"));
         }
@@ -992,8 +995,10 @@ fn format_search_trace_lines(trace: &SearchTrace<'_>) -> Vec<String> {
         if p.is_unread == Some(true) {
             filters.push("unread".to_string());
         }
-        if p.has_attachment == Some(true) {
-            filters.push("has_attachment".to_string());
+        match p.has_attachment {
+            Some(true) => filters.push("has_attachment".to_string()),
+            Some(false) => filters.push("no_attachment".to_string()),
+            None => {}
         }
         if let Some(t) = p.after_timestamp {
             filters.push(format!("after={t}"));
@@ -1287,8 +1292,10 @@ mod tests {
     fn parsed_with_keywords(keywords: &[&str]) -> ParsedSearchQuery {
         ParsedSearchQuery {
             keywords: keywords.iter().map(|s| s.to_string()).collect(),
+            text: keywords.join(" "),
             from_filter: None,
             to_filter: None,
+            cc_filter: None,
             subject_filter: None,
             has_attachment: None,
             is_unread: None,

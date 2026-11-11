@@ -754,7 +754,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     set((state) => ({ tabs: [...state.tabs, newTab], activeTabId: meta.id }));
 
     try {
-      const base64 = await api.fetchEmailAttachmentBytes(meta.accountId, meta.emailId, meta.providerAttachmentId);
+      const base64 = await api.fetchEmailAttachmentBytes(meta.accountId, meta.id);
       const dataUrl = `data:${mimeType};base64,${base64}`;
       set((state) => ({
         tabs: state.tabs.map((t) =>

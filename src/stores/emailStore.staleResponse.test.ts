@@ -244,4 +244,21 @@ describe('openAttachmentTab with a sender-declared MIME type', () => {
     expect(tab.type === 'attachment' && tab.dataUrl).toBe('data:text/html;base64,aGk=');
     expect(tab.type === 'attachment' && tab.senderEmail).toBe('sender@example.com');
   });
+
+  it('reads the attachment by its row, which may hold the bytes and no provider id', async () => {
+    vi.mocked(api.fetchEmailAttachmentBytes).mockResolvedValue('aGk=');
+    await useEmailStore.getState().openAttachmentTab(
+      {
+        id: 'att-1',
+        accountId: 'acc',
+        emailId: 'a',
+        providerAttachmentId: '',
+        filename: 'plan.pdf',
+        mimeType: 'application/pdf',
+      } as never,
+      'sender@example.com',
+    );
+
+    expect(api.fetchEmailAttachmentBytes).toHaveBeenCalledWith('acc', 'att-1');
+  });
 });

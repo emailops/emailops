@@ -330,12 +330,22 @@ Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
 |---|---|
 | `from:ana` | dirección o nombre del remitente |
 | `to:ana` | destinatario |
+| `cc:ana` | alguien en copia (Cc) |
 | `subject:factura` | asunto |
 | `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
 | `id:<id del correo>` | un correo concreto |
 | `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
 | `domain:example.com` | el dominio del remitente |
 | `ext:pdf` | un adjunto de ese tipo de archivo |
+| `has:attachment` / `-has:attachment` | correo con / sin adjuntos |
+
+<!-- claim:feat-search-3 -->
+En el texto libre, una frase entre comillas busca sus palabras en ese orden, `OR` entre dos
+palabras busca cualquiera de las dos, un `-` (o `NOT`) delante de una palabra deja fuera el
+correo que la tiene, y los paréntesis agrupan: `(factura OR recibo) -borrador`. Las palabras
+seguidas tienen que estar todas y se agrupan antes que `OR`: `factura OR recibo marzo` es
+factura, o recibo y marzo. Los operadores van en mayúsculas; un «or» en minúsculas es una
+palabra más.
 
 ## Correo basura y masivo {#junk-and-bulk-mail}
 

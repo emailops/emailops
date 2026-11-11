@@ -357,8 +357,16 @@ struct BatchEmbeddingResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ParsedSearchQuery {
     pub keywords: Vec<String>,
+    /// The free text as typed, operators and the words they used left out:
+    /// unlike `keywords`, it keeps quoted phrases, brackets and AND / OR / NOT,
+    /// which the list reads as a boolean query.
+    #[serde(default)]
+    pub text: String,
     pub from_filter: Option<String>,
     pub to_filter: Option<String>,
+    /// `cc:` — an address or name in Cc.
+    #[serde(default)]
+    pub cc_filter: Option<String>,
     pub subject_filter: Option<String>,
     pub has_attachment: Option<bool>,
     pub is_unread: Option<bool>,
@@ -1422,6 +1430,21 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
         has_filter = true;
     }
 
+    if let Some(value) = operator_value(&tokens, &["cc:"]) {
+        parsed.cc_filter = Some(value);
+        has_filter = true;
+    }
+
+    for token in &tokens {
+        if token.eq_ignore_ascii_case("has:attachment") {
+            parsed.has_attachment = Some(true);
+            has_filter = true;
+        } else if token.eq_ignore_ascii_case("-has:attachment") {
+            parsed.has_attachment = Some(false);
+            has_filter = true;
+        }
+    }
+
     if let Some(value) = operator_value(&tokens, &["subject:", "asunto:"]) {
         parsed.subject_filter = Some(value);
         has_filter = true;
@@ -1514,16 +1537,15 @@ pub fn parse_search_query_patterns(query: &str) -> Option<ParsedSearchQuery> {
     }
 
     if has_filter {
+        let blocked = filter_words(&[
+            parsed.from_filter.as_deref(),
+            parsed.to_filter.as_deref(),
+            parsed.cc_filter.as_deref(),
+            parsed.subject_filter.as_deref(),
+        ]);
         parsed.keywords = extract_residual_keywords(&tokens);
-        let from_filter = parsed.from_filter.clone();
-        let to_filter = parsed.to_filter.clone();
-        let subject_filter = parsed.subject_filter.clone();
-        prune_filter_terms(
-            &mut parsed.keywords,
-            from_filter.as_deref(),
-            to_filter.as_deref(),
-            subject_filter.as_deref(),
-        );
+        parsed.keywords.retain(|keyword| !blocked.contains(keyword));
+        parsed.text = residual_text(&tokens, &blocked);
         return Some(parsed);
     }
 
@@ -1638,75 +1660,81 @@ fn extract_residual_keywords(tokens: &[String]) -> Vec<String> {
                 token.split_whitespace().collect()
             }
         })
-        .filter_map(|word| {
-            let normalized = normalize_token(word);
-            if normalized.is_empty()
-                || normalized.contains(':')
-                || matches!(
-                    normalized.as_str(),
-                    "from"
-                        | "de"
-                        | "to"
-                        | "para"
-                        | "subject"
-                        | "asunto"
-                        | "is"
-                        | "unread"
-                        | "sin"
-                        | "leer"
-                        | "no"
-                        | "leidos"
-                        | "despues"
-                        | "despues:"
-                        | "after"
-                        | "before"
-                        | "antes"
-                        | "today"
-                        | "hoy"
-                        | "this"
-                        | "week"
-                        | "month"
-                        | "emails"
-                        | "messages"
-                        | "mails"
-                        | "correos"
-                        | "mensajes"
-                        | "esta"
-                        | "este"
-                        | "semana"
-                        | "mes"
-                        | "sobre"
-                        | "about"
-                )
-                || normalized.ends_with(':')
-            {
-                None
-            } else {
-                Some(normalized)
-            }
-        })
+        .map(normalize_token)
+        .filter(|normalized| !is_filler(normalized))
         .collect()
 }
 
-fn prune_filter_terms(
-    keywords: &mut Vec<String>,
-    from_filter: Option<&str>,
-    to_filter: Option<&str>,
-    subject_filter: Option<&str>,
-) {
-    let mut blocked = Vec::new();
+/// A normalized word that is no search term: an operator, or a word of the
+/// phrasings the filters read ("emails from …", "unread", "this week").
+fn is_filler(normalized: &str) -> bool {
+    normalized.is_empty()
+        || normalized.contains(':')
+        || matches!(
+            normalized,
+            "from"
+                | "de"
+                | "to"
+                | "para"
+                | "subject"
+                | "asunto"
+                | "is"
+                | "unread"
+                | "sin"
+                | "leer"
+                | "no"
+                | "leidos"
+                | "despues"
+                | "after"
+                | "before"
+                | "antes"
+                | "today"
+                | "hoy"
+                | "this"
+                | "week"
+                | "month"
+                | "emails"
+                | "messages"
+                | "mails"
+                | "correos"
+                | "mensajes"
+                | "esta"
+                | "este"
+                | "semana"
+                | "mes"
+                | "sobre"
+                | "about"
+        )
+}
 
-    if let Some(from) = from_filter {
-        blocked.extend(from.split_whitespace().map(normalize_token));
-    }
-    if let Some(to) = to_filter {
-        blocked.extend(to.split_whitespace().map(normalize_token));
-    }
-    if let Some(subject) = subject_filter {
-        blocked.extend(subject.split_whitespace().map(normalize_token));
-    }
+/// The normalized words of the filters' values, which are no search terms.
+fn filter_words(values: &[Option<&str>]) -> Vec<String> {
+    values
+        .iter()
+        .flatten()
+        .flat_map(|value| value.split_whitespace().map(normalize_token))
+        .collect()
+}
 
-    keywords.retain(|keyword| !blocked.iter().any(|blocked_term| blocked_term == keyword));
+/// The free text as typed: the tokens the keywords come from, whole, so
+/// phrases, brackets and AND / OR / NOT survive for the list's boolean query.
+fn residual_text(tokens: &[String], blocked: &[String]) -> String {
+    tokens
+        .iter()
+        .filter(|token| {
+            if token.chars().all(|c| c == '(' || c == ')') {
+                return true;
+            }
+            let words: Vec<String> = token.split_whitespace().map(normalize_token).collect();
+            if token.starts_with('"') || token.starts_with("-\"") {
+                // A phrase, unless it is a filter's value (`from: "Ana Lee"`).
+                return !words.iter().all(|word| word.is_empty() || blocked.contains(word));
+            }
+            words.iter().any(|word| !is_filler(word) && !blocked.contains(word))
+        })
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn normalize_token(token: &str) -> String {
@@ -2041,6 +2069,41 @@ mod pattern_parser_tests {
         assert_eq!(parsed.domain_filter.as_deref(), Some("vendor.example"));
         assert_eq!(parsed.attachment_ext.as_deref(), Some("pdf"));
         assert!(parsed.keywords.is_empty(), "keywords: {:?}", parsed.keywords);
+    }
+
+    #[test]
+    fn reads_the_cc_operator() {
+        let parsed = parse_search_query_patterns("cc:bea@empresa.example invoice").unwrap();
+        assert_eq!(parsed.cc_filter.as_deref(), Some("bea@empresa.example"));
+        assert_eq!(parsed.keywords, vec!["invoice"]);
+    }
+
+    #[test]
+    fn reads_has_attachment_and_its_negation() {
+        let with = parse_search_query_patterns("has:attachment invoice").unwrap();
+        assert_eq!(with.has_attachment, Some(true));
+        assert_eq!(with.keywords, vec!["invoice"]);
+        let without = parse_search_query_patterns("-has:Attachment").unwrap();
+        assert_eq!(without.has_attachment, Some(false));
+        assert!(without.keywords.is_empty(), "keywords: {:?}", without.keywords);
+    }
+
+    /// The list reads the free text as a boolean query, so next to an operator
+    /// it keeps the phrases, brackets and AND / OR / NOT the user typed.
+    #[test]
+    fn the_free_text_keeps_its_boolean_syntax() {
+        let parsed = parse_search_query_patterns(r#"from:ana (invoice OR receipt) -draft "Q3 plan""#).unwrap();
+        assert_eq!(parsed.from_filter.as_deref(), Some("ana"));
+        assert_eq!(parsed.text, r#"(invoice OR receipt) -draft "Q3 plan""#);
+    }
+
+    #[test]
+    fn the_free_text_leaves_out_the_words_a_filter_used() {
+        let parsed = parse_search_query_patterns("emails from ana about the budget").unwrap();
+        assert_eq!(parsed.from_filter.as_deref(), Some("ana"));
+        assert_eq!(parsed.text, parsed.keywords.join(" "));
+        let quoted = parse_search_query_patterns(r#"from: "Ana Lee" budget"#).unwrap();
+        assert_eq!(quoted.text, "budget");
     }
 
     #[test]

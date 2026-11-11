@@ -342,12 +342,22 @@ Les recherches se précisent avec des opérateurs, seuls ou à côté de texte l
 |---|---|
 | `from:ana` | adresse ou nom de l'expéditeur |
 | `to:ana` | destinataire |
+| `cc:ana` | une personne en copie (Cc) |
 | `subject:facture` | objet |
 | `before:2026-09-01` / `after:2026-09-01` | date de réception |
 | `id:<id du courriel>` | un courriel précis |
 | `tag:newsletter` / `tag:intent=request` | une étiquette du classifieur, éventuellement dans une facette |
 | `domain:example.com` | le domaine de l'expéditeur |
 | `ext:pdf` | une pièce jointe de ce type de fichier |
+| `has:attachment` / `-has:attachment` | courriels avec / sans pièce jointe |
+
+<!-- claim:feat-search-3 -->
+Dans le texte libre, une expression entre guillemets cherche ses mots dans cet ordre, `OR`
+entre deux mots trouve l'un ou l'autre, un `-` (ou `NOT`) devant un mot écarte les courriels
+qui le contiennent, et les parenthèses regroupent : `(facture OR reçu) -brouillon`. Les mots
+côte à côte doivent tous être présents et se regroupent avant `OR` : `facture OR reçu mars`
+veut dire facture, ou reçu et mars. Les opérateurs s'écrivent en majuscules ; un « or » en
+minuscules est un mot ordinaire.
 
 ## Indésirables et courrier de masse {#junk-and-bulk-mail}
 
