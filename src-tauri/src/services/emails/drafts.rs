@@ -487,6 +487,20 @@ Subject: {subject}\n\n\
     )
 }
 
+/// The new-email prompt, whole, or an error saying how much to shorten the
+/// brief. Pure. Never cut: the brief and the closing instruction end the
+/// prompt, so a cut that keeps the start drops exactly them.
+fn fit_new_draft_prompt(prompt: String) -> Result<String> {
+    if prompt.len() <= MAX_PROMPT_CHARS {
+        return Ok(prompt);
+    }
+    // Bytes over the limit: cutting that many characters always fits.
+    let over = prompt.len() - MAX_PROMPT_CHARS;
+    Err(AppError::InvalidInput(format!(
+        "the brief is too long for an AI draft: shorten it by at least {over} characters"
+    )))
+}
+
 /// Generate a draft for a brand-new email (no existing thread). Used by the
 /// chat `generate_email_draft` tool when the user asks for a new message
 /// rather than a reply ("draft a new email to billing@stripe…").
@@ -544,13 +558,14 @@ pub async fn generate_new_draft(
 
     // Distinct from the reply template because the model needs to be told
     // there's no inbound thread — otherwise small models hallucinate one.
-    let prompt = build_new_draft_prompt(&persona, &style, language, &to_clean, subject, &instructions_section);
-
-    let prompt = if prompt.len() > MAX_PROMPT_CHARS {
-        truncate_utf8(&prompt, MAX_PROMPT_CHARS).to_string()
-    } else {
-        prompt
-    };
+    let prompt = fit_new_draft_prompt(build_new_draft_prompt(
+        &persona,
+        &style,
+        language,
+        &to_clean,
+        subject,
+        &instructions_section,
+    ))?;
 
     emit_log("info", "calling model…");
     let ai = AiService::new(db.clone())?;
@@ -1120,6 +1135,42 @@ mod tests {
         );
         assert!(prompt.contains("Kickoff"), "subject must appear");
         assert!(prompt.contains("be brief"), "instructions section must be spliced in");
+    }
+
+    // ── fit_new_draft_prompt ───────────────────────────────────────────────
+
+    #[test]
+    fn fit_new_draft_prompt_refuses_a_long_brief_instead_of_cutting_its_end() {
+        let brief = format!(
+            "Additional instructions: {}END OF BRIEF\n\n",
+            "x".repeat(MAX_PROMPT_CHARS)
+        );
+        let prompt = build_new_draft_prompt("p", "s", Language::En, &["a@example.com".to_string()], "Plan", &brief);
+        let over = prompt.len() - MAX_PROMPT_CHARS;
+
+        let err = fit_new_draft_prompt(prompt).expect_err("a prompt over the limit must not reach the model cut");
+
+        match err {
+            AppError::InvalidInput(detail) => assert!(
+                detail.contains(&format!("at least {over} characters")),
+                "must say how much to shorten the brief; got: {detail}"
+            ),
+            other => panic!("must be InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fit_new_draft_prompt_keeps_a_prompt_that_fits_whole() {
+        let prompt = build_new_draft_prompt(
+            "p",
+            "s",
+            Language::En,
+            &["a@example.com".to_string()],
+            "Plan",
+            "Additional instructions: be brief\n\n",
+        );
+
+        assert_eq!(fit_new_draft_prompt(prompt.clone()).expect("fits"), prompt);
     }
 
     // ── clean_new_draft_inputs ─────────────────────────────────────────────

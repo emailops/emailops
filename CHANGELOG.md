@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A long brief for a new AI email is no longer cut short.** When the brief
+  did not fit the prompt, its end and the instruction after it were dropped
+  without a word, and the draft ignored them. Now the brief is never cut: the
+  draft is not generated, and the log says how many characters to remove.
 - **AI replies follow your instructions with any prompt template.** With a
   reply template of your own that leaves out `{instructions}` (Settings → AI
   drafts), the instructions you typed for Generate or Regenerate never reached
