@@ -33,9 +33,9 @@ describe('shouldAutosaveDraft', () => {
   });
 
   it('is true once there is a recipient', () => {
-    expect(shouldAutosaveDraft({ ...base, toAddresses: ['a@b.com'] })).toBe(true);
-    expect(shouldAutosaveDraft({ ...base, ccAddresses: ['a@b.com'] })).toBe(true);
-    expect(shouldAutosaveDraft({ ...base, bccAddresses: ['a@b.com'] })).toBe(true);
+    expect(shouldAutosaveDraft({ ...base, toAddresses: ['a@example.com'] })).toBe(true);
+    expect(shouldAutosaveDraft({ ...base, ccAddresses: ['a@example.com'] })).toBe(true);
+    expect(shouldAutosaveDraft({ ...base, bccAddresses: ['a@example.com'] })).toBe(true);
   });
 
   it('is true once there is a subject or body', () => {
@@ -54,16 +54,16 @@ describe('buildSaveDraftRequest', () => {
     const req = buildSaveDraftRequest({
       ...base,
       draftId: 'd1',
-      toAddresses: ['a@b.com'],
-      ccAddresses: ['c@b.com'],
+      toAddresses: ['a@example.com'],
+      ccAddresses: ['c@example.com'],
       bccAddresses: ['h@example.com'],
       subject: 'Hi',
       plainBody: 'hello',
       bodyHtml: '   ',
     });
     expect(req.id).toBe('d1');
-    expect(req.toAddresses).toEqual(['a@b.com']);
-    expect(req.ccAddresses).toEqual(['c@b.com']);
+    expect(req.toAddresses).toEqual(['a@example.com']);
+    expect(req.ccAddresses).toEqual(['c@example.com']);
     expect(req.bccAddresses).toEqual(['h@example.com']);
     expect(req.body).toBe('hello');
     expect(req.bodyHtml).toBeNull();
