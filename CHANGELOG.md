@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **IMAP accounts connect when the first address of their server does not
+  answer.** EmailOps tried only the first address a mail server's name
+  resolves to, so one unreachable address, IPv6 or IPv4, failed every sync. It
+  now tries each address in turn for up to 20 seconds, moves on after a
+  timeout, and the error says what happened on each address.
 - **Deleting, archiving or filing a message can no longer erase others on
   older IMAP servers.** On a server without the MOVE and UIDPLUS extensions,
   moving one message purged every message another mail app had marked for
