@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A long brief for a new AI email is no longer cut short.** When the brief
+  did not fit the prompt, its end and the instruction after it were dropped
+  without a word, and the draft ignored them. Now the brief is never cut: the
+  draft is not generated, and the log says how many characters to remove.
 - **Gmail attachments kept with the message open again.** A small attachment,
   or one on a message you sent from EmailOps, failed to open, download or
   forward with a "not found" error: EmailOps asked Gmail for it instead of
