@@ -742,8 +742,7 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .unwrap_or(template.len());
     let (prefix, suffix_template) = template.split_at(split);
 
-    let shows_instructions =
-        suffix_template.contains("{instructions}") && input.instructions.is_some_and(|i| !i.trim().is_empty());
+    let shows_instructions = input.instructions.is_some_and(|i| !i.trim().is_empty());
     let rules = format!(
         "{}{}",
         language_rule(input.thread.len(), input.language, shows_instructions),
@@ -762,14 +761,14 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .replace("{thread_context}", &thread_context)
         .replace("{rag_context}", input.rag_context)
         .replace("{instructions}", &instructions_section);
-    // A custom template without `{instructions}` would drop the language and
-    // sign-off rules silently: append them, after the cached prefix. (Its
-    // user instructions keep their old behaviour.)
+    // A custom template without `{instructions}` would drop the user's
+    // instructions and the language and sign-off rules silently: append them,
+    // after the cached prefix.
     if !suffix_template.contains("{instructions}") {
         if !suffix.is_empty() && !suffix.ends_with('\n') {
             suffix.push_str("\n\n");
         }
-        suffix.push_str(&rules);
+        suffix.push_str(&instructions_section);
     }
 
     ReplyPrompt {
@@ -1417,6 +1416,22 @@ mod tests {
     }
 
     #[test]
+    fn a_custom_template_without_instructions_still_gets_the_user_instructions() {
+        let thread = [msg("Ana", "hola")];
+        let p = plan_signed(&thread, Some("dile que sí"), by_name(), "Reply to {thread_context}", "");
+        let instructions = p
+            .suffix
+            .find("Additional instructions: dile que sí")
+            .expect("the user's instructions must reach the model");
+        let rule = p
+            .suffix
+            .find("language of Message 1")
+            .expect("language rule in the prompt");
+        assert!(rule > instructions, "{}", p.suffix);
+        assert!(!p.prefix.contains("dile que sí"), "{}", p.prefix);
+    }
+
+    #[test]
     fn the_rules_show_the_model_no_phrase_of_any_language_to_copy() {
         let thread = [msg("Ana", "hola")];
         for sign_off in [by_name(), SignOff::ClosingOnly, signed()] {
@@ -1556,13 +1571,13 @@ mod tests {
         let thread = [msg("Ana", "hola")];
         let exception = "instructions name a language";
         let shown = plan(&thread, "", Some("dile que sí")).suffix;
+        let custom = plan_signed(&thread, Some("dile que sí"), by_name(), "Reply to {thread_context}", "").suffix;
         let blank = plan(&thread, "", Some("   ")).suffix;
-        let dropped = plan_signed(&thread, Some("dile que sí"), by_name(), "Reply to {thread_context}", "").suffix;
-        assert!(shown.contains(exception), "{shown}");
         assert!(
-            !blank.contains(exception) && !dropped.contains(exception),
-            "{blank}{dropped}"
+            shown.contains(exception) && custom.contains(exception),
+            "{shown}{custom}"
         );
+        assert!(!blank.contains(exception), "{blank}");
     }
 
     #[test]
@@ -1878,7 +1893,7 @@ mod tests {
         let template = "You help {persona}.\n{thread_context}\nReply now:";
         for sign_off in [by_name(), SignOff::ClosingOnly] {
             let rules = reply_rules(&sign_off);
-            let p = plan_signed(&[msg("Alice", "hi")], Some("say yes"), sign_off, template, "");
+            let p = plan_signed(&[msg("Alice", "hi")], None, sign_off, template, "");
             assert!(p.suffix.ends_with(&format!("Reply now:\n\n{rules}")), "{}", p.suffix);
         }
     }
