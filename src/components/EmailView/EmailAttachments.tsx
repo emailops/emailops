@@ -78,7 +78,7 @@ export function EmailAttachments({
       if (meta.filePath) {
         await openAttachment((confirmed) => api.openEmailAttachmentMeta(accountId, meta.id, confirmed));
       } else {
-        const b64 = await api.fetchEmailAttachmentBytes(accountId, emailId, meta.providerAttachmentId);
+        const b64 = await api.fetchEmailAttachmentBytes(accountId, meta.id);
         await saveToDownloads(meta.filename, b64);
       }
     });
@@ -86,7 +86,7 @@ export function EmailAttachments({
 
   const handleDownload = async (meta: EmailAttachmentMeta) => {
     await withDownloadLock(meta, async () => {
-      const b64 = await api.fetchEmailAttachmentBytes(accountId, emailId, meta.providerAttachmentId);
+      const b64 = await api.fetchEmailAttachmentBytes(accountId, meta.id);
       await saveToDownloads(meta.filename, b64);
     });
   };
@@ -94,7 +94,7 @@ export function EmailAttachments({
   // Word and Excel attachments can be turned into EO Docs and opened there.
   const handleOpenInEoDocs = async (meta: EmailAttachmentMeta) => {
     await withDownloadLock(meta, async () => {
-      const b64 = await api.fetchEmailAttachmentBytes(accountId, emailId, meta.providerAttachmentId);
+      const b64 = await api.fetchEmailAttachmentBytes(accountId, meta.id);
       const { docs } = await importOfficeFile(accountId, meta.filename, b64, null);
       addLog('success', 'sync', `Imported ${meta.filename} into EO Docs`);
       if (docs[0]) requestOpen(docs[0]);
