@@ -38,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moving one message purged every message another mail app had marked for
   deletion in that folder. EXPUNGE now runs only when no other message there
   is marked; otherwise the original stays marked for deletion, its copy is
-  already in the new folder, and the log says so.
+  already in the new folder, and the log says so. Sync skips messages marked
+  for deletion, so that original does not come back as a new message.
 - **Gmail attachments kept with the message open again.** A small attachment,
   or one on a message you sent from EmailOps, failed to open, download or
   forward with a "not found" error: EmailOps asked Gmail for it instead of
