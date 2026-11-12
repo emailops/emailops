@@ -122,17 +122,22 @@ pub fn build_thread_context(db: &Database, account_id: &str, thread_id: &str) ->
         account_id,
         thread_id,
         crate::services::thread_reader::CHAT_THREAD_BUDGET,
+        None,
     )
 }
 
 /// [`build_thread_context`] with the thread read into `budget_chars` instead
 /// of the chat's usual thread budget — what the context budget asks for when
 /// the open thread would not fit the window.
+///
+/// `focus_id` is the email a reply draft answers: it is served first, up to
+/// half the budget, so a short read never cuts the message being answered.
 pub(crate) fn build_thread_context_within(
     db: &Database,
     account_id: &str,
     thread_id: &str,
     budget_chars: usize,
+    focus_id: Option<&str>,
 ) -> Result<(String, String)> {
     use crate::services::thread_reader::{load_thread, read_thread, render_thread, ReadOptions};
     let messages = load_thread(db, account_id, thread_id)?;
@@ -143,7 +148,15 @@ pub(crate) fn build_thread_context_within(
     };
     // Read once, as a thread: each reply's new content only (its quoted
     // history is the earlier messages, already shown), one shared budget.
-    let read = read_thread(&messages, &ReadOptions::budget(budget_chars));
+    let opts = match focus_id {
+        Some(id) => ReadOptions {
+            focus_id: Some(id.to_string()),
+            focus_max_chars: budget_chars / 2,
+            ..ReadOptions::budget(budget_chars)
+        },
+        None => ReadOptions::budget(budget_chars),
+    };
+    let read = read_thread(&messages, &opts);
     Ok((render_thread(&read), first.subject.clone()))
 }
 
@@ -224,6 +237,38 @@ mod tests {
             matches!(err, crate::models::error::AppError::NotFound(_)),
             "expected NotFound, got {err:?}"
         );
+    }
+
+    #[test]
+    fn a_reply_draft_keeps_the_message_it_answers_when_the_thread_is_read_short() {
+        let db = Database::new_for_testing().expect("test db");
+        // The oldest message holds the question the draft answers, at its end;
+        // two long later messages would otherwise take the short budget.
+        let question = format!("{} Which date works for the delivery?", "Context line. ".repeat(45));
+        seed_thread_email(&db, "e1", "acct-1", "t-1", "Q3 report", &question);
+        seed_thread_email(&db, "e2", "acct-1", "t-1", "Re: Q3 report", &"Bravo note. ".repeat(160));
+        seed_thread_email(
+            &db,
+            "e3",
+            "acct-1",
+            "t-1",
+            "Re: Q3 report",
+            &"Charlie note. ".repeat(150),
+        );
+        let conn = db.connection();
+        for (id, ts) in [("e1", 100), ("e2", 200), ("e3", 300)] {
+            conn.execute("UPDATE emails SET timestamp = ?1 WHERE id = ?2", params![ts, id])
+                .unwrap();
+        }
+        drop(conn);
+
+        let (unfocused, _) = build_thread_context_within(&db, "acct-1", "t-1", 1_500, None).expect("context");
+        assert!(
+            !unfocused.contains("Which date works"),
+            "precondition: read short and unfocused, the question is cut: {unfocused}"
+        );
+        let (focused, _) = build_thread_context_within(&db, "acct-1", "t-1", 1_500, Some("e1")).expect("context");
+        assert!(focused.contains("Which date works"), "{focused}");
     }
 
     #[test]

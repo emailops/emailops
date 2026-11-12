@@ -202,6 +202,7 @@ fn resolve_categories(state: &AppState, requested: Option<Vec<String>>) -> Vec<S
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command boundary — one argument per piece of per-turn context
 pub async fn send_chat_message(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -239,6 +240,13 @@ pub async fn send_chat_message(
     // The estimate the user confirmed (`estimate_research`): the run reads
     // exactly the emails it counted.
     research_estimate_id: Option<String>,
+    // The draft the user is writing (compose tab or inline reply), as
+    // read-only context for this turn. `None` when no composer is on screen
+    // or the user switched its chip off.
+    context_draft: Option<crate::models::ChatDraftContext>,
+    // A composer is open, whether or not its draft is sent: the turn then
+    // refuses `generate_email_draft`, which would replace that draft's body.
+    composer_open: Option<bool>,
 ) -> Result<SendChatResponse, AppError> {
     if !state.db.is_ai_enabled()? {
         return Err(AppError::AiDisabled);
@@ -247,6 +255,11 @@ pub async fn send_chat_message(
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return Err(AppError::InvalidInput("Message is empty".into()));
+    }
+    // Before any row is written: a draft that fails validation must not leave
+    // a question without an answer in the conversation.
+    if let Some(draft) = context_draft.as_ref() {
+        draft.validate()?;
     }
 
     let categories = resolve_categories(&state, categories);
@@ -358,6 +371,8 @@ pub async fn send_chat_message(
                     correction: correction_for_task,
                     research: research.unwrap_or(false),
                     research_estimate_id: research_estimate_id.clone(),
+                    draft: context_draft,
+                    composer_open: composer_open.unwrap_or(false),
                 },
             )
             .await
