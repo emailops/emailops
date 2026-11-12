@@ -1112,6 +1112,25 @@ await step('Chat', 'panel visible', 'el panel de chat está acoplado con su cuad
   if (!(await exists('button=Send'))) { if (await exists('button=Chat')) { await click('button=Chat'); await sleep(1200); } }
   return ok(await exists('textarea[placeholder^="Ask about your emails"]') && await exists('button=Send'), 'panel listo', 'sin panel de chat');
 });
+await step('Chat', 'borrador como contexto', 'una pestaña de redacción con texto muestra el chip «asunto · new email»; desactivado sigue a la vista con su asunto (el texto de restaurar no lo aplasta) y vuelve a activarse; descartar la pestaña lo quita', async () => {
+  const subject = 'Verifier draft context';
+  // The chip of the draft on screen: its state and how wide its subject is drawn.
+  const chip = () => js((s) => { const c = [...document.querySelectorAll('button[aria-pressed]')].find((x) => x.innerText.includes('new email') && x.innerText.includes(s)); const t = c?.querySelector('span.font-medium'); return c ? { pressed: c.getAttribute('aria-pressed'), subjectWidth: Math.round(t.getBoundingClientRect().width) } : null; }, subject);
+  const toggle = () => js((s) => { [...document.querySelectorAll('button[aria-pressed]')].find((x) => x.innerText.includes('new email') && x.innerText.includes(s))?.click(); }, subject);
+  await click('button=Compose'); await sleep(1500);
+  await type('input[placeholder^="Email subject"]', subject);
+  await click('button[title="Open in tab"]'); await sleep(2000);
+  // The tab's editor: the one not hidden behind another tab. execCommand is what tiptap hears as typing.
+  await js(() => { const ed = [...document.querySelectorAll('.ProseMirror')].find((e) => e.getBoundingClientRect().width > 0 && getComputedStyle(e.closest('.absolute') || e).visibility !== 'hidden' && !e.innerText.trim()); ed.focus(); document.execCommand('insertText', false, 'Synthetic text for the verifier.'); }); await sleep(1500);
+  const on = await chip();
+  await toggle(); await sleep(800); const off = await chip();
+  await toggle(); await sleep(800); const back = await chip();
+  await js(() => [...document.querySelectorAll('button')].filter((x) => x.offsetParent && x.textContent.trim() === 'Discard').pop()?.click()); await sleep(1000);
+  await js(() => [...document.querySelectorAll('[role=dialog] button, .fixed button')].filter((x) => x.offsetParent && x.textContent.trim() === 'Discard').pop()?.click()); await sleep(1500);
+  const gone = (await chip()) === null;
+  const v = { on, off, back, gone };
+  return ok(on?.pressed === 'true' && off?.pressed === 'false' && off.subjectWidth >= 40 && back?.pressed === 'true' && gone, JSON.stringify(v), JSON.stringify(v));
+});
 await step('Chat', 'pregunta y respuesta', 'una pregunta recibe respuesta con fuentes en menos de 120 s', async () => {
   const before = await bodyText();
   await type('textarea[placeholder^="Ask about your emails"]', 'Which clients are asking about Ollama?'); await click('button=Send');

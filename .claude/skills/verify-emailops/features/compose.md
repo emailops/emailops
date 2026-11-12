@@ -23,6 +23,8 @@ provider.
 
 Preconditions: baseline; account `demo-acct-work` selected. Entry confirmed present on 11/09/2026: `button=Compose`, `button=Drafts`.
 
+- Font follows the selection (driven live 12/11/2026 on an inline reply) → the font control is a native `select[aria-label="Font"]` next to each editor (pick the one whose ancestor holds the `.ProseMirror` you are typing in). Select a word with a DOM `Range` on the editor's text node (ProseMirror picks it up from `selectionchange`), then set the select's value through `HTMLSelectElement.prototype` value setter and dispatch `change`: only that word becomes `<span style="font-family: Georgia, serif;">…</span>`. Moving the selection back and forth shows `Georgia` on the span and `Default font` elsewhere in the select. Unit coverage: `src/components/shared/RichTextEditor.font.test.tsx`.
+
 - Open → `$V wd click 'button=Compose'`, `$V wd shot "$R/compose-open.png"` → `$V wd exists 'input[placeholder="Subject"], input[placeholder^="Email subject"]'` and `$V wd exists 'textarea[placeholder^="Write your message"], [contenteditable="true"]'` print `present`.
 - Fill → `$V wd type 'input[placeholder^="To"], input[aria-label="To"]' 'someone@example.com'`, `$V wd type 'input[placeholder="Subject"], input[placeholder^="Email subject"]' 'Verification run'`, then the body field → the PNG shows the text.
 - Draft side effect → close with `$V wd click 'aria/Close'` (or `Minimize`), `$V wd click 'button=Drafts'` → `$V wd find '*=Verification run'` prints the draft row; `sqlite3 .emailops-demo-data/emailops.db "select count(*) from drafts where subject='Verification run'"` prints `1`.

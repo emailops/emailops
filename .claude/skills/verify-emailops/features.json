@@ -441,6 +441,8 @@
       "vitest": [
         "src/components/Chat",
         "src/lib/chatContext",
+        "src/lib/chatDraft",
+        "src/stores/draftContextStore",
         "src/lib/chatPanelLayout",
         "src/lib/chatToolEffects",
         "src/stores/chatStore",
@@ -463,7 +465,8 @@
         "demo_",
         "memory_",
         "thread_",
-        "starter_"
+        "starter_",
+        "draft_"
       ],
       "integration_names": [
         "chat",
