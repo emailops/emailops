@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.19] — 2026-11-12
+
 ### Added
 
 - **Bcc, editable reply subjects and replies to Reply-To.** Every composer has

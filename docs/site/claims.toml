@@ -491,6 +491,7 @@ checks = [
 [start-after-wizard-first-sync-2]
 checks = [
   { manual = 'Incremental sync needs a real provider; the demo accounts are offline.' },
+  { tests = ['services::embeddings::tests::a_batch_over_all_accounts_embeds_the_newest_mail_first', 'db::embeddings::tests::get_emails_without_embeddings_returns_the_newest_first'], covers = ["Embeddings start with the newest mail across all your accounts, so recent mail is ready for AI Search before older mail"] },
 ]
 
 [start-after-wizard-first-sync-3]

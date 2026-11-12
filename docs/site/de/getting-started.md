@@ -96,7 +96,9 @@ Rest nachzieht.
 Das sind einmalige Kosten. Jede spätere Synchronisierung ist **inkrementell**: Sie fragt beim
 Anbieter nur ab, was sich seither geändert hat, ist daher in Sekunden fertig und läuft
 unauffällig nach Zeitplan. Bei aktivierter KI arbeiten auch Klassifizierung und Embeddings
-beim ersten Lauf den Rückstand ab und fassen danach nur noch neue E-Mails an.
+beim ersten Lauf den Rückstand ab und fassen danach nur noch neue E-Mails an. Embeddings
+beginnen mit den neuesten E-Mails aus allen Ihren Konten, sodass neue E-Mails vor älteren für
+die KI-Suche bereit sind.
 
 <!-- claim:start-after-wizard-first-sync-3 -->
 Sobald die erste Synchronisierung abgeschlossen ist:

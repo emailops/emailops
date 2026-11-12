@@ -90,7 +90,8 @@ scanned — so you can read and search what has already arrived while the rest c
 This is a one-time cost. Every later sync is **incremental**: it asks your provider only for
 what changed since last time, so it finishes in seconds and runs quietly on a schedule. If
 AI is enabled, classification and embedding also work through the backlog on first run and
-then only touch new mail.
+then only touch new mail. Embeddings start with the newest mail across all your accounts, so
+recent mail is ready for AI Search before older mail.
 
 <!-- claim:start-after-wizard-first-sync-3 -->
 Once the first sync finishes:
