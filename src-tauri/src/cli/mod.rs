@@ -260,6 +260,12 @@ pub enum Command {
         /// `--thread`.
         #[arg(long, value_name = "ATTACHMENT_ID")]
         attachment: Option<String>,
+        /// Carry this draft as the one the user is writing, as the chat panel
+        /// does while a compose tab or an inline reply is open: a JSON file
+        /// shaped like `ChatDraftContext` (`kind`, `subject`, `to`, `cc`,
+        /// `body`, `replyToEmailId`). `generate_email_draft` is refused.
+        #[arg(long, value_name = "FILE")]
+        draft: Option<PathBuf>,
         /// Prewarm the chat prompt-prefix cache (system message + empty
         /// sources tail) BEFORE the first question, mirroring what the app
         /// does at startup / chat-panel open. Use in benches so turn-1
@@ -882,6 +888,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_draft_flag_parses() {
+        let cli = Cli::parse_from(["emailops-cli", "chat", "is it complete?", "--draft", "draft.json"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Chat { draft: Some(ref path), .. }) if path == &PathBuf::from("draft.json")
+        ));
+    }
+
+    #[test]
     fn chat_research_flag_parses() {
         let cli = Cli::parse_from(["emailops-cli", "chat", "themes this quarter?", "--research"]);
         assert!(matches!(cli.command, Some(Command::Chat { research: true, .. })));
@@ -898,6 +913,7 @@ mod tests {
                 fresh,
                 thread,
                 attachment,
+                draft,
                 prewarm,
                 research,
                 estimate,
@@ -908,6 +924,7 @@ mod tests {
                 assert!(!fresh);
                 assert!(thread.is_none());
                 assert!(attachment.is_none());
+                assert!(draft.is_none());
                 assert!(!prewarm);
                 assert!(!research, "research mode is opt-in");
                 assert!(!estimate);
