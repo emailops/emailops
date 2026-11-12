@@ -309,7 +309,7 @@
       "reply": "your reply",
       "newEmail": "new email",
       "hint": "Answers use the draft you are writing. The chat never changes it: copy what you want into it.",
-      "restore": "Use the draft you are writing as context",
+      "restore": "Use the draft as context",
       "research": "Research mode reads your mailbox: the chat does not see this draft."
     },
     "newChat": "New chat"

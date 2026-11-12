@@ -309,7 +309,7 @@
       "reply": "votre réponse",
       "newEmail": "nouvel e-mail",
       "hint": "Les réponses s'appuient sur le brouillon que vous rédigez. Le chat ne le modifie jamais : copiez-y ce que vous voulez.",
-      "restore": "Utiliser comme contexte le brouillon que vous rédigez",
+      "restore": "Utiliser le brouillon comme contexte",
       "research": "Le mode recherche lit votre boîte : le chat ne voit pas ce brouillon."
     },
     "newChat": "Nouveau chat"

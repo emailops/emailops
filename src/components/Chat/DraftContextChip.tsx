@@ -45,9 +45,11 @@ export function DraftContextChip({ subject, scope, active, research, onToggle }:
         >
           <path d="M11 2.5l2.5 2.5L6 12.5H3.5V10z" strokeLinejoin="round" />
         </svg>
-        <span className="truncate font-medium">{title}</span>
+        {/* The subject keeps a minimum width: the state label on the right is
+            what gives way, or a long "restore" label squeezed it to nothing. */}
+        <span className="min-w-12 truncate font-medium">{title}</span>
         <span className="flex-shrink-0 opacity-70">· {t(`panel.draft.${scope}`)}</span>
-        <span className="ml-auto flex-shrink-0 pl-1 text-[10px] uppercase tracking-wide opacity-70">
+        <span className="ml-auto min-w-0 truncate pl-1 text-[10px] uppercase tracking-wide opacity-70">
           {active ? t('panel.context.using') : t('panel.draft.restore')}
         </span>
       </button>
