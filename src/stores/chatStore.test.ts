@@ -498,6 +498,37 @@ describe('chatStore research mode', () => {
     expect(call[9]).toBe('att-1');
   });
 
+  const draft = {
+    kind: 'reply' as const,
+    subject: 'Re: Q3 report',
+    to: ['ana@example.com'],
+    cc: [],
+    body: 'The report is attached.',
+    replyToEmailId: 'e1',
+  };
+
+  it('sends the draft on screen, and that a composer is open', async () => {
+    await useChatStore.getState().sendMessage('is it complete?', null, null, null, null, null, draft, true);
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[10]).toEqual(draft);
+    expect(call[11]).toBe(true);
+  });
+
+  it('says a composer is open even when its draft is not sent', async () => {
+    await useChatStore.getState().sendMessage('what came in today?', null, null, null, null, null, null, true);
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[10]).toBeNull();
+    expect(call[11]).toBe(true);
+  });
+
+  it('a retry sends the draft as it is when the retry is pressed', async () => {
+    await useChatStore.getState().retryWithCorrection('rep-1', 'too long', null, null, null, null, draft, true);
+    const call = vi.mocked(api.sendChatMessage).mock.calls[0];
+    expect(call[6]).toEqual({ rejectedMessageId: 'rep-1', reason: 'too long' });
+    expect(call[10]).toEqual(draft);
+    expect(call[11]).toBe(true);
+  });
+
   it('estimates first and waits for confirmation instead of sending', async () => {
     useChatStore.getState().setResearchMode(true);
     await useChatStore.getState().sendMessage('themes this quarter?');

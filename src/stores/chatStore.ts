@@ -9,6 +9,7 @@ import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import type {
   ChatConversation,
+  ChatDraftContext,
   ChatMessage,
   ChatPhase,
   ChatPhaseEvent,
@@ -147,6 +148,11 @@ interface ChatStore {
     /** PDF attachment open in the viewer (chat panel only), grounding the
      * turn in place of `contextThreadId`; owned by `contextAccountId`. */
     contextAttachmentId?: string | null,
+    /** The draft on screen, as read-only context (chat panel only). */
+    contextDraft?: ChatDraftContext | null,
+    /** A composer is open, even with its chip off: the backend refuses to
+     *  create a draft that would replace it. */
+    composerOpen?: boolean,
   ) => Promise<void>;
   /**
    * "This answer is wrong" → a fresh corrective turn.
@@ -162,6 +168,9 @@ interface ChatStore {
     contextAccountId?: string | null,
     contextView?: api.ChatViewContext | null,
     contextAttachmentId?: string | null,
+    /** The draft as it is when the retry is pressed. */
+    contextDraft?: ChatDraftContext | null,
+    composerOpen?: boolean,
   ) => Promise<void>;
   /** Ids of assistant messages the user marked wrong, for this session. */
   rejectedMessageIds: string[];
@@ -211,6 +220,10 @@ interface TurnOptions {
   contextAccountId?: string | null;
   contextAttachmentId?: string | null;
   contextView?: api.ChatViewContext | null;
+  /** The draft on screen. Carried here so a retry and a confirmed research
+   *  get it the same way as a plain send. */
+  contextDraft?: ChatDraftContext | null;
+  composerOpen?: boolean;
   correction?: api.ChatCorrection | null;
   research?: boolean;
   researchEstimateId?: string | null;
@@ -513,8 +526,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
       });
     },
 
-    sendMessage: async (content, contextThreadId, contextAccountId, contextView, accountId, contextAttachmentId) => {
-      const opts: TurnOptions = { contextThreadId, contextAccountId, contextAttachmentId, contextView, accountId };
+    sendMessage: async (
+      content,
+      contextThreadId,
+      contextAccountId,
+      contextView,
+      accountId,
+      contextAttachmentId,
+      contextDraft,
+      composerOpen,
+    ) => {
+      const opts: TurnOptions = {
+        contextThreadId,
+        contextAccountId,
+        contextAttachmentId,
+        contextView,
+        accountId,
+        contextDraft,
+        composerOpen,
+      };
       if (!get().researchMode) {
         await get().dispatchTurn(content, opts);
         return;
@@ -566,6 +596,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
       contextAccountId,
       contextView,
       contextAttachmentId,
+      contextDraft,
+      composerOpen,
     ) => {
       const trimmed = reason.trim();
       if (!trimmed) return;
@@ -581,6 +613,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
         contextAccountId,
         contextAttachmentId,
         contextView,
+        contextDraft,
+        composerOpen,
         correction: { rejectedMessageId, reason: trimmed },
       };
       // A rejected research is retried as a research: the new run reads again
@@ -670,6 +704,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
           research,
           opts.researchEstimateId,
           opts.contextAttachmentId,
+          opts.contextDraft,
+          opts.composerOpen ?? false,
         );
         // Only mutate if we're still on the same conversation. The turn keeps
         // streaming into `backgroundTurns`; the lock must still be released or

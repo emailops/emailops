@@ -41,9 +41,12 @@ export interface ChatContextInput {
  *   1. An active *thread* tab is the foreground content — it wins.
  *   2. An active *PDF* tab: the chat reads the document (its thread id, when
  *      an email is selected, is kept only so the chip key stays stable).
- *   3. Otherwise the selected email in the split/full-width pane.
- * Compose tabs and non-PDF attachment tabs fall through to the selected email
- * rather than blanking the context.
+ *   3. An active *compose* tab hides the selected email: no thread is offered.
+ *      The draft in it reaches the chat through `draftContextStore`, with its
+ *      own thread when it is a reply.
+ *   4. Otherwise the selected email in the split/full-width pane.
+ * Non-PDF attachment tabs fall through to the selected email rather than
+ * blanking the context.
  *
  * Only mailbox-backed views (inbox/sent/spam/deleted/folders) produce thread
  * context. The Attachments view offers the PDF selected in its viewer. In
@@ -74,6 +77,8 @@ export function deriveChatContext({
       subject: activeTab.subject,
     };
   }
+
+  if (activeTab?.type === 'compose') return null;
 
   if (activeTab?.type === 'attachment' && isPdfAttachment(activeTab.mimeType, activeTab.filename)) {
     return {

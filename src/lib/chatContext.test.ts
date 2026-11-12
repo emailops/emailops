@@ -75,9 +75,9 @@ describe('deriveChatContext', () => {
     });
   });
 
-  it('ignores compose and attachment tabs', () => {
-    // Neither is an email thread the model can be grounded in; fall through to
-    // the selected email instead.
+  it('offers no thread behind an active compose tab: the draft is what is on screen', () => {
+    // The selected email is hidden behind the tab. The tab's draft reaches the
+    // chat through `draftContextStore`, with its own thread when it is a reply.
     const selected = { ...email(), threadId: 'thread-7', subject: 'Budget review' };
     const compose = {
       type: 'compose' as const,
@@ -87,11 +87,7 @@ describe('deriveChatContext', () => {
       subject: '',
       bodyHtml: '',
     };
-    expect(deriveChatContext({ viewMode: 'inbox', activeTab: compose as never, selectedEmail: selected })).toEqual({
-      threadId: 'thread-7',
-      accountId: 'acct-1',
-      subject: 'Budget review',
-    });
+    expect(deriveChatContext({ viewMode: 'inbox', activeTab: compose as never, selectedEmail: selected })).toBeNull();
   });
 
   it('offers an open PDF tab as the context, named by its file', () => {

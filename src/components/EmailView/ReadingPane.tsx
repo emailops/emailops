@@ -124,6 +124,7 @@ export function ReadingPane({
               tab={tab}
               accounts={accounts}
               onClose={() => onCloseTab(tab.id)}
+              isActive={tab.id === activeTabId}
             />
           </div>
         ))}

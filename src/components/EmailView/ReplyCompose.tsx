@@ -27,6 +27,7 @@ import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
 import { hasSignature, insertSignature, replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
+import { useDraftContextSource } from '@/stores/draftContextStore';
 import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Draft, Email } from '@/types';
@@ -256,6 +257,17 @@ export function ReplyCompose({
 
   const [toRecipients, setToRecipients] = useState<string[]>(() => restoredDraft?.toAddresses ?? initialTo);
   const [ccRecipients, setCcRecipients] = useState<string[]>(() => restoredDraft?.ccAddresses ?? []);
+  // The chat panel reads this reply as the draft on screen. A forward never:
+  // its body carries someone else's message.
+  useDraftContextSource(mode !== 'forward', {
+    kind: mode === 'reply-all' ? 'replyAll' : 'reply',
+    accountId: email.accountId,
+    subject: restoredDraft?.subject ?? replySubject(email.subject),
+    to: toRecipients,
+    cc: ccRecipients,
+    bodyHtml,
+    replyToEmailId: email.id,
+  });
   const [showCc, setShowCc] = useState(() => (restoredDraft?.ccAddresses.length ?? 0) > 0);
 
   // A reply (not a forward, which is a new message) is kept as a draft tied to
