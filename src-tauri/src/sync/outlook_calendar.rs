@@ -553,6 +553,10 @@ fn parse_graph_calendar(raw: &serde_json::Value) -> Option<ProviderCalendar> {
         } else {
             "reader".to_string()
         },
+        owner_email: raw
+            .pointer("/owner/address")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         // Graph has no "shown in my UI" flag, so every calendar starts visible.
         selected: true,
     })
@@ -702,6 +706,34 @@ mod tests {
         assert_eq!(calendar.access_role, "reader");
         assert!(!calendar.is_primary);
         assert_eq!(calendar.name, "Team calendar");
+    }
+
+    #[test]
+    fn a_calendar_carries_its_owner_address() {
+        // Graph sets `owner` to the person who shared a calendar with the
+        // user, and to the user for a calendar they created.
+        let raw = serde_json::json!({
+            "id": "AAMkAGI2shared=",
+            "name": "Team calendar",
+            "isDefaultCalendar": false,
+            "canEdit": false,
+            "owner": { "name": "A Colleague", "address": "colleague@example.com" },
+        });
+
+        let calendar = parse_graph_calendar(&raw).expect("parse");
+
+        assert_eq!(calendar.owner_email.as_deref(), Some("colleague@example.com"));
+    }
+
+    #[test]
+    fn a_calendar_without_an_owner_has_no_owner() {
+        let raw = serde_json::json!({
+            "id": "AAMkAGI2shared=",
+            "name": "Team calendar",
+            "isDefaultCalendar": false,
+        });
+
+        assert_eq!(parse_graph_calendar(&raw).expect("parse").owner_email, None);
     }
 
     #[test]

@@ -215,7 +215,10 @@ Synchronisiert werden alle Kalender eines Kontos, nicht nur der primäre — ein
 eine Kollegin mit Ihnen geteilt hat, erscheint hier also genauso wie in Google oder Outlook.
 Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Raster blendet
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
-**Einstellungen → Kalender**.
+**Einstellungen → Kalender**. Erinnerungen an Besprechungen kommen nur aus Ihren eigenen
+Kalendern: Ein Kalender, den jemand mit Ihnen geteilt hat, zeigt seine Besprechungen, ohne Sie
+daran zu erinnern. Zu einer Besprechung, zu der Sie eingeladen sind, erhalten Sie weiterhin
+genau eine Erinnerung.
 
 <!-- claim:feat-calendar-4 -->
 IMAP-Konten erhalten einen Kalender, indem sie einen veröffentlichten Kalender-Link (ICS)

@@ -51,6 +51,9 @@ pub struct ProviderCalendar {
     /// "owner" | "writer" | "reader" | "freeBusyReader" — Graph is mapped onto
     /// the same set (`canEdit` → writer, otherwise reader).
     pub access_role: String,
+    /// The calendar's owner: Google `dataOwner` (set only on secondary
+    /// calendars), Graph `owner.address`; `None` when the provider gives none.
+    pub owner_email: Option<String>,
     /// Whether the provider's own UI currently shows this calendar. Seeds the
     /// local visibility toggle the first time we see the calendar and is
     /// ignored afterwards (the user's choice wins from then on).
@@ -283,6 +286,7 @@ impl FakeCalendarProvider {
             color: color.to_string(),
             is_primary: provider_calendar_id == FAKE_PRIMARY_CALENDAR,
             access_role: "owner".to_string(),
+            owner_email: None,
             selected: true,
         }
     }

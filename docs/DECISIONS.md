@@ -4497,3 +4497,22 @@ not saved at all.
 - *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
   local and provider copies, keeping the original when the From account changes, an "open as
   independent copy" action): each is a change of its own; left out.
+
+## 2026-11-13 — Meeting reminders come only from the account's own calendars
+
+**Decision:** A meeting reminds (OS notification and in-app banner) only when it is on one of
+the account's own calendars: its primary calendar, an ICS feed the user subscribed to, or a
+calendar whose provider-reported owner is the account (Google calendarList `dataOwner`, Graph
+`owner.address`, compared case-insensitively and stored as `calendars.owner_email`). A calendar
+another person shared with the account still shows its events but never reminds; that includes
+another person's Google primary calendar, which reports no owner. An event whose calendar has
+no registry row still reminds.
+**Context:** Multi-calendar sync made every visible calendar raise reminders, so a colleague's
+shared calendar reminded the user of meetings that were not theirs. A meeting the user is
+invited to also lands on their own calendar, so it keeps exactly one reminder.
+**Rejected:**
+- *Primary calendar only*: no migration, but it silences calendars the user created.
+- *A per-calendar "remind me" switch in Settings → Calendar*: more UI and state than the
+  request needs; hiding a calendar already silences it.
+- *Google `accessRole == owner` as the ownership test*: a calendar shared with "manage sharing"
+  rights reports `owner` too.

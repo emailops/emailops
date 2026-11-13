@@ -15,6 +15,7 @@ function calendar(partial: Partial<Calendar>): Calendar {
     accessRole: 'owner',
     isVisible: true,
     sortOrder: 0,
+    ownerEmail: null,
     feedHost: null,
     createdAt: 0,
     updatedAt: 0,

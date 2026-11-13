@@ -245,6 +245,7 @@ impl CalendarProvider for IcsFeedCalendarProvider {
                 color: String::new(),
                 is_primary: index == 0,
                 access_role: "reader".to_string(),
+                owner_email: None,
                 selected: true,
             })
             .collect())

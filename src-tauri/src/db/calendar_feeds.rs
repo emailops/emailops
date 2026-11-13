@@ -114,6 +114,7 @@ mod tests {
             access_role: "reader".to_string(),
             is_visible: true,
             sort_order: 0,
+            owner_email: None,
             feed_host: None,
             created_at: 1_000,
             updated_at: 1_000,

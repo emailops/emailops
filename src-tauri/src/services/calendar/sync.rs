@@ -42,6 +42,7 @@ pub fn plan_calendar_rows(account_id: &str, fetched: &[ProviderCalendar], now: i
             access_role: c.access_role.clone(),
             is_visible: c.selected,
             sort_order: index as i64,
+            owner_email: c.owner_email.clone(),
             feed_host: None,
             created_at: now,
             updated_at: now,
