@@ -46,6 +46,7 @@ Preconditions: baseline; account `demo-acct-work` selected. Entry confirmed pres
 | draft command arguments, `Draft` / `SaveDraftRequest` shapes | contract (`src/lib/apiContract/compose.api.test.ts`) |
 | modal, tab, recipients, AI draft | vitest (`ComposeModal.*`, `ComposeTabView.*`, `draftRequest`, `sendWarnings`) |
 | open, fill, send without credentials, draft, discard, table draft | e2e (`Compose/*`, `Vistas/Drafts`) |
+| a file pasted into the body is attached in every composer; pasted or dropped images go inline and the other files of the same paste or drop are attached | vitest (`RichTextEditor.files`, `composerPastedFiles`) |
 | closing a composer or a compose tab that holds files asks; Escape closes only the question | vitest (`ComposeModal.close`, `ReadingPane.composeClose`) + e2e (`Compose/cerrar con archivos pregunta`, `Compose/cerrar una pestaña con archivos pregunta`) |
 | a compose tab keeps its text and files behind a thread; Discard removes the draft | vitest (`ReadingPane.composeTabs`, `ComposeTabView.discard`) + e2e (`Compose/la pestaña conserva texto y archivos`, `Compose/Discard en una pestaña borra el borrador`) |
 | the reply opened from a chat draft saves over that draft and leaves none once sent | vitest (`ReplyCompose.draft`, `composeDraft`, `chatToolEffects`) + e2e (`Compose/la respuesta de un borrador del chat no deja borrador`) |

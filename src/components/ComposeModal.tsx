@@ -257,7 +257,7 @@ export function ComposeModal({
     recipientFields[field].setList((prev) => prev.filter((r) => r !== email));
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = (files: FileList | File[] | null) => {
     draftFiles.addFiles(files);
     // Reset the input so the same file can be re-selected if removed
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -708,6 +708,7 @@ export function ComposeModal({
             onChange={setBodyHtml}
             placeholder={t('compose:bodyPlaceholder')}
             contentClassName="min-h-[240px]"
+            onAttachFiles={handleFiles}
           />
 
           {/* Files being stored for the draft */}
