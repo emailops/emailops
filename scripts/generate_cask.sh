@@ -35,7 +35,7 @@ REPO="emailops/emailops"
 TAG="${1:-}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/homebrew/Casks"
-OUT="$OUT_DIR/emailops.rb"
+OUT="${CASK_OUT:-$OUT_DIR/emailops.rb}"  # CASK_OUT: tests write elsewhere
 
 if [ -n "$TAG" ]; then
   API_URL="https://api.github.com/repos/$REPO/releases/tags/$TAG"
@@ -48,20 +48,25 @@ JSON="$(curl -fsSL -H "Accept: application/vnd.github+json" "$API_URL")" || {
   exit 1
 }
 
-# Extract tag + per-asset sha256 digests as shell assignments.
-eval "$(printf '%s' "$JSON" | python3 -c "
+# Extract the tag and the DMG's sha256 digest. The Python is single-quoted and
+# read through a process substitution, never `eval "$(python3 -c "…")"`: bash
+# 3.2 (macOS /bin/bash) mis-parses the braces and quotes of Python nested in a
+# double-quoted command substitution and runs a mangled program.
+EXTRACT='
 import json, sys
 
 release = json.load(sys.stdin)
-assets = {a['name']: a.get('digest') or '' for a in release.get('assets', [])}
-
-def sha(name):
-    digest = assets.get(name, '')
-    return digest.split(':', 1)[1] if digest.startswith('sha256:') else ''
-
-print(f\"TAG_NAME='{release['tag_name']}'\")
-print(f\"DMG_SHA='{sha('EmailOps-macos.dmg')}'\")
-")"
+assets = {a["name"]: a.get("digest") or "" for a in release.get("assets", [])}
+digest = assets.get("EmailOps-macos.dmg", "")
+print(release["tag_name"], digest.split(":", 1)[1] if digest.startswith("sha256:") else "")
+'
+TAG_NAME=""
+DMG_SHA=""
+read -r TAG_NAME DMG_SHA < <(printf '%s' "$JSON" | python3 -c "$EXTRACT") || true
+if [ -z "$TAG_NAME" ]; then
+  echo "ERROR: could not read the release metadata from $API_URL" >&2
+  exit 1
+fi
 
 VERSION="${TAG_NAME#v}"
 
@@ -71,7 +76,7 @@ if [ -z "$DMG_SHA" ]; then
   exit 1
 fi
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$(dirname "$OUT")"
 
 cat > "$OUT" <<EOF
 cask "emailops" do
