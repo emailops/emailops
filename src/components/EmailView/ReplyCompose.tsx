@@ -519,7 +519,7 @@ export function ReplyCompose({
     setList(list.filter((r) => r !== email));
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = (files: FileList | File[] | null) => {
     draftFiles.addFiles(files);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -821,6 +821,7 @@ export function ReplyCompose({
           disabled={isLoadingDraft}
           placeholder={isLoadingDraft ? t('compose:generatingDraft') : t('compose:replyPlaceholder')}
           contentClassName="min-h-[180px] max-h-[40vh] overflow-y-auto"
+          onAttachFiles={handleFiles}
         />
         {isLoadingDraft && (
           <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4">

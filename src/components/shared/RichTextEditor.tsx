@@ -11,6 +11,8 @@
  *   - inline images via paste / drag-drop (stored as data: URLs in the
  *     editor; converted to cid: + attachments by `prepareOutgoingHtml`
  *     just before send)
+ *   - other pasted or dropped files handed to `onAttachFiles`, so the
+ *     composer attaches them
  *
  * It also carries, without any toolbar for them, the tables and inline
  * styles of a draft written in the provider's own web client, so editing
@@ -24,6 +26,7 @@
  * reset its content when `value` changes externally (e.g. AI draft arrived).
  */
 
+import type { EditorView } from '@tiptap/pm/view';
 import { type Editor, EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -40,6 +43,11 @@ export interface RichTextEditorProps {
   disabled?: boolean;
   /** Extra classes for the editor's contenteditable surface. */
   contentClassName?: string;
+  /**
+   * Gets the pasted or dropped files that are not images (those go inline).
+   * Without it, such a paste keeps the browser's default.
+   */
+  onAttachFiles?: (files: File[]) => void;
 }
 
 export function RichTextEditor({
@@ -48,7 +56,12 @@ export function RichTextEditor({
   placeholder,
   disabled = false,
   contentClassName,
+  onAttachFiles,
 }: RichTextEditorProps) {
+  // The editor keeps the handlers it was created with; read the latest one.
+  const attachRef = useRef(onAttachFiles);
+  attachRef.current = onAttachFiles;
+
   const editor = useEditor({
     extensions: composeEditorExtensions,
     content: value,
@@ -64,41 +77,22 @@ export function RichTextEditor({
         ].join(' '),
         ...(placeholder ? { 'data-placeholder': placeholder } : {}),
       },
+      // A paste with files (a Finder copy) takes them all, so the file names
+      // that come with them as text are not typed into the body.
       handlePaste(view, event) {
-        const items = event.clipboardData?.items;
-        if (!items) return false;
-        for (const item of Array.from(items)) {
-          if (item.kind === 'file' && item.type.startsWith('image/')) {
-            const file = item.getAsFile();
-            if (!file) continue;
-            event.preventDefault();
-            void readFileAsDataUrl(file).then((dataUrl) => {
-              view.dispatch(
-                view.state.tr.replaceSelectionWith(
-                  view.state.schema.nodes.image.create({ src: dataUrl, alt: file.name }),
-                ),
-              );
-            });
-            return true;
-          }
-        }
-        return false;
+        const { images, others } = splitFiles(event.clipboardData?.files);
+        if (images.length === 0 && (others.length === 0 || !attachRef.current)) return false;
+        insertImages(view, images);
+        if (others.length > 0) attachRef.current?.(others);
+        return true;
       },
+      // A drop without images is the composer's (`useFileDrop`), which
+      // attaches it; one with images is the editor's, so it hands on the rest.
       handleDrop(view, event) {
-        const files = event.dataTransfer?.files;
-        if (!files || files.length === 0) return false;
-        const images = Array.from(files).filter((f) => f.type.startsWith('image/'));
+        const { images, others } = splitFiles(event.dataTransfer?.files);
         if (images.length === 0) return false;
-        event.preventDefault();
-        for (const file of images) {
-          void readFileAsDataUrl(file).then((dataUrl) => {
-            view.dispatch(
-              view.state.tr.replaceSelectionWith(
-                view.state.schema.nodes.image.create({ src: dataUrl, alt: file.name }),
-              ),
-            );
-          });
-        }
+        insertImages(view, images);
+        if (others.length > 0) attachRef.current?.(others);
         return true;
       },
     },
@@ -339,4 +333,23 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+/** The images among `files`, which go inline, and the rest. */
+function splitFiles(files: FileList | null | undefined): { images: File[]; others: File[] } {
+  const all = Array.from(files ?? []);
+  return {
+    images: all.filter((f) => f.type.startsWith('image/')),
+    others: all.filter((f) => !f.type.startsWith('image/')),
+  };
+}
+
+function insertImages(view: EditorView, images: File[]) {
+  for (const file of images) {
+    void readFileAsDataUrl(file).then((dataUrl) => {
+      view.dispatch(
+        view.state.tr.replaceSelectionWith(view.state.schema.nodes.image.create({ src: dataUrl, alt: file.name })),
+      );
+    });
+  }
 }
