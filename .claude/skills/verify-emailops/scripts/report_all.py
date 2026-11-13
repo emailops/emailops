@@ -245,6 +245,8 @@ gc = counts(records)
 
 PRIVATE = bool(meta.get("private"))
 TITLE = "Verificación privada de EmailOps" if PRIVATE else "Verificación completa de EmailOps"
+# Outside the f-string: Python 3.9 (macOS python3) refuses a backslash inside its expressions.
+delta_link = '<li><a href="#delta">Respecto a la pasada anterior</a></li>' if prev else ''
 page = f'''<meta charset="utf-8">
 <title>{TITLE}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -299,7 +301,7 @@ ul.bad li{{color:var(--fail)}} ul.good li{{color:var(--ok)}}
 <div class="layout">
 <nav class="toc" aria-label="Índice">
 <h2>Índice</h2>
-<ul><li><a href="#top">Resumen global</a></li>{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#bd">Bases de datos</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{"<li><a href=\"#delta\">Respecto a la pasada anterior</a></li>" if prev else ""}</ul>
+<ul><li><a href="#top">Resumen global</a></li>{index_html}<li><a href="#capas">Capas ejecutadas</a></li><li><a href="#bd">Bases de datos</a></li><li><a href="#huecos">Huecos de cobertura</a></li>{delta_link}</ul>
 </nav>
 <main id="top">
 <div class="eyebrow">{"Verificación privada" if PRIVATE else "Verificación completa"} · {E(meta.get("tier", ""))}</div>
