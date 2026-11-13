@@ -325,6 +325,19 @@ mod tests {
         }
     }
 
+    /// RUSTSEC-2026-0533: mutation XSS needs MathML/SVG plus a raw-text tag on
+    /// the allowlist. Neither is on it, so the gadget never reaches the output.
+    #[test]
+    fn strips_mathml_svg_and_raw_text_tags() {
+        let out = sanitize_outgoing_html(
+            "<math><mi><svg><style><img src=x onerror=alert(1)></style></svg></mi></math>\
+             <svg><foreignObject><math><title>t</title></math></foreignObject></svg>",
+        );
+        for tag in ["<math", "<mi", "<svg", "<foreignobject", "<style", "<title", "onerror"] {
+            assert!(!out.to_ascii_lowercase().contains(tag), "{tag} survived: {out}");
+        }
+    }
+
     #[test]
     fn strips_html_comments() {
         let out = sanitize_outgoing_html("<p>hi</p><!-- secret note -->");
