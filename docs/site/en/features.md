@@ -195,7 +195,10 @@ switched off per account, along with the notification lead time, in **Settings �
 Every calendar on an account is synced, not just the primary one — so a calendar a
 colleague shared with you shows up here the same way it does in Google or Outlook. Each
 one is tinted with the colour its provider gives it, and the legend above the grid hides
-or shows individual calendars; the same switches live in **Settings → Calendar**.
+or shows individual calendars; the same switches live in **Settings → Calendar**. Meeting
+reminders come only from your own calendars: a calendar someone shared with you shows its
+meetings without reminding you of them. A meeting you are invited to still gets exactly one
+reminder.
 
 <!-- claim:feat-calendar-4 -->
 IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example

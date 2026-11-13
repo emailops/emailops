@@ -1,0 +1,11 @@
+-- V043: who owns each calendar.
+--
+-- Meeting reminders come only from the account's own calendars: a calendar
+-- another person shared with the account shows its events but never reminds
+-- (`services::calendar::notify`). The owner is the provider's own report,
+-- refreshed on every sync like the other provider fields: Google calendarList
+-- `dataOwner` (set only on secondary calendars) and Graph `owner.address`.
+-- NULL when the provider reports none: any Google primary calendar (the
+-- user's, or another person's shared with them) and ICS feeds. Existing rows
+-- start NULL and pick up their owner on the next calendar sync.
+ALTER TABLE calendars ADD COLUMN owner_email TEXT;

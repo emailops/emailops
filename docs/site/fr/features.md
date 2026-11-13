@@ -216,7 +216,9 @@ Tous les agendas d'un compte sont synchronisés, pas seulement le principal — 
 qu'un collègue a partagé avec vous apparaît donc ici comme dans Google ou Outlook. Chacun
 prend la couleur que lui donne son fournisseur, et la légende au-dessus de la grille masque
 ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
-**Paramètres → Calendrier**.
+**Paramètres → Calendrier**. Les rappels de réunion ne viennent que de vos propres agendas :
+un agenda qu'une autre personne a partagé avec vous affiche ses réunions sans vous les
+rappeler. Une réunion à laquelle vous êtes invité reçoit toujours un seul rappel.
 
 <!-- claim:feat-calendar-4 -->
 Les comptes IMAP ont un calendrier en s'abonnant à un lien de calendrier publié (ICS), par

@@ -35,6 +35,7 @@ function calendar(accountId: string, providerCalendarId: string, extra: Partial<
     isPrimary: false,
     accessRole: 'owner',
     isVisible: true,
+    ownerEmail: null,
     feedHost: null,
     ...extra,
   } as Calendar;

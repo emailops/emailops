@@ -326,6 +326,10 @@ pub struct Calendar {
     pub access_role: String,
     pub is_visible: bool,
     pub sort_order: i64,
+    /// The calendar's owner as the provider reports it (Google `dataOwner`,
+    /// Graph `owner.address`); `None` for a Google primary calendar and for
+    /// ICS feeds. Meeting reminders skip calendars someone else owns.
+    pub owner_email: Option<String>,
     /// Host of the ICS feed behind this calendar (`calendar_feeds.host`);
     /// `None` for provider-API calendars. Lets the UI offer feed-specific
     /// affordances without ever seeing the feed URL.
