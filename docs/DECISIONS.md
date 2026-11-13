@@ -4497,3 +4497,17 @@ not saved at all.
 - *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
   local and provider copies, keeping the original when the From account changes, an "open as
   independent copy" action): each is a change of its own; left out.
+
+## 2026-11-13 — Files pasted into the composer body are attached; images stay inline
+
+**Decision:** Pasting into the body of Compose, a compose tab, Reply or Forward attaches the
+clipboard's files that are not images (a Finder copy) through the composer's `addFiles`, with
+the same limits as a drop; images are still inlined. A paste or drop that mixes images and other
+files inlines the images and attaches the rest. Pasting into To/Cc/Bcc/Subject keeps the native
+behaviour.
+**Context:** Issue #260: only drag-and-drop and the attach button added files. The editor
+(`RichTextEditor`) owns the paste and hands non-image files to the composer (`onAttachFiles`);
+a drop with no images stays with the composer's `useFileDrop`.
+**Rejected:** Attaching a file pasted anywhere in the composer, like a drop: Office apps put text
+and a picture of it on the clipboard together, so pasting a cell into Subject would attach an
+image instead of the text.
