@@ -810,18 +810,57 @@ const composerState = () => js(() => {
 const dialogAction = (label) => js((l) => { const x = [...document.querySelectorAll('[data-testid="modal-overlay"] button')].find((y) => y.textContent.trim() === l); if (!x) return false; x.click(); return true; }, label);
 const COMPOSE_TAB = 'Verification run in a tab';
 const firstRow = () => js(() => { const r = [...document.querySelectorAll('div[role="button"]')].find((x) => x.querySelector('[data-testid="row-select"]')); r?.click(); return r ? r.innerText.replace(/\n/g, ' ').slice(0, 60) : null; });
-await step('Compose', 'cerrar con archivos pregunta', 'con un archivo adjunto, Escape pide confirmación; otro Escape cierra solo esa pregunta y el compositor sigue con su archivo; Cancel vuelve a preguntar y Close lo cierra', async () => {
+// Since the draft stores its files (#292), closing asks only for what the draft cannot hold: a file still being
+// stored, or an EO Doc, which goes out only with the email. A stored file closes at once and stays in the draft.
+const draftFiles = (subject) => sql(`SELECT a.filename FROM drafts d JOIN draft_attachments a ON a.draft_id = d.id WHERE d.subject = '${subject}'`).map((r) => r.filename);
+const COMPOSE_DOC = 'Verification compose document';
+// One EO Doc per account: the picker lists the composer's account, whichever the earlier steps left selected.
+const composeDocs = () => sql(`SELECT id, account_id FROM shared_docs WHERE title = '${COMPOSE_DOC}'`);
+// Escape reaches the composer's close only from outside the body: the editor handles an Escape typed into it.
+const escapeComposer = async () => { await js(() => document.activeElement?.blur()); await b.keys('Escape'); };
+// A step that fails with the composer still open would block every step after it: close it, without asking.
+const closeComposer = async () => {
+  if ((await subjectValue()) === null) return;
+  await js(() => [...(document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed')?.querySelectorAll('button') ?? [])].find((x) => x.textContent.trim() === 'Cancel')?.click());
+  await sleep(700); await dialogAction('Close'); await sleep(900);
+};
+const dropComposeDocs = () => js(async (docs) => { for (const d of docs) await window.__TAURI_INTERNALS__.invoke('delete_shared_doc', { accountId: d.account_id, docId: d.id }); }, composeDocs());
+await step('Compose', 'cerrar con archivos guardados', 'con un archivo ya guardado, Escape cierra el compositor sin preguntar y el borrador conserva el texto y el archivo', async () => {
+  const subject = 'Verification run closed with a file';
   await click('button=Inbox'); await sleep(800);
-  await click('button=Compose'); await sleep(1500);
+  await fillCompose(subject, 'a draft that keeps its file');
   if (!(await attachToComposer('verify-notes.txt'))) return 'FAIL: el compositor no tiene selector de archivos';
-  await sleep(1000);
-  await b.keys('Escape'); await sleep(700); const asked = await composerState();
-  await b.keys('Escape'); await sleep(700); const under = await composerState();
-  await js(() => [...document.querySelector('input[placeholder^="Email subject"]').closest('.fixed').querySelectorAll('button')].find((x) => x.textContent.trim() === 'Cancel')?.click()); await sleep(700);
-  const again = await composerState();
-  const closedBy = await dialogAction('Close'); await sleep(900); const gone = await composerState();
-  return ok(/Close without your files/.test(asked.confirm) && asked.subject !== null && !under.confirm && under.subject !== null && under.file && /Close without your files/.test(again.confirm) && closedBy && gone.subject === null,
-    'Escape pregunta; el segundo solo cierra la pregunta; Cancel pregunta; Close cierra', `1.º ${JSON.stringify(asked)}, 2.º ${JSON.stringify(under)}, Cancel ${JSON.stringify(again)}, Close=${closedBy}, ${JSON.stringify(gone)}`);
+  await sleep(2000);
+  const held = await composerState();
+  await escapeComposer(); await sleep(1500);
+  const gone = await composerState(); const files = draftFiles(subject);
+  await closeComposer();
+  sql(`DELETE FROM drafts WHERE subject = '${subject}'`);
+  return ok(held.file && !gone.confirm && gone.subject === null && files.includes('verify-notes.txt'), `cerrado sin preguntar; borrador con ${files.join(', ')}`,
+    `antes ${JSON.stringify(held)}, tras Escape ${JSON.stringify(gone)}, archivos del borrador ${JSON.stringify(files)}`);
+});
+await step('Compose', 'cerrar con un EO Doc pregunta', 'con un EO Doc adjunto, Escape pide confirmación; otro Escape cierra solo esa pregunta y el compositor sigue con el documento; Cancel vuelve a preguntar y Close lo cierra', async () => {
+  const accounts = sql('SELECT id FROM accounts WHERE enabled = 1').map((r) => r.id);
+  await js(async (ids, title) => { for (const id of ids) await window.__TAURI_INTERNALS__.invoke('create_shared_doc', { accountId: id, kind: 'doc', title }); }, accounts, COMPOSE_DOC);
+  try {
+    await click('button=Inbox'); await sleep(800);
+    await click('button=Compose'); await sleep(1500);
+    await click('[data-testid="compose-attach"]'); await sleep(400);
+    await click('[data-testid="compose-attach-eodocs"]'); await sleep(1200);
+    const picked = await js(() => { const box = document.querySelector('[data-testid="eodocs-attach-submit"]')?.closest('.fixed'); const doc = box && [...box.querySelectorAll('li')].find((l) => l.innerText.includes('Verification compose document'))?.querySelector('input[type="checkbox"]'); if (!doc) return false; doc.click(); box.querySelector('[data-testid="eodocs-attach-consent"]').click(); return true; });
+    if (!picked) return 'FAIL: el selector de EO Docs no lista el documento sembrado';
+    await sleep(300); await click('[data-testid="eodocs-attach-submit"]'); await sleep(900);
+    const attached = await js(() => [...document.querySelectorAll('*')].some((e) => e.children.length === 0 && e.textContent.includes('Verification compose document') && getComputedStyle(e).visibility === 'visible'));
+    await escapeComposer(); await sleep(700); const asked = await composerState();
+    await b.keys('Escape'); await sleep(700); const under = await composerState();
+    await js(() => [...(document.querySelector('input[placeholder^="Email subject"]')?.closest('.fixed').querySelectorAll('button') ?? [])].find((x) => x.textContent.trim() === 'Cancel')?.click()); await sleep(700);
+    const again = await composerState();
+    const closedBy = await dialogAction('Close'); await sleep(900); const gone = await composerState();
+    return ok(attached && /Close without your files/.test(asked.confirm) && asked.subject !== null && !under.confirm && under.subject !== null && /Close without your files/.test(again.confirm) && closedBy && gone.subject === null,
+      'Escape pregunta; el segundo solo cierra la pregunta; Cancel pregunta; Close cierra', `adjunto=${attached}, 1.º ${JSON.stringify(asked)}, 2.º ${JSON.stringify(under)}, Cancel ${JSON.stringify(again)}, Close=${closedBy}, ${JSON.stringify(gone)}`);
+  } finally {
+    await closeComposer().catch(() => {}); await dropComposeDocs();
+  }
 });
 await step('Compose', 'la pestaña conserva texto y archivos', 'un mensaje pasado a pestaña lleva asunto, cuerpo y archivo; al abrir una conversación queda detrás y al volver sigue igual', async () => {
   await fillCompose(COMPOSE_TAB, 'half a sentence');
@@ -835,18 +874,12 @@ await step('Compose', 'la pestaña conserva texto y archivos', 'un mensaje pasad
   const same = (x) => x.subject === COMPOSE_TAB && /half a sentence/.test(x.body || '') && x.file && x.shown;
   return ok(same(inTab) && !!opened && !behind.shown && thread !== '' && same(back), `pestaña «${back.tabs.join(', ')}»; detrás de «${thread.slice(0, 40)}»; texto y archivo intactos`, `en pestaña ${JSON.stringify(inTab)}, detrás ${JSON.stringify(behind)}, hilo «${thread}», al volver ${JSON.stringify(back)}`);
 });
-await step('Compose', 'cerrar una pestaña con archivos pregunta', 'la × de la barra de pestañas pregunta mientras hay archivos; Escape cierra solo la pregunta y la pestaña sigue; Close cierra la pestaña y el texto queda en Drafts', async () => {
-  await js(() => document.querySelector('[aria-label="Close tab"]')?.click()); await sleep(800);
-  const asked = await composerState();
-  await b.keys('Escape'); await sleep(700);
-  const kept = await composerState();
-  await js(() => document.querySelector('[data-testid="compose-tab-close"]')?.click()); await sleep(800);
-  const again = await composerState();
-  const closedBy = await dialogAction('Close'); await sleep(1000);
+await step('Compose', 'cerrar una pestaña con archivos guardados', 'la × de la barra de pestañas cierra sin preguntar una pestaña cuyos archivos ya están guardados, y el borrador queda en Drafts con su texto y su archivo', async () => {
+  await js(() => document.querySelector('[aria-label="Close tab"]')?.click()); await sleep(1200);
   const gone = await composerState();
-  const draft = sql(`SELECT COUNT(*) AS n FROM drafts WHERE subject = '${COMPOSE_TAB}'`)[0]?.n;
-  return ok(/Close without your files/.test(asked.confirm) && !kept.confirm && kept.tabs.length === 1 && kept.file && /Close without your files/.test(again.confirm) && closedBy && !gone.tabs.includes(COMPOSE_TAB) && draft === 1,
-    'la barra y la × del compositor preguntan; Escape no cierra la pestaña; Close la cierra y el borrador queda', `barra ${JSON.stringify(asked)}, tras Escape ${JSON.stringify(kept)}, × ${JSON.stringify(again)}, Close=${closedBy}, ${JSON.stringify(gone)}, borradores=${draft}`);
+  const draft = sql(`SELECT COUNT(*) AS n FROM drafts WHERE subject = '${COMPOSE_TAB}'`)[0]?.n; const files = draftFiles(COMPOSE_TAB);
+  return ok(!gone.confirm && !gone.tabs.includes(COMPOSE_TAB) && draft === 1 && files.includes('verify-notes.txt'), `pestaña cerrada sin preguntar; borrador con ${files.join(', ')}`,
+    `${JSON.stringify(gone)}, borradores=${draft}, archivos ${JSON.stringify(files)}`);
 });
 await step('Compose', 'Discard en una pestaña borra el borrador', 'Discard en una pestaña pregunta, cierra la pestaña y quita el borrador que el autoguardado ya había escrito', async () => {
   const subject = 'Verification run discarded in a tab';
