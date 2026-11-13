@@ -4497,3 +4497,19 @@ not saved at all.
 - *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
   local and provider copies, keeping the original when the From account changes, an "open as
   independent copy" action): each is a change of its own; left out.
+
+## 2026-11-13 — A chosen default sender overrides the view; From lists follow sent-mail usage
+
+**Decision:** Settings → Appearance → "Send new messages from" holds either "Account of the
+selected view" (the default, and the behaviour before it existed) or one enabled account.
+A chosen account starts every new blank message — Compose, the `c` shortcut, Contacts'
+Compose, the feedback email — whichever account the sidebar shows; replies, forwards,
+drafts, outbox restores, `mailto:` links and chat drafts keep their own account. Every From
+list (new message, compose tab, reply/forward) is always ordered by the sent mail stored
+locally per account (`is_sent`), most first, ties in account order; reordering never
+changes the selected sender, and the counts never leave the machine.
+**Context:** GitHub issue #273: with several accounts the sender of a new message was
+whatever account happened to be selected, so every blank draft needed checking.
+**Rejected:** applying the default only under "All accounts" (the selected account would
+still decide most new messages); a switch for the usage order, off by default (the
+developer chose the order always on).

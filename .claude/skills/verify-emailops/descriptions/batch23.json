@@ -1,0 +1,27 @@
+{
+  "rust": {
+    "src-tauri/src/db/accounts.rs::sent_counts_count_each_accounts_stored_sent_mail_and_skip_deleted_rows": "Cuenta el correo enviado guardado de cada cuenta (is_sent), sin las filas borradas ni el correo recibido; una cuenta sin enviados no aparece."
+  },
+  "vitest": {
+    "src/lib/composeSender.test.ts::reads a stored account id": "La preferencia de remitente por defecto guardada se lee como el id de la cuenta.",
+    "src/lib/composeSender.test.ts::reads no value or an empty one as following the selected view": "Sin preferencia, o con una vacía, un mensaje nuevo sigue la cuenta de la vista seleccionada.",
+    "src/lib/composeSender.test.ts::starts a new message from the chosen default, whatever account the view shows": "Con una cuenta por defecto elegida, un mensaje nuevo empieza desde ella aunque la barra lateral muestre otra cuenta.",
+    "src/lib/composeSender.test.ts::follows the view's account when no default is chosen": "Sin cuenta por defecto, un mensaje nuevo empieza desde la cuenta de la vista seleccionada, como antes.",
+    "src/lib/composeSender.test.ts::falls back to the view's account when the default is disabled": "Si la cuenta por defecto está deshabilitada, un mensaje nuevo vuelve a la cuenta de la vista seleccionada.",
+    "src/lib/composeSender.test.ts::falls back to the view's account when the default no longer exists": "Si la cuenta por defecto ya no existe, un mensaje nuevo vuelve a la cuenta de la vista seleccionada.",
+    "src/lib/composeSender.test.ts::has no account when there is neither a default nor a view account": "Sin cuenta por defecto ni cuenta en la vista no hay remitente para un mensaje nuevo.",
+    "src/lib/composeSender.test.ts::puts the account with the most sent mail first": "La lista De pone primero la cuenta desde la que más correo se ha enviado.",
+    "src/lib/composeSender.test.ts::keeps the given order between accounts with the same count, including none": "Las cuentas con el mismo número de enviados, o sin ninguno, mantienen el orden de cuentas.",
+    "src/lib/composeSender.test.ts::lists only enabled accounts": "La lista De solo ofrece cuentas habilitadas, aunque una deshabilitada tenga más enviados.",
+    "src/lib/composeSender.test.ts::keeps the given order while the counts are unknown": "Mientras no llegan los conteos, la lista De conserva el orden de cuentas.",
+    "src/components/Settings/DefaultSenderSetting.test.tsx::offers the selected view's account and each enabled account, following the view by default": "Ajustes → Apariencia ofrece «Cuenta de la vista seleccionada» y cada cuenta habilitada; por defecto sigue la vista.",
+    "src/components/Settings/DefaultSenderSetting.test.tsx::stores the chosen account": "Elegir una cuenta en «Enviar mensajes nuevos desde» la guarda en las preferencias.",
+    "src/components/Settings/DefaultSenderSetting.test.tsx::stores going back to the selected view's account as an empty value": "Volver a «Cuenta de la vista seleccionada» guarda un valor vacío en la preferencia.",
+    "src/components/Settings/DefaultSenderSetting.test.tsx::shows the selected view's account when the stored default is disabled": "Si la cuenta guardada está deshabilitada, el ajuste muestra «Cuenta de la vista seleccionada».",
+    "src/components/Settings/DefaultSenderSetting.test.tsx::shows and logs a failed save, keeping the old choice": "Si guardar el remitente por defecto falla, el error se ve y se registra, y se mantiene la elección anterior.",
+    "src/components/Settings/DefaultSenderSetting.test.tsx::loads the stored default": "Al arrancar se carga la cuenta por defecto guardada en las preferencias.",
+    "src/hooks/useSenderOptions.test.tsx::lists the enabled accounts with the most used sender first": "Las opciones De de un compositor son las cuentas habilitadas, con la más usada para enviar primero.",
+    "src/hooks/useSenderOptions.test.tsx::keeps the account order and logs when the counts cannot be read": "Si no se pueden leer los conteos de enviados, la lista De mantiene el orden de cuentas y el fallo se registra.",
+    "src/components/ComposeModal.senders.test.tsx::puts the most used sender first and keeps the sender it opened with": "En el modal de Compose la lista De se reordena por uso sin cambiar el remitente con el que se abrió."
+  }
+}

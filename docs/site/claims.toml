@@ -538,6 +538,12 @@ checks = [
   { manual = "The Sender name field in account settings, and Outlook using Microsoft's own name, are not exercised." },
 ]
 
+[feat-accounts-default-sender]
+checks = [
+  { tests = ['db::accounts::sent_count_tests::sent_counts_count_each_accounts_stored_sent_mail_and_skip_deleted_rows'], covers = ["counted on your computer"] },
+  { manual = 'The setting, the new-message account and the From order are covered by src/components/Settings/DefaultSenderSetting.test.tsx, src/lib/composeSender.test.ts, src/hooks/useSenderOptions.test.tsx and src/components/ComposeModal.senders.test.tsx (vitest); no docs-check case drives them in the app yet.' },
+]
+
 [feat-unified-inbox-1]
 checks = [
   { app = true },

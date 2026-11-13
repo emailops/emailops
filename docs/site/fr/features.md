@@ -34,6 +34,14 @@ nom du paramètre « Envoyer des e-mails en tant que » de Gmail, et les comptes
 affiché indiqué lors de leur connexion. Les e-mails envoyés via Outlook portent le nom que
 Microsoft associe à la boîte.
 
+<!-- claim:feat-accounts-default-sender -->
+**Paramètres → Apparence → Envoyer les nouveaux messages depuis** choisit le compte avec lequel
+commence un nouveau message, quel que soit le compte affiché dans la barre latérale ; avec
+**Compte de la vue sélectionnée**, un nouveau message part du compte que vous consultez. Les
+réponses et les transferts gardent le compte de leur message, et les brouillons le compte dans
+lequel ils ont été enregistrés. Chaque liste **De** place en tête le compte depuis lequel vous
+envoyez le plus d'e-mails, compté sur votre ordinateur.
+
 ## Boîte de réception unifiée {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->

@@ -32,6 +32,13 @@ the address only. Gmail accounts start with the name from Gmail's send-as settin
 accounts with the display name you gave when connecting them. Mail sent through Outlook
 carries the name Microsoft has for the mailbox.
 
+<!-- claim:feat-accounts-default-sender -->
+**Settings → Appearance → Send new messages from** picks the account a new message starts
+from, whichever account the sidebar shows; left at **Account of the selected view**, a new
+message starts from the account you are looking at. Replies and forwards keep the account of
+their message, and drafts the account they were saved in. Every **From** list puts the account
+you send the most mail from first, counted on your computer.
+
 ## Unified inbox {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->

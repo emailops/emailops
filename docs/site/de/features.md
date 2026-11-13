@@ -34,6 +34,14 @@ aus der Gmail-Einstellung „Senden als“, IMAP-Konten den Anzeigenamen, den Si
 angegeben haben. Über Outlook gesendete E-Mails tragen den Namen, den Microsoft für das
 Postfach hinterlegt hat.
 
+<!-- claim:feat-accounts-default-sender -->
+**Einstellungen → Erscheinungsbild → Neue Nachrichten senden von** legt fest, mit welchem Konto eine
+neue Nachricht beginnt, gleich welches Konto die Seitenleiste zeigt; mit **Konto der
+ausgewählten Ansicht** beginnt sie mit dem Konto, das Sie gerade ansehen. Antworten und
+Weiterleitungen behalten das Konto ihrer Nachricht, Entwürfe das Konto, unter dem sie
+gespeichert wurden. Jede **Von**-Liste zeigt zuerst das Konto, von dem Sie am meisten senden,
+gezählt auf Ihrem Computer.
+
 ## Vereinter Posteingang {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->

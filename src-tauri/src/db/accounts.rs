@@ -1,6 +1,6 @@
 use crate::db::Database;
 use crate::models::error::Result;
-use crate::models::{Account, AccountColor, SyncStatus};
+use crate::models::{Account, AccountColor, AccountSentCount, SyncStatus};
 use rusqlite::{params, OptionalExtension};
 
 const ACCOUNT_COLUMNS: &str = "id, provider, email, name, created_at, sort_order, enabled, sync_from_timestamp, color";
@@ -125,6 +125,26 @@ impl Database {
             }
         }
         Ok(out)
+    }
+
+    /// Stored, non-deleted sent mail per account, ordered by account id. Counts
+    /// `is_sent`, which sync sets for everything the provider files under Sent
+    /// (Gmail mail sent to yourself included), so the query reads only the
+    /// partial `idx_emails_account_is_sent` index.
+    pub fn sent_counts_by_account(&self) -> Result<Vec<AccountSentCount>> {
+        let conn = self.reader();
+        let mut stmt = conn.prepare(
+            "SELECT account_id, COUNT(*) FROM emails
+             WHERE is_sent = 1 AND is_deleted = 0
+             GROUP BY account_id ORDER BY account_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(AccountSentCount {
+                account_id: r.get(0)?,
+                sent_count: r.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn list_accounts(&self) -> Result<Vec<Account>> {
@@ -502,6 +522,49 @@ mod user_address_tests {
             db.user_addresses("a").unwrap(),
             vec!["me@mail.example".to_string(), "me@work.example".to_string()]
         );
+    }
+}
+
+#[cfg(test)]
+mod sent_count_tests {
+    use crate::db::Database;
+    use crate::models::AccountSentCount;
+    use rusqlite::params;
+
+    fn email(db: &Database, id: &str, account: &str, is_sent: bool, is_deleted: bool) {
+        db.connection()
+            .execute(
+                "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, is_sent, is_deleted,
+                  created_at)
+                 VALUES (?1, ?2, ?1, 's', 'x', 'x@mail.example', 'mail.example', '[]', '[]', '', 0, 1, 'primary',
+                  'inbox', ?3, ?4, 0)",
+                params![id, account, is_sent, is_deleted],
+            )
+            .unwrap();
+    }
+
+    fn count(account_id: &str, sent_count: i64) -> AccountSentCount {
+        AccountSentCount {
+            account_id: account_id.to_string(),
+            sent_count,
+        }
+    }
+
+    #[test]
+    fn sent_counts_count_each_accounts_stored_sent_mail_and_skip_deleted_rows() {
+        let db = Database::new_for_testing().unwrap();
+        for id in ["a", "b", "silent"] {
+            db.seed_test_account(id);
+        }
+        email(&db, "1", "a", true, false);
+        email(&db, "2", "b", true, false);
+        email(&db, "3", "b", true, false);
+        email(&db, "4", "b", true, true);
+        email(&db, "5", "b", false, false);
+        email(&db, "6", "silent", false, false);
+
+        assert_eq!(db.sent_counts_by_account().unwrap(), vec![count("a", 1), count("b", 2)]);
     }
 }
 

@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
-use crate::models::{Account, AccountColor, AccountSettings, AccountSignature, SignatureInput};
+use crate::models::{Account, AccountColor, AccountSentCount, AccountSettings, AccountSignature, SignatureInput};
 use crate::services;
 use crate::sync::imap::ImapCredentials;
 use crate::AppState;
@@ -25,6 +25,12 @@ pub async fn add_account(
 #[tauri::command]
 pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, AppError> {
     services::accounts::list_accounts(&state.db)
+}
+
+/// Sent mail stored per account; Compose orders its From list by it.
+#[tauri::command]
+pub async fn get_sent_counts(state: State<'_, AppState>) -> Result<Vec<AccountSentCount>, AppError> {
+    services::accounts::sent_counts(&state.db)
 }
 
 #[tauri::command]

@@ -12,6 +12,7 @@ import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import { useDraftFiles } from '@/hooks/useDraftFiles';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { useSenderOptions } from '@/hooks/useSenderOptions';
 import type {
   DraftFailedEvent,
   DraftGeneratedEvent,
@@ -68,6 +69,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
 
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(tab.accountId);
+  const senderOptions = useSenderOptions(accounts);
   const [subject, setSubject] = useState(tab.subject);
   const [bodyHtml, setBodyHtml] = useState(tab.bodyHtml);
   // A tab opened on a new message gets the From account's signature; one
@@ -568,7 +570,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
             <Select
               value={fromAccountId}
               onChange={setFromAccountId}
-              options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
+              options={senderOptions}
               ariaLabel={t('compose:from')}
               fullWidth
             />
