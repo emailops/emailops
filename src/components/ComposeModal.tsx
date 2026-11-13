@@ -13,6 +13,7 @@ import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import { useDraftFiles } from '@/hooks/useDraftFiles';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { useSenderOptions } from '@/hooks/useSenderOptions';
 import type {
   DraftAttachmentInput,
   DraftFailedEvent,
@@ -102,6 +103,7 @@ export function ComposeModal({
   const addLog = useLogStore((s) => s.addLog);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
+  const senderOptions = useSenderOptions(accounts);
   const [subject, setSubject] = useState('');
   // Rich-text HTML body. Empty string → editor shows empty state.
   const [bodyHtml, setBodyHtml] = useState('');
@@ -637,7 +639,7 @@ export function ComposeModal({
               <Select
                 value={fromAccountId}
                 onChange={setFromAccountId}
-                options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
+                options={senderOptions}
                 ariaLabel={t('compose:from')}
                 fullWidth
               />

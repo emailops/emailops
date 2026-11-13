@@ -66,7 +66,10 @@
     "afterLeaveHelp": "Qué mostrar cuando la conversación abierta sale de la lista (archivar, eliminar, posponer, bloquear o correo no deseado). Marcar como no leído siempre vuelve a la lista.",
     "afterLeaveNext": "Abrir la conversación siguiente",
     "afterLeavePrevious": "Abrir la conversación anterior",
-    "afterLeaveList": "Volver a la lista"
+    "afterLeaveList": "Volver a la lista",
+    "defaultSender": "Enviar mensajes nuevos desde",
+    "defaultSenderHelp": "La cuenta con la que empieza un mensaje nuevo. Las respuestas, los reenvíos y los borradores mantienen su propia cuenta.",
+    "defaultSenderView": "Cuenta de la vista seleccionada"
   },
   "dialog": {
     "closeTitle": "Cerrar ajustes",

@@ -66,7 +66,10 @@
     "afterLeaveHelp": "Ce qui s’affiche quand la conversation ouverte quitte la liste (archiver, supprimer, mettre en attente, bloquer ou signaler comme indésirable). Marquer comme non lu revient toujours à la liste.",
     "afterLeaveNext": "Ouvrir la conversation suivante",
     "afterLeavePrevious": "Ouvrir la conversation précédente",
-    "afterLeaveList": "Revenir à la liste"
+    "afterLeaveList": "Revenir à la liste",
+    "defaultSender": "Envoyer les nouveaux messages depuis",
+    "defaultSenderHelp": "Le compte avec lequel commence un nouveau message. Les réponses, les transferts et les brouillons gardent leur propre compte.",
+    "defaultSenderView": "Compte de la vue sélectionnée"
   },
   "dialog": {
     "closeTitle": "Fermer les paramètres",

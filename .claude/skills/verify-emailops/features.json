@@ -361,7 +361,8 @@
         "db::drafts",
         "sync::draft_plan",
         "services::drafts",
-        "services::translation"
+        "services::translation",
+        "db::accounts::sent_count_tests"
       ],
       "vitest": [
         "src/lib/composeDraft",
@@ -378,7 +379,10 @@
         "src/lib/sendWarnings",
         "src/stores/translationStore",
         "src/lib/apiContract/compose.api.test",
-        "src/components/composerStrings"
+        "src/components/composerStrings",
+        "src/lib/composeSender",
+        "src/hooks/useSenderOptions",
+        "src/components/Settings/DefaultSenderSetting"
       ],
       "e2e": [
         "Compose",

@@ -11,9 +11,13 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Every api call resolves to nothing: the overlays only have to render.
+// Every api call resolves to nothing (a list call to an empty list): the
+// overlays only have to render.
 vi.mock('@/lib/api', () => {
-  const fns = new Map<PropertyKey, unknown>([['currentPlatform', () => 'macos']]);
+  const fns = new Map<PropertyKey, unknown>([
+    ['currentPlatform', () => 'macos'],
+    ['getSentCounts', vi.fn(async () => [])],
+  ]);
   return new Proxy(
     {},
     {

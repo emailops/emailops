@@ -66,7 +66,10 @@
     "afterLeaveHelp": "When the open conversation leaves the list (archive, delete, snooze, block or junk), what to show next. Marking as unread always goes back to the list.",
     "afterLeaveNext": "Open the next conversation",
     "afterLeavePrevious": "Open the previous conversation",
-    "afterLeaveList": "Go back to the list"
+    "afterLeaveList": "Go back to the list",
+    "defaultSender": "Send new messages from",
+    "defaultSenderHelp": "The account a new message starts from. Replies, forwards and drafts keep their own account.",
+    "defaultSenderView": "Account of the selected view"
   },
   "dialog": {
     "closeTitle": "Close settings",
