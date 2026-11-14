@@ -18,6 +18,8 @@ Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linu
 
 All installers, checksums, and older versions are on the [Releases page](https://github.com/emailops/emailops/releases/latest).
 
+💬 Questions, ideas or feedback? Join us in [Discussions](https://github.com/emailops/emailops/discussions). And if EmailOps is useful to you, a ⭐ helps a lot.
+
 ## Features
 
 - **Multi-account email**: Gmail, Outlook / Microsoft 365 (Graph API), and IMAP/SMTP (iCloud, Yahoo, Fastmail, ProtonMail Bridge, custom servers)
