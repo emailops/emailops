@@ -28,6 +28,27 @@ export default (h) => async function demoCases() {
     await sleep(1600);
   };
   const DEMO = ['ulises@emailopslabs.dev', 'ulises@fastmail.com'];
+  // The right dock holds the chat or the day agenda, one at a time, and remembers which (`right_dock_content`).
+  // Cases that need the chat put it back, so a run that ended on the agenda does not fail the next one.
+  const dockChat = async () => {
+    await js(() => document.querySelector('button[aria-label="Close the calendar panel"]')?.click());
+    await sleep(600);
+    await js(() => document.querySelector('button[aria-label="Open chat panel"]')?.click());
+    await sleep(1200);
+  };
+  // The sidebar's Calendar opens the agenda of the selected account in the dock; the grid, with its account
+  // picker and Month/Week/Day, is behind the agenda's expand button. Only the Gmail demo account has events.
+  const CALENDAR_ACCOUNT = 'ulises.emailopslabs@gmail.com';
+  const calendarGrid = async () => {
+    await account(CALENDAR_ACCOUNT);
+    await view('Calendar');
+    await js(() => document.querySelector('button[aria-label="Open full calendar"]')?.click());
+    await sleep(1800);
+  };
+  const leaveCalendar = async () => {
+    await account(DEMO[0]);
+    await dockChat();
+  };
   const rowCount = () => js(() => [...document.querySelectorAll('div[role=button]')].filter((e) => e.offsetParent && e.innerText.length > 20).length);
   const search = async (q) => {
     await js((v) => {
@@ -169,6 +190,7 @@ export default (h) => async function demoCases() {
 
   // ── reading pane ───────────────────────────────────────────────────────
   await view('Inbox');
+  await dockChat();
   await openThread('Nadia Brunner');
   const pane = await buttons();
   const has = (l) => pane.some((p) => p.toLowerCase() === l.toLowerCase());
@@ -224,7 +246,9 @@ export default (h) => async function demoCases() {
     how: 'Abre una conversación guardada del buzón demo y despliega bajo la respuesta el panel que nombra la doc («Show reasoning»): debe listar la ruta seguida y los tiempos.',
   }, async ({ doc }) => {
     const label = doc.match(/a (Show reasoning) panel/)[1];
-    await js(() => [...document.querySelectorAll('button,[role=button]')]
+    // A saved conversation from the list, never a starter suggestion under the empty chat: those end in «?»
+    // too, and clicking one asks the model a new question instead of opening an answer with its trace.
+    await js(() => [...document.querySelectorAll('aside li button')]
       .filter((e) => e.offsetParent && e.innerText.trim().length > 12 && e.innerText.length < 120 && /\?$/.test(e.innerText.trim())).pop()?.click());
     await sleep(2200);
     const opened = await js((l) => {
@@ -247,7 +271,7 @@ export default (h) => async function demoCases() {
   });
 
   // ── views ──────────────────────────────────────────────────────────────
-  await view('Calendar');
+  await calendarGrid();
   await claim('feat-calendar-1', 'vistas', {
     covers: ['Month, week and day views'],
     how: 'En la vista Calendar del buzón demo, pulsa cada vista que nombra la doc (Month, Week, Day) y comprueba que la rejilla cambia; y que el calendario tiene selector de cuenta.',
@@ -275,6 +299,7 @@ export default (h) => async function demoCases() {
     await b.keys('Escape').catch(() => {});
     return ok(/Join/.test(detail), '«Join» en un evento con Meet', 'el evento con Meet no ofrece Join');
   });
+  await leaveCalendar();
   await view('Attachments');
   await claim('feat-attachments-view-1', 'vista y previsualización', {
     covers: ['One place for the attachments you care about — invoices, contracts, receipts — with preview and download, instead of digging back through threads.', 'Open it from Attachments in the sidebar.'],
@@ -1337,8 +1362,9 @@ export default (h) => async function demoCases() {
   await search('Ollama');
   const plainHits = await rowCount();
   await search('');
-  await view('Calendar');
+  await calendarGrid();
   const plainCal = await js(() => !!document.querySelector('[aria-label="Calendar account"]'));
+  await leaveCalendar();
   await view('Attachments');
   const plainAtt = /Attachments\s*\(\d+\)/.test(await screen());
   await claim('feat-intro-1', 'buzón sin IA', {
@@ -1352,5 +1378,6 @@ export default (h) => async function demoCases() {
   await tab('AI Backend & Models');
   await flip('AI Features');
   await closeSettings();
+  await dockChat();
   void labelsVisible;
 };
