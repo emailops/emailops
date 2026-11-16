@@ -1,13 +1,31 @@
-// Contract: the preference, security and data-location commands are called from api.ts with
-// the argument names their Rust signatures declare (see ./contract.ts), and the data-location
-// payloads match their hand-written TypeScript interfaces.
+// Contract: the preference, security, data-location and database-backup commands are called
+// from api.ts with the argument names their Rust signatures declare (see ./contract.ts), and
+// their payloads match the hand-written TypeScript interfaces.
 import { describe, expect, it } from 'vitest';
-import { itMatchesRustArguments, rustStructFields, tsInterfaceFields } from './contract';
+import {
+  itMatchesRustArguments,
+  rustEnumVariants,
+  rustStructFields,
+  tsInterfaceFields,
+  tsStringUnion,
+} from './contract';
 
 describe('api.ts ↔ Rust: preference and security commands', () => {
-  itMatchesRustArguments(['preferences.rs', 'security.rs', 'data_location.rs']);
+  itMatchesRustArguments(['preferences.rs', 'security.rs', 'data_location.rs', 'db_backup.rs']);
 
   it.each(['DataLocationInfo', 'PickedDataFolder', 'DataMoveProgress'])('%s has the fields Rust sends', (name) => {
     expect(rustStructFields('commands/data_location.rs', name)).toEqual(tsInterfaceFields(name, 'src/lib/api.ts'));
+  });
+
+  it('BackupStatus has the fields Rust sends', () => {
+    expect(rustStructFields('services/db_backup.rs', 'BackupStatus')).toEqual(
+      tsInterfaceFields('BackupStatus', 'src/lib/api.ts'),
+    );
+  });
+
+  it('BackupFrequency has the values Rust accepts', () => {
+    expect(tsStringUnion('BackupFrequency', 'src/lib/api.ts')).toEqual(
+      rustEnumVariants('services/db_backup.rs', 'BackupFrequency'),
+    );
   });
 });

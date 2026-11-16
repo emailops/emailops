@@ -11,6 +11,7 @@ pub mod connectivity;
 pub mod contacts;
 pub mod dashboard;
 pub mod data_location;
+pub mod db_backup;
 pub mod drafts;
 pub mod emails;
 pub mod filters;

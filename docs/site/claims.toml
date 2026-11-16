@@ -1432,6 +1432,12 @@ checks = [
   { app = true },
 ]
 
+[priv-where-data-8]
+checks = [
+  { app = true },
+  { tests = ['db::backup_tests::startup_backup_makes_no_copy_when_backups_are_off', 'db::backup_tests::plan_backup_follows_the_chosen_frequency', 'services::db_backup::tests::saving_fewer_copies_removes_the_oldest_now', 'services::db_backup::tests::delete_all_removes_every_copy_and_leaves_a_copy_in_progress'], covers = ["Turn them off, make them weekly, keep fewer or delete them"] },
+]
+
 [priv-where-data-5]
 checks = [
   { app = true },

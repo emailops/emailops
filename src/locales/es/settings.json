@@ -604,6 +604,24 @@
       "progress": "{{copied}} de {{total}} copiados",
       "starting": "Empezando la copia…",
       "onboardingLine": "Tus datos se guardan en"
+    },
+    "dbBackup": {
+      "title": "Copia de seguridad de la base de datos",
+      "help": "Poco después de abrirse, EmailOps copia su base de datos en la carpeta backups, dentro de la carpeta de datos. Cada copia ocupa lo mismo que la base de datos. Desactívala si otra herramienta ya hace copia de este disco. La copia no se hace si dejaría menos de 2 GB libres.",
+      "frequency": "Copiar",
+      "off": "Desactivada",
+      "daily": "A diario",
+      "weekly": "Cada semana",
+      "keep": "Copias que conservar",
+      "none": "Aún no hay copias.",
+      "summary_one": "{{count}} copia · {{size}} · hecha el {{date}}",
+      "summary_other": "{{count}} copias · {{size}} · la más reciente del {{date}}",
+      "summary_many": "{{count}} copias · {{size}} · la más reciente del {{date}}",
+      "delete": "Borrar copias",
+      "deleteConfirm_one": "¿Borrar la copia ({{size}})? No se puede deshacer.",
+      "deleteConfirm_other": "¿Borrar las {{count}} copias ({{size}})? No se puede deshacer.",
+      "deleteConfirm_many": "¿Borrar las {{count}} copias ({{size}})? No se puede deshacer.",
+      "deleteConfirmButton": "Borrar"
     }
   },
   "calendar": {

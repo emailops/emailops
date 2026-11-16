@@ -604,6 +604,24 @@
       "progress": "{{copied}} von {{total}} kopiert",
       "starting": "Kopie wird gestartet…",
       "onboardingLine": "Deine Daten liegen in"
+    },
+    "dbBackup": {
+      "title": "Datenbank-Sicherung",
+      "help": "Kurz nach dem Start kopiert EmailOps seine Datenbank in den Ordner backups im Datenordner. Jede Kopie ist so groß wie die Datenbank. Schalte sie aus, wenn ein anderes Programm diese Festplatte schon sichert. Die Kopie entfällt, wenn danach weniger als 2 GB frei wären.",
+      "frequency": "Sichern",
+      "off": "Aus",
+      "daily": "Täglich",
+      "weekly": "Wöchentlich",
+      "keep": "Aufbewahrte Kopien",
+      "none": "Noch keine Kopien.",
+      "summary_one": "{{count}} Kopie · {{size}} · erstellt am {{date}}",
+      "summary_other": "{{count}} Kopien · {{size}} · neueste vom {{date}}",
+      "summary_many": "{{count}} Kopien · {{size}} · neueste vom {{date}}",
+      "delete": "Sicherungen löschen",
+      "deleteConfirm_one": "Die Kopie ({{size}}) löschen? Das lässt sich nicht rückgängig machen.",
+      "deleteConfirm_other": "Alle {{count}} Kopien ({{size}}) löschen? Das lässt sich nicht rückgängig machen.",
+      "deleteConfirm_many": "Alle {{count}} Kopien ({{size}}) löschen? Das lässt sich nicht rückgängig machen.",
+      "deleteConfirmButton": "Löschen"
     }
   },
   "calendar": {

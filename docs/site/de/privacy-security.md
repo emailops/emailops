@@ -28,9 +28,12 @@ Alles liegt im Anwendungsdatenverzeichnis Ihres Betriebssystems:
 Darin:
 
 - **Eine SQLite-Datenbank** — Nachrichten, Threads, Kontakte, Kalendertermine,
-  Klassifizierungs-Kennzeichnungen, Such-Embeddings und das KI-Gedächtnis. Das ist die einzige
-  Kopie, die EmailOps führt. <!-- claim:priv-where-data-3 -->
+  Klassifizierungs-Kennzeichnungen, Such-Embeddings und das KI-Gedächtnis. <!-- claim:priv-where-data-3 -->
 - **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben. <!-- claim:priv-where-data-4 -->
+- **Ein Ordner `backups/`** — Kopien der Datenbank, die EmailOps kurz nach dem Start anlegt:
+  standardmäßig eine pro Tag, die neuesten drei werden aufbewahrt. Unter **Einstellungen →
+  Datenschutz & Sicherheit → Datenbank-Sicherung** schalten Sie sie aus, stellen auf wöchentlich
+  um, behalten weniger oder löschen sie. <!-- claim:priv-where-data-8 -->
 
 <!-- claim:priv-where-data-5 -->
 Um ihn woanders aufzubewahren — auf einem externen Laufwerk oder einem verschlüsselten Volume —

@@ -604,6 +604,24 @@
       "progress": "{{copied}} of {{total}} copied",
       "starting": "Starting the copy…",
       "onboardingLine": "Your data is kept in"
+    },
+    "dbBackup": {
+      "title": "Database backup",
+      "help": "Shortly after launch EmailOps copies its database to the backups folder inside the data folder. Each copy is as large as the database. Turn it off if another tool already backs up this disk. A copy is skipped when it would leave less than 2 GB free.",
+      "frequency": "Back up",
+      "off": "Off",
+      "daily": "Daily",
+      "weekly": "Weekly",
+      "keep": "Copies to keep",
+      "none": "No copies yet.",
+      "summary_one": "{{count}} copy · {{size}} · taken {{date}}",
+      "summary_other": "{{count}} copies · {{size}} · newest {{date}}",
+      "summary_many": "{{count}} copies · {{size}} · newest {{date}}",
+      "delete": "Delete backups",
+      "deleteConfirm_one": "Delete the copy ({{size}})? This cannot be undone.",
+      "deleteConfirm_other": "Delete the {{count}} copies ({{size}})? This cannot be undone.",
+      "deleteConfirm_many": "Delete the {{count}} copies ({{size}})? This cannot be undone.",
+      "deleteConfirmButton": "Delete"
     }
   },
   "calendar": {

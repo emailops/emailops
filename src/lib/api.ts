@@ -2228,6 +2228,35 @@ export async function moveDataLocation(toDefault: boolean): Promise<void> {
   return invoke('move_data_location', { toDefault });
 }
 
+// ── Database backup ──────────────────────────────────────────────────────────
+
+/** How often the database is copied to `backups/` after launch. */
+export type BackupFrequency = 'off' | 'daily' | 'weekly';
+
+/** The automatic database backup's settings and the copies on disk (`services/db_backup.rs`). */
+export interface BackupStatus {
+  frequency: BackupFrequency;
+  /** Copies kept, 1 to 3. */
+  keep: number;
+  count: number;
+  totalBytes: number;
+  /** When the newest copy was taken, in unix seconds. */
+  newestAt: number | null;
+}
+
+export async function getDbBackups(): Promise<BackupStatus> {
+  return invoke('get_db_backups');
+}
+
+/** Store the settings; copies beyond `keep` are deleted right away. */
+export async function setDbBackupSettings(frequency: BackupFrequency, keep: number): Promise<BackupStatus> {
+  return invoke('set_db_backup_settings', { frequency, keep });
+}
+
+export async function deleteDbBackups(): Promise<BackupStatus> {
+  return invoke('delete_db_backups');
+}
+
 // ── Lenses ───────────────────────────────────────────────────────────────────
 
 export async function listLenses(): Promise<LensSummary[]> {

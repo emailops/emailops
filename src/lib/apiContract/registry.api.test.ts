@@ -15,6 +15,7 @@ const CHECKED_FILES = [
   'contacts.rs',
   'dashboard.rs',
   'data_location.rs',
+  'db_backup.rs',
   'drafts.rs',
   'emails.rs',
   'filters.rs',

@@ -413,6 +413,9 @@ macro_rules! app_commands {
             commands::data_location::dismiss_previous_data_location,
             commands::data_location::pick_data_folder,
             commands::data_location::move_data_location,
+            commands::db_backup::get_db_backups,
+            commands::db_backup::set_db_backup_settings,
+            commands::db_backup::delete_db_backups,
             commands::system::detect_ai_capability,
             commands::system::is_rosetta_translated,
             commands::system::get_gpu_runtime_notice,
@@ -445,10 +448,6 @@ macro_rules! app_commands {
     };
 }
 
-/// Copies of the database kept in `backups/`.
-#[cfg(feature = "desktop")]
-const STARTUP_BACKUPS_KEPT: usize = 3;
-
 /// Show the outcome of the startup backup in the Logs panel.
 #[cfg(feature = "desktop")]
 fn report_startup_backup(outcome: models::error::Result<db::BackupPlan>) {
@@ -456,7 +455,7 @@ fn report_startup_backup(outcome: models::error::Result<db::BackupPlan>) {
     const GIB: u64 = 1024 * 1024 * 1024;
     match outcome {
         Ok(db::BackupPlan::Copy) => log("success", "system", "Database backup written"),
-        Ok(db::BackupPlan::Recent) => {}
+        Ok(db::BackupPlan::Recent | db::BackupPlan::Off) => {}
         Ok(db::BackupPlan::NoRoom { needed, free }) => log(
             "warn",
             "system",
@@ -705,14 +704,10 @@ pub fn run() {
             // in the Logs panel.
             {
                 let db_clone = db.clone();
-                let backup_dir = app_data_dir.join("backups");
+                let backup_dir = services::db_backup::backup_dir(&app_data_dir);
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(30));
-                    report_startup_backup(db_clone.startup_backup(
-                        &backup_dir,
-                        STARTUP_BACKUPS_KEPT,
-                        services::clock::now_secs(),
-                    ));
+                    report_startup_backup(db_clone.startup_backup(&backup_dir, services::clock::now_secs()));
                     // Files a composer stored for a draft that was never saved.
                     match services::emails::sweep_abandoned_draft_files(&db_clone, services::clock::now_secs()) {
                         Ok(0) => {}

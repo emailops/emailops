@@ -85,10 +85,6 @@ pub fn set_db_init_timing(enabled: bool) {
     let _ = enabled;
 }
 
-/// How often the startup backup runs: a run of quick restarts must not rotate
-/// the last good copy out of the directory.
-const BACKUP_INTERVAL_SECS: i64 = 24 * 60 * 60;
-
 /// Disk a backup leaves free: it must never take the room the live database
 /// needs to keep writing.
 const BACKUP_FREE_RESERVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -97,7 +93,9 @@ const BACKUP_FREE_RESERVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackupPlan {
     Copy,
-    /// The newest copy is younger than [`BACKUP_INTERVAL_SECS`].
+    /// The user turned the backup off.
+    Off,
+    /// The newest copy is younger than the chosen frequency's interval.
     Recent,
     NoRoom {
         needed: u64,
@@ -107,9 +105,18 @@ pub enum BackupPlan {
 
 /// Pure: `free_bytes` is `None` when the disk probe failed, and the copy then
 /// finds out for itself. A negative age means the clock moved back, so that
-/// copy says nothing about today.
-fn plan_backup(db_bytes: u64, free_bytes: Option<u64>, newest_age_secs: Option<i64>) -> BackupPlan {
-    if newest_age_secs.is_some_and(|age| (0..BACKUP_INTERVAL_SECS).contains(&age)) {
+/// copy says nothing about today. The interval keeps a run of quick restarts
+/// from rotating the last good copy out of the directory.
+fn plan_backup(
+    db_bytes: u64,
+    free_bytes: Option<u64>,
+    newest_age_secs: Option<i64>,
+    frequency: crate::services::db_backup::BackupFrequency,
+) -> BackupPlan {
+    let Some(interval) = frequency.interval_secs() else {
+        return BackupPlan::Off;
+    };
+    if newest_age_secs.is_some_and(|age| (0..interval).contains(&age)) {
         return BackupPlan::Recent;
     }
     let needed = db_bytes.saturating_add(BACKUP_FREE_RESERVE_BYTES);
@@ -119,18 +126,19 @@ fn plan_backup(db_bytes: u64, free_bytes: Option<u64>, newest_age_secs: Option<i
     }
 }
 
+/// When a finished copy was taken, from the UTC timestamp in its file name.
+pub(crate) fn backup_taken_at(file_name: &str) -> Option<i64> {
+    let stamp = file_name.strip_prefix("emailops-")?.strip_suffix(".db")?;
+    let taken = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d_%H%M%S").ok()?;
+    Some(taken.and_utc().timestamp())
+}
+
 /// Age of the newest finished copy, from the timestamp in its file name. A
 /// temp file from an unfinished copy does not count.
 fn newest_backup_age_secs(backup_dir: &Path, now_secs: i64) -> Option<i64> {
     std::fs::read_dir(backup_dir)
         .ok()?
-        .filter_map(|entry| {
-            let name = entry.ok()?.file_name();
-            let name = name.to_string_lossy();
-            let stamp = name.strip_prefix("emailops-")?.strip_suffix(".db")?;
-            let taken = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d_%H%M%S").ok()?;
-            Some(now_secs - taken.and_utc().timestamp())
-        })
+        .filter_map(|entry| Some(now_secs - backup_taken_at(&entry.ok()?.file_name().to_string_lossy())?))
         .min()
 }
 
@@ -536,9 +544,10 @@ impl Database {
         &self.db_path
     }
 
-    /// Back up the database on launch if [`plan_backup`] says so, and return
-    /// that decision.
-    pub fn startup_backup(&self, backup_dir: &Path, keep: usize, now_secs: i64) -> Result<BackupPlan> {
+    /// Back up the database on launch if [`plan_backup`] says so for the
+    /// user's backup settings, and return that decision.
+    pub fn startup_backup(&self, backup_dir: &Path, now_secs: i64) -> Result<BackupPlan> {
+        let settings = crate::services::db_backup::load_settings(self)?;
         let db_bytes = std::fs::metadata(&self.db_path)
             .map_err(|e| AppError::IoError(e.to_string()))?
             .len();
@@ -546,10 +555,11 @@ impl Database {
             db_bytes,
             crate::util::system::available_disk_bytes(backup_dir),
             newest_backup_age_secs(backup_dir, now_secs),
+            settings.frequency,
         );
         if plan == BackupPlan::Copy {
             crate::services::logger::log("info", "system", "Backing up the database");
-            self.backup(backup_dir, keep)?;
+            self.backup(backup_dir, settings.keep)?;
         }
         Ok(plan)
     }
@@ -648,7 +658,7 @@ impl Database {
         }
     }
 
-    fn prune_backups(backup_dir: &Path, keep: usize) {
+    pub(crate) fn prune_backups(backup_dir: &Path, keep: usize) {
         let Ok(entries) = std::fs::read_dir(backup_dir) else {
             return;
         };
@@ -1107,6 +1117,7 @@ mod backup_tests {
     //! copy into a non-`emailops-` temp file, rename on success, delete the
     //! partial on failure, and bound the directory on every call.
     use super::*;
+    use crate::services::db_backup::BackupFrequency;
     use std::fs;
 
     fn touch(path: &std::path::Path) {
@@ -1232,8 +1243,75 @@ mod backup_tests {
             ),
         ];
         for (name, free, age, expected) in cases {
-            assert_eq!(plan_backup(db, free, age), expected, "{name}");
+            assert_eq!(plan_backup(db, free, age, BackupFrequency::Daily), expected, "{name}");
         }
+    }
+
+    #[test]
+    fn plan_backup_follows_the_chosen_frequency() {
+        const DAY: i64 = 24 * 60 * 60;
+        let db = 11 * GIB;
+        let room = Some(100 * GIB);
+        let cases = [
+            ("off, no copy yet", BackupFrequency::Off, room, None, BackupPlan::Off),
+            (
+                "off outranks no room",
+                BackupFrequency::Off,
+                Some(1),
+                None,
+                BackupPlan::Off,
+            ),
+            (
+                "weekly, last copy two days old",
+                BackupFrequency::Weekly,
+                room,
+                Some(2 * DAY),
+                BackupPlan::Recent,
+            ),
+            (
+                "weekly, last copy a week old",
+                BackupFrequency::Weekly,
+                room,
+                Some(7 * DAY),
+                BackupPlan::Copy,
+            ),
+        ];
+        for (name, frequency, free, age, expected) in cases {
+            assert_eq!(plan_backup(db, free, age, frequency), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn startup_backup_makes_no_copy_when_backups_are_off() {
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let db = Database::new(data_dir.path().to_path_buf()).expect("open db");
+        db.set_preference(crate::services::db_backup::FREQUENCY_PREF, "off")
+            .expect("turn backups off");
+        let backup_dir = data_dir.path().join("backups");
+
+        let plan = db
+            .startup_backup(&backup_dir, chrono::Utc::now().timestamp())
+            .expect("startup backup");
+
+        assert_eq!(plan, BackupPlan::Off);
+        assert!(!backup_dir.exists(), "no backups folder is created");
+    }
+
+    #[test]
+    fn startup_backup_keeps_the_copies_the_user_chose() {
+        let data_dir = tempfile::tempdir().expect("data dir");
+        let db = Database::new(data_dir.path().to_path_buf()).expect("open db");
+        db.set_preference(crate::services::db_backup::KEEP_PREF, "1")
+            .expect("keep one copy");
+        let backup_dir = tempfile::tempdir().expect("backup dir");
+        seed_stale_backups(backup_dir.path(), 2);
+
+        let plan = db
+            .startup_backup(backup_dir.path(), chrono::Utc::now().timestamp())
+            .expect("startup backup");
+
+        assert_eq!(plan, BackupPlan::Copy);
+        assert_eq!(backup_count(backup_dir.path()), 1);
     }
 
     #[test]
@@ -1275,7 +1353,7 @@ mod backup_tests {
         );
 
         let plan = db
-            .startup_backup(backup_dir.path(), 3, now.timestamp() + 60)
+            .startup_backup(backup_dir.path(), now.timestamp() + 60)
             .expect("startup backup");
 
         assert_eq!(plan, BackupPlan::Recent);

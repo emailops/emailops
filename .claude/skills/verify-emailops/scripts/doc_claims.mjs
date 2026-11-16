@@ -604,6 +604,20 @@ async function afterWizard() {
     doc.match(/Settings → Privacy & Security/);
     return ok(/Use a main password/.test(priv), '«Use a main password» en Privacy & Security', 'no está');
   });
+  await claim('priv-where-data-8', 'copia diaria, tres copias', {
+    covers: ['by default one a day, keeping the newest three', 'Settings → Privacy & Security → Database backup'],
+    how: 'En una instalación nueva abre Ajustes → Privacy & Security y lee en la sección «Database backup» qué frecuencia y cuántas copias están marcadas; las compara con las que dice la doc.',
+  }, async ({ doc }) => {
+    doc.match(/Settings → Privacy & Security → Database backup/);
+    doc.match(/by default one a (day)/);
+    const keep = doc.number(/keeping the newest (\w+)/);
+    const marked = await js(() => ({
+      daily: document.querySelector('[data-testid="db-backup-frequency-daily"]')?.getAttribute('aria-checked'),
+      keep: document.querySelector('[data-testid^="db-backup-keep-"][aria-checked="true"]')?.textContent.trim(),
+    }));
+    const good = /Database backup/.test(priv) && marked.daily === 'true' && Number(marked.keep) === keep;
+    return ok(good, `«Database backup» con Daily y ${marked.keep} copias marcadas`, `marcado: ${JSON.stringify(marked)}`);
+  });
 
   // ── what landed in the data dir ────────────────────────────────────────────
   const tables = sqliteTables();

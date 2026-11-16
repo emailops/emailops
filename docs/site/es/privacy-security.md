@@ -28,9 +28,12 @@ Todo reside en el directorio de datos de aplicación de tu sistema:
 Dentro:
 
 - **Una base de datos SQLite** — mensajes, hilos, contactos, eventos de calendario, etiquetas
-  de clasificación, embeddings de búsqueda y la memoria de la IA. Es la única copia que
-  guarda EmailOps. <!-- claim:priv-where-data-3 -->
+  de clasificación, embeddings de búsqueda y la memoria de la IA. <!-- claim:priv-where-data-3 -->
 - **Una carpeta `models/`** — los modelos de IA que hayas descargado. <!-- claim:priv-where-data-4 -->
+- **Una carpeta `backups/`** — copias de la base de datos que EmailOps hace poco después de
+  abrirse: por defecto una al día, conservando las tres más recientes. Desactívalas, hazlas
+  semanales, conserva menos o bórralas en **Ajustes → Privacidad y seguridad → Copia de seguridad
+  de la base de datos**. <!-- claim:priv-where-data-8 -->
 
 <!-- claim:priv-where-data-5 -->
 Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa **Ajustes →

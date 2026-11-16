@@ -28,8 +28,11 @@ Everything resides in your OS application data directory:
 Inside it:
 
 - **A SQLite database** — messages, threads, contacts, calendar events, classification tags,
-  search embeddings and AI memory. This is the only copy EmailOps keeps. <!-- claim:priv-where-data-3 -->
+  search embeddings and AI memory. <!-- claim:priv-where-data-3 -->
 - **A `models/` folder** — the AI models you downloaded. <!-- claim:priv-where-data-4 -->
+- **A `backups/` folder** — copies of the database that EmailOps makes shortly after launch: by
+  default one a day, keeping the newest three. Turn them off, make them weekly, keep fewer or
+  delete them in **Settings → Privacy & Security → Database backup**. <!-- claim:priv-where-data-8 -->
 
 <!-- claim:priv-where-data-5 -->
 To keep it somewhere else — an external disk, or an encrypted volume — use **Settings →

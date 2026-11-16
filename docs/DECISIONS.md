@@ -4855,3 +4855,20 @@ that reason.
   belongs upstream.
 - *A `rust-toolchain.toml` for the whole repo*: it would also pin local development and CI,
   which do not build the dynamic-backends path that breaks.
+
+## 2026-11-16 — The startup backup can be turned off, made weekly and kept to fewer copies
+
+**Decision:** Settings → Privacy → Database backup lets the user choose how often the startup
+backup runs (Off, Daily or Weekly) and how many copies it keeps (1 to 3), and shows the copies'
+count, total size and newest date with a "Delete backups" button. Daily with three copies stays
+the default, and the 2 GiB free-space check is unchanged. Lowering the number of copies deletes
+the oldest at once; turning backups off keeps the existing copies until the user deletes them.
+**Context:** On a mailbox of tens of GB three daily copies take three times its size, and the
+copy is a long disk write after the first launch of the day. Users whose mail is on the server or
+whose disk is already backed up asked to turn it off or limit it. This supersedes the 2026-10-30
+entry's rejection of showing the backup in Settings.
+**Rejected:**
+- *A separate destination folder for the copies*: it would need its own free-space check, a
+  plan for an unmounted disk, and a rule for what a data-folder move does with it; moving the
+  whole data folder already puts the copies on another disk.
+- *More than three copies*: the reason the 2026-10-30 entry settled on three still holds.

@@ -12,6 +12,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: vi.fn(async () => {}) }));
 vi.mock('@/components/DataLocation/DataLocationSection', () => ({ DataLocationSection: () => null }));
 vi.mock('./TrustedSendersSection', () => ({ TrustedSendersSection: () => null }));
+vi.mock('./DatabaseBackupSection', () => ({ DatabaseBackupSection: () => null }));
 vi.mock('@/lib/api', () => ({
   hasMainPassword: vi.fn(async () => false),
   getPref: vi.fn(async () => 'false'),
