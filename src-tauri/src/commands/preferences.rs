@@ -184,6 +184,16 @@ pub async fn get_system_locale() -> Result<String, AppError> {
     Ok(lang.as_code().to_string())
 }
 
+/// Return the region of the OS locale (`"US"`, `"GB"`, `"419"`), or `None`
+/// when the locale names none. The frontend reads it once at startup and
+/// writes dates in the UI language plus this region.
+#[tauri::command]
+pub async fn get_system_region() -> Result<Option<String>, AppError> {
+    Ok(sys_locale::get_locale()
+        .as_deref()
+        .and_then(crate::services::i18n::region_subtag))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

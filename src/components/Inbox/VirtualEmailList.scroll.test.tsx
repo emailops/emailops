@@ -25,7 +25,7 @@ import type { Email } from '@/types';
 import { VirtualEmailList } from './VirtualEmailList';
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }),
 }));
 
 // jsdom ships no ResizeObserver. The virtualizer constructs its own alongside

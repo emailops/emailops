@@ -227,6 +227,7 @@ macro_rules! app_commands {
             commands::preferences::get_auto_n_ctx,
             commands::preferences::show_main_window,
             commands::preferences::get_system_locale,
+            commands::preferences::get_system_region,
             commands::prompts::list_prompts,
             commands::prompts::set_prompt,
             commands::prompts::reset_prompt,
