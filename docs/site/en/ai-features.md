@@ -168,6 +168,15 @@ and chat answers from its text. A new conversation then suggests **Summarise thi
 **Key points, dates and amounts** and **Ask about this document**. A PDF too long for the
 model's context window is read in parts, and the answer is built from notes on every part.
 
+<!-- claim:ai-chat-mailbox-18 -->
+While you write an email in a compose tab, or a reply or reply-all under the open email, the
+chip offers that draft instead: its subject, recipients and your own text, without the
+signature. Ask *"did I answer everything?"* or *"make it shorter"* and chat answers from the
+draft; an improved version comes back as text in the answer, for you to copy into the draft.
+Chat never changes the draft, and while it is open it does not write another one. Switch the
+chip off to ask about the thread alone. A draft too long for the model's context window gets
+a note saying so, not a review of its start.
+
 <!-- claim:ai-chat-mailbox-17 -->
 An empty conversation lists **Suggested requests** drawn from your mailbox, such as today's
 summary or a thread still waiting on your reply, plus **Something else…** to type your own.

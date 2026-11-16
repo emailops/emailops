@@ -181,6 +181,16 @@ document, et le chat répond à partir de son texte. Une nouvelle conversation s
 document**. Un PDF trop long pour la fenêtre de contexte du modèle est lu par parties, et la
 réponse s'appuie sur des notes prises sur chaque partie.
 
+<!-- claim:ai-chat-mailbox-18 -->
+Pendant que vous rédigez un e-mail dans un onglet de rédaction, ou une réponse ou une réponse
+à tous sous l'e-mail ouvert, la puce propose ce brouillon : son objet, ses destinataires et
+votre propre texte, sans la signature. Demandez *« ai-je répondu à tout ? »* ou *« fais plus
+court »* et le chat répond à partir du brouillon ; une version améliorée revient sous forme de
+texte dans la réponse, à copier dans le brouillon. Le chat ne modifie jamais le brouillon et,
+tant qu'il est ouvert, n'en écrit pas d'autre. Désactivez la puce pour ne poser une question
+que sur le fil. Un brouillon trop long pour la fenêtre de contexte du modèle reçoit un message
+qui le signale, pas une relecture de son début.
+
 <!-- claim:ai-chat-mailbox-17 -->
 Une conversation vide affiche des **Demandes suggérées** tirées de votre messagerie, comme le
 résumé du jour ou un fil qui attend encore votre réponse, et **Autre chose…** pour écrire la
