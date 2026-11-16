@@ -54,3 +54,31 @@ def test_release_flag_does_not_repeat_a_target_already_emptied():
     dirs = [build_dir("old", days_idle=10, profiles=("debug", "x86_64-apple-darwin"))]
     actions = run(dirs, worktrees=("emailopsv2", "old"), release=True)
     assert actions == [("idle", "/Volumes/Build/emailops/old/target")]
+
+
+SYSTEM_PYTHON = pathlib.Path("/usr/bin/python3")
+
+
+def _system_python_version():
+    import subprocess
+
+    out = subprocess.run(
+        [str(SYSTEM_PYTHON), "-c", "import sys; print(sys.version_info[0] * 100 + sys.version_info[1])"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return int(out.stdout)
+
+
+def test_runs_under_the_system_python_make_calls():
+    """`make disk-report` runs `python3`, which on macOS is /usr/bin/python3 (3.9)."""
+    import subprocess
+
+    import pytest
+
+    if not SYSTEM_PYTHON.exists():
+        pytest.skip("no /usr/bin/python3 on this machine")
+    script = pathlib.Path(__file__).resolve().parent.parent / "disk_clean.py"
+    result = subprocess.run([str(SYSTEM_PYTHON), str(script), "--help"], capture_output=True, text=True)
+    assert result.returncode == 0, f"python {_system_python_version()}: {result.stderr}"

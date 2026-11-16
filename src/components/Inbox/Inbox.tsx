@@ -286,14 +286,11 @@ export function Inbox({
     // Category filter is Gmail-specific; skip for IMAP and other non-Gmail accounts
     if (!showCategoryFilter) return emails;
     if (selectedCategories.size === 0) return emails;
-    const filtered = emails.filter((email) => selectedCategories.has(email.category));
-    // Edge case: during an initial sync the first batch may all be promotions/forums
-    // (categories typically unchecked). Showing "no emails" would be misleading — the
-    // first primary messages are still on their way. Only bypass the filter when it
-    // yields zero results *and* a sync is actively running.
-    if (isSyncing && filtered.length === 0 && emails.length > 0) return emails;
-    return filtered;
-  }, [emails, selectedCategories, activeFilter, navigationMode, showCategoryFilter, searchQuery, isSyncing]);
+    // An empty category stays empty, even during a sync: the empty state says
+    // the sync is running, and other categories' mail under the highlighted tab
+    // would misreport what it holds.
+    return emails.filter((email) => selectedCategories.has(email.category));
+  }, [emails, selectedCategories, activeFilter, navigationMode, showCategoryFilter, searchQuery]);
 
   // Junk removal is applied last and only when the user asked for it. It is a
   // view filter, nothing more: the message stays where the server put it and
