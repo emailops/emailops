@@ -156,6 +156,24 @@
     - answer_relevancy
     - faithfulness
 
+# The footer switch lives only in the guides (Features › Signatures and
+# Privacy & Security); the demo mailbox's "footer" thread is about a web page,
+# so an answer from the mailbox names neither the switch nor its tab.
+- id: app_help_sent_footer_es
+  question: "¿cómo quito la línea «Enviado con EmailOps» de los correos que envío?"
+  account: "ulises@emailopslabs.dev"
+  category: out_of_scope
+  tier: smoke
+  expected_tools_not_called: ["search_emails"]
+  expected_help_pages_any: ["features", "privacy-security"]
+  expected_no_email_sources: true
+  expected_answer_contains: ["help://"]
+  expected_answer_contains_any: ["Firmas", "Signatures"]
+  expected_output: "En Ajustes → Firmas, desmarca «Añadir «Enviado con EmailOps» al final de los mensajes que envío»; vale para todas las cuentas y viene activada de fábrica. Ver Funciones › Firmas."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
 # Mirror case: a mailbox question must not pull the guides into the answer.
 # Marisol Vega is the demo persona's logistics client (synthetic data).
 - id: app_help_mailbox_question_stays_mailbox

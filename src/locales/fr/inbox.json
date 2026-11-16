@@ -84,7 +84,12 @@
     "unstar": "Retirer des favoris",
     "archive": "Archiver",
     "moveArchivedToInbox": "Déplacer vers la boîte de réception",
-    "hideFromFilters": "Masquer des filtres intelligents"
+    "hideFromFilters": "Masquer des filtres intelligents",
+    "toSelf": "vous",
+    "noRecipients": "À : (aucun destinataire)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "et {{count}} de plus",
+    "addRecipientFilter": "Ajouter le destinataire comme filtre intelligent"
   },
   "header": {
     "totalCount": "{{count}} courriels",
@@ -174,11 +179,14 @@
     "title": "Conseils de recherche",
     "senderHint": "nom/adresse de l'expéditeur",
     "recipientHint": "nom/adresse du destinataire",
+    "ccHint": "nom/adresse en copie",
     "subjectHint": "texte de l'objet",
+    "attachmentHint": "avec pièces jointes (-has:attachment : sans)",
     "unreadHint": "courriels non lus",
     "afterHint": "AAAA-MM-JJ",
     "beforeHint": "AAAA-MM-JJ",
-    "tagHint": "étiquette de classification"
+    "tagHint": "étiquette de classification",
+    "booleanHint": "expression exacte, l'un ou l'autre mot, sans un mot, regrouper"
   },
   "translation": {
     "detectedLabel": "Cet e-mail est en {{language}}",

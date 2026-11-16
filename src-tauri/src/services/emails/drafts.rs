@@ -487,6 +487,20 @@ Subject: {subject}\n\n\
     )
 }
 
+/// The new-email prompt, whole, or an error saying how much to shorten the
+/// brief. Pure. Never cut: the brief and the closing instruction end the
+/// prompt, so a cut that keeps the start drops exactly them.
+fn fit_new_draft_prompt(prompt: String) -> Result<String> {
+    if prompt.len() <= MAX_PROMPT_CHARS {
+        return Ok(prompt);
+    }
+    // Bytes over the limit: cutting that many characters always fits.
+    let over = prompt.len() - MAX_PROMPT_CHARS;
+    Err(AppError::InvalidInput(format!(
+        "the brief is too long for an AI draft: shorten it by at least {over} characters"
+    )))
+}
+
 /// Generate a draft for a brand-new email (no existing thread). Used by the
 /// chat `generate_email_draft` tool when the user asks for a new message
 /// rather than a reply ("draft a new email to billing@stripe…").
@@ -544,13 +558,14 @@ pub async fn generate_new_draft(
 
     // Distinct from the reply template because the model needs to be told
     // there's no inbound thread — otherwise small models hallucinate one.
-    let prompt = build_new_draft_prompt(&persona, &style, language, &to_clean, subject, &instructions_section);
-
-    let prompt = if prompt.len() > MAX_PROMPT_CHARS {
-        truncate_utf8(&prompt, MAX_PROMPT_CHARS).to_string()
-    } else {
-        prompt
-    };
+    let prompt = fit_new_draft_prompt(build_new_draft_prompt(
+        &persona,
+        &style,
+        language,
+        &to_clean,
+        subject,
+        &instructions_section,
+    ))?;
 
     emit_log("info", "calling model…");
     let ai = AiService::new(db.clone())?;
@@ -742,8 +757,7 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .unwrap_or(template.len());
     let (prefix, suffix_template) = template.split_at(split);
 
-    let shows_instructions =
-        suffix_template.contains("{instructions}") && input.instructions.is_some_and(|i| !i.trim().is_empty());
+    let shows_instructions = input.instructions.is_some_and(|i| !i.trim().is_empty());
     let rules = format!(
         "{}{}",
         language_rule(input.thread.len(), input.language, shows_instructions),
@@ -762,14 +776,14 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         .replace("{thread_context}", &thread_context)
         .replace("{rag_context}", input.rag_context)
         .replace("{instructions}", &instructions_section);
-    // A custom template without `{instructions}` would drop the language and
-    // sign-off rules silently: append them, after the cached prefix. (Its
-    // user instructions keep their old behaviour.)
+    // A custom template without `{instructions}` would drop the user's
+    // instructions and the language and sign-off rules silently: append them,
+    // after the cached prefix.
     if !suffix_template.contains("{instructions}") {
         if !suffix.is_empty() && !suffix.ends_with('\n') {
             suffix.push_str("\n\n");
         }
-        suffix.push_str(&rules);
+        suffix.push_str(&instructions_section);
     }
 
     ReplyPrompt {
@@ -1123,6 +1137,42 @@ mod tests {
         assert!(prompt.contains("be brief"), "instructions section must be spliced in");
     }
 
+    // ── fit_new_draft_prompt ───────────────────────────────────────────────
+
+    #[test]
+    fn fit_new_draft_prompt_refuses_a_long_brief_instead_of_cutting_its_end() {
+        let brief = format!(
+            "Additional instructions: {}END OF BRIEF\n\n",
+            "x".repeat(MAX_PROMPT_CHARS)
+        );
+        let prompt = build_new_draft_prompt("p", "s", Language::En, &["a@example.com".to_string()], "Plan", &brief);
+        let over = prompt.len() - MAX_PROMPT_CHARS;
+
+        let err = fit_new_draft_prompt(prompt).expect_err("a prompt over the limit must not reach the model cut");
+
+        match err {
+            AppError::InvalidInput(detail) => assert!(
+                detail.contains(&format!("at least {over} characters")),
+                "must say how much to shorten the brief; got: {detail}"
+            ),
+            other => panic!("must be InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fit_new_draft_prompt_keeps_a_prompt_that_fits_whole() {
+        let prompt = build_new_draft_prompt(
+            "p",
+            "s",
+            Language::En,
+            &["a@example.com".to_string()],
+            "Plan",
+            "Additional instructions: be brief\n\n",
+        );
+
+        assert_eq!(fit_new_draft_prompt(prompt.clone()).expect("fits"), prompt);
+    }
+
     // ── clean_new_draft_inputs ─────────────────────────────────────────────
 
     #[test]
@@ -1417,6 +1467,22 @@ mod tests {
     }
 
     #[test]
+    fn a_custom_template_without_instructions_still_gets_the_user_instructions() {
+        let thread = [msg("Ana", "hola")];
+        let p = plan_signed(&thread, Some("dile que sí"), by_name(), "Reply to {thread_context}", "");
+        let instructions = p
+            .suffix
+            .find("Additional instructions: dile que sí")
+            .expect("the user's instructions must reach the model");
+        let rule = p
+            .suffix
+            .find("language of Message 1")
+            .expect("language rule in the prompt");
+        assert!(rule > instructions, "{}", p.suffix);
+        assert!(!p.prefix.contains("dile que sí"), "{}", p.prefix);
+    }
+
+    #[test]
     fn the_rules_show_the_model_no_phrase_of_any_language_to_copy() {
         let thread = [msg("Ana", "hola")];
         for sign_off in [by_name(), SignOff::ClosingOnly, signed()] {
@@ -1556,13 +1622,13 @@ mod tests {
         let thread = [msg("Ana", "hola")];
         let exception = "instructions name a language";
         let shown = plan(&thread, "", Some("dile que sí")).suffix;
+        let custom = plan_signed(&thread, Some("dile que sí"), by_name(), "Reply to {thread_context}", "").suffix;
         let blank = plan(&thread, "", Some("   ")).suffix;
-        let dropped = plan_signed(&thread, Some("dile que sí"), by_name(), "Reply to {thread_context}", "").suffix;
-        assert!(shown.contains(exception), "{shown}");
         assert!(
-            !blank.contains(exception) && !dropped.contains(exception),
-            "{blank}{dropped}"
+            shown.contains(exception) && custom.contains(exception),
+            "{shown}{custom}"
         );
+        assert!(!blank.contains(exception), "{blank}");
     }
 
     #[test]
@@ -1878,7 +1944,7 @@ mod tests {
         let template = "You help {persona}.\n{thread_context}\nReply now:";
         for sign_off in [by_name(), SignOff::ClosingOnly] {
             let rules = reply_rules(&sign_off);
-            let p = plan_signed(&[msg("Alice", "hi")], Some("say yes"), sign_off, template, "");
+            let p = plan_signed(&[msg("Alice", "hi")], None, sign_off, template, "");
             assert!(p.suffix.ends_with(&format!("Reply now:\n\n{rules}")), "{}", p.suffix);
         }
     }

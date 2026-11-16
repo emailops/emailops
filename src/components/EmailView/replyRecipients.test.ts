@@ -83,6 +83,21 @@ describe('computeReplyRecipients', () => {
   });
 });
 
+describe('Reply-To (#270)', () => {
+  it('replies to the Reply-To of an inbound message instead of its sender', () => {
+    const inbound = email({ id: 'in', senderEmail: 'noreply@shop.test', recipients: [ME] });
+    expect(computeReplyRecipients(inbound, [inbound], [ME], { in: ['help@shop.test'] })).toEqual(['help@shop.test']);
+  });
+
+  it('puts every message’s Reply-To in Reply All, in place of its sender', () => {
+    const inbound = email({ id: 'in', senderEmail: 'noreply@shop.test', recipients: [ME, 'bob@example.test'] });
+    expect(computeReplyAllRecipients(inbound, [inbound], [ME], { in: ['help@shop.test'] })).toEqual([
+      'help@shop.test',
+      'bob@example.test',
+    ]);
+  });
+});
+
 describe('computeReplyAllRecipients', () => {
   it('addresses everyone in the thread except myself', () => {
     const inbound = email({ id: 'a', senderEmail: 'alice@example.test', recipients: [ME, 'bob@example.test'] });

@@ -40,6 +40,21 @@ La vista **Todas las cuentas** fusiona cada buzón activo en una sola lista, jun
 por cuenta. Las carpetas IMAP personalizadas también se sincronizan, y puedes crearlas,
 renombrarlas, borrarlas y arrastrar mensajes entre ellas desde la propia app.
 
+## Responder
+
+<!-- claim:reading-pane-reply -->
+**Responder** contesta al remitente, o a la dirección que el mensaje indica en su cabecera
+*Reply-To*, como hacen las listas de correo o la dirección *no-reply* de una tienda.
+**Responder a todos** añade al resto de la conversación. El asunto de una respuesta o de un
+reenvío se puede editar antes de enviarlo, y la respuesta sigue en su conversación. Todos los
+compositores tienen **Cc** y **Cco**: las copias ocultas llegan sin que el resto de
+destinatarios las vea, y un mensaje puede ir solo en Cc o en Cco.
+
+<!-- claim:compose-drafts-keep-files -->
+Lo que escribes se guarda como borrador mientras escribes, con los archivos adjuntos, así que
+cerrar el compositor o la aplicación lo conserva; un reenvío también se guarda. Un mensaje
+admite hasta 32 archivos de 25 MB como máximo cada uno.
+
 ## Reenviar
 
 <!-- claim:reading-pane-forward -->
@@ -65,6 +80,12 @@ correo archivado de las cuentas de Gmail y Outlook y en **Todas las cuentas**; u
 archiva en su propia carpeta de archivo, que aparece junto a sus demás carpetas. El correo
 archivado solo sale de la bandeja de entrada: la búsqueda, los filtros inteligentes y las
 funciones de IA lo siguen alcanzando.
+
+<!-- claim:feat-list-sent-rows -->
+En todas las listas, la fila de un correo que enviaste nombra a quién iba dirigido («Para: Ana,
+Luis +1») en lugar de tu nombre, y su tooltip lista todos los destinatarios. El nombre de cada
+destinatario sale del propio correo o de cómo firma esa persona cuando te escribe; si no hay
+ninguno, la fila muestra la dirección.
 
 <!-- claim:feat-organize-3 -->
 Marca la casilla al principio de una fila para seleccionarla. Con una o más seleccionadas, una
@@ -149,6 +170,11 @@ estándar `-- `, para que otras aplicaciones de correo la reconozcan. Cuando la 
 para ese tipo de mensaje, los borradores de la IA no incluyen tu nombre ni tus datos de contacto y
 dejan que firme la firma.
 
+<!-- claim:feat-signatures-4 -->
+Debajo de la firma, **Añadir «Enviado con EmailOps» al final de los mensajes que envío** decide
+si los mensajes que envías terminan con esa línea. Viene activado y se aplica a todas las
+cuentas; los mensajes ya enviados conservan su pie.
+
 ## Filtros inteligentes
 
 <!-- claim:feat-smart-filters-1 -->
@@ -181,7 +207,9 @@ Se sincronizan todos los calendarios de una cuenta, no solo el principal — as�
 calendario que un compañero haya compartido contigo aparece aquí igual que en Google o en
 Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sobre la
 cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
-**Ajustes → Calendario**.
+**Ajustes → Calendario**. Los avisos de reunión solo salen de tus propios calendarios: un
+calendario que alguien ha compartido contigo muestra sus reuniones sin avisarte de ellas. Una
+reunión a la que te han invitado te sigue avisando, una sola vez.
 
 <!-- claim:feat-calendar-4 -->
 Las cuentas IMAP tienen calendario al suscribirse a un enlace de calendario publicado (ICS), por
@@ -309,12 +337,22 @@ Las búsquedas se pueden acotar con operadores, solos o junto a texto libre:
 |---|---|
 | `from:ana` | dirección o nombre del remitente |
 | `to:ana` | destinatario |
+| `cc:ana` | alguien en copia (Cc) |
 | `subject:factura` | asunto |
 | `before:2026-09-01` / `after:2026-09-01` | fecha de recepción |
 | `id:<id del correo>` | un correo concreto |
 | `tag:newsletter` / `tag:intent=request` | una etiqueta del clasificador, opcionalmente dentro de una faceta |
 | `domain:example.com` | el dominio del remitente |
 | `ext:pdf` | un adjunto de ese tipo de archivo |
+| `has:attachment` / `-has:attachment` | correo con / sin adjuntos |
+
+<!-- claim:feat-search-3 -->
+En el texto libre, una frase entre comillas busca sus palabras en ese orden, `OR` entre dos
+palabras busca cualquiera de las dos, un `-` (o `NOT`) delante de una palabra deja fuera el
+correo que la tiene, y los paréntesis agrupan: `(factura OR recibo) -borrador`. Las palabras
+seguidas tienen que estar todas y se agrupan antes que `OR`: `factura OR recibo marzo` es
+factura, o recibo y marzo. Los operadores van en mayúsculas; un «or» en minúsculas es una
+palabra más.
 
 ## Correo basura y masivo {#junk-and-bulk-mail}
 

@@ -12,6 +12,8 @@ vi.mock('@/lib/api', () => ({
   getPref: vi.fn(async () => null),
   listDrafts: vi.fn(async () => []),
   currentPlatform: () => 'macos',
+  // No message of the thread names a Reply-To.
+  getThreadReplyTo: vi.fn(async () => ({})),
   getThreadNewContent: vi.fn(async () => [{ emailId: 'a1', text: 'Original text' }]),
   getEmailAttachmentMetas: vi.fn(),
   fetchEmailAttachmentBytes: vi.fn(async () => 'aGVsbG8='),

@@ -699,6 +699,8 @@
     "useForNew": "In neue Nachrichten einfügen",
     "useForReplies": "In Antworten und Weiterleitungen einfügen",
     "placementHelp": "In einer Antwort steht die Signatur unter Ihrem Text, in einer Weiterleitung über der weitergeleiteten Nachricht.",
+    "sentFooter": "„Gesendet mit EmailOps“ am Ende meiner gesendeten Nachrichten hinzufügen",
+    "sentFooterHelp": "Gilt für alle Konten. Bereits gesendete Nachrichten behalten ihre Fußzeile.",
     "imagesHelp": "Bilder werden in jeder Nachricht mitgesendet. Breite Bilder werden auf 600 px verkleinert; jedes darf höchstens 200 KB groß sein, die ganze Signatur 512 KB.",
     "save": "Signatur speichern",
     "saving": "Wird gespeichert…",

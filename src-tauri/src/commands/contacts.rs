@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tauri::State;
 
 use crate::models::error::AppError;
@@ -40,6 +42,16 @@ pub async fn list_contacts_by_company(
     account_id: String,
 ) -> Result<Vec<CompanyContactsGroup>, AppError> {
     contacts::list_contacts_by_company(&state.db, &account_id)
+}
+
+/// Lowercased address → the name it uses when it writes to the account, for
+/// naming the recipients of the user's own messages in inbox rows.
+#[tauri::command]
+pub async fn get_sender_names(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<HashMap<String, String>, AppError> {
+    contacts::get_sender_names(&state.db, &account_id)
 }
 
 /// The account's organization domain, or `None` for a free personal provider.

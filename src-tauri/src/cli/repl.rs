@@ -84,7 +84,7 @@ pub async fn run(session: &mut CliSession) -> Result<()> {
                     eprintln!("commands start with '/'. to chat, use: /chat {line}   (try /help)");
                 }
             }
-            Ok(Signal::CtrlC) | Ok(Signal::CtrlD) => break,
+            Ok(Signal::CtrlC(_)) | Ok(Signal::CtrlD) => break,
             Ok(_) => continue,
             Err(e) => {
                 eprintln!("[emailops-cli] readline error: {e}");

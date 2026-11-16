@@ -17,7 +17,6 @@
   "generatingDraft": "Entwurf wird erstellt…",
   "openInTab": "In Tab öffnen",
   "attachFiles": "Dateien anhängen",
-  "attachFromDraftHint": "Die Anhänge dieses Entwurfs wurden über die CLI hinzugefügt - entfernen Sie sie, um hier neue Dateien anzuhängen",
   "sameDomain": "gleiche Domain",
   "yourReply": "deine Antwort",
   "body": "Nachricht",
@@ -37,7 +36,7 @@
   "discardHint": "Das lässt sich nicht rückgängig machen.",
   "closeWithFiles": {
     "title": "Ohne deine Dateien schließen?",
-    "body": "Dein Text bleibt in den Entwürfen, aber angehängte Dateien werden nicht mit gespeichert.",
+    "body": "Dein Text bleibt in den Entwürfen, aber eine Datei, die noch angehängt wird, oder ein Dokument aus EO Docs wird nicht mit ihm gespeichert.",
     "keep": "Weiter bearbeiten"
   },
   "attachFile": "Datei anhängen",
@@ -178,5 +177,14 @@
     "sending": "Wird gesendet…"
   },
   "attachFromComputer": "Vom Computer",
-  "attachFromEoDocs": "Aus EO Docs"
+  "attachFromEoDocs": "Aus EO Docs",
+  "intake": {
+    "empty": "„{{name}}“ ist leer und wurde nicht angehängt.",
+    "tooLarge": "„{{name}}“ ist größer als 25 MB und wurde nicht angehängt.",
+    "tooMany": "„{{name}}“ wurde nicht angehängt: Eine Nachricht fasst höchstens 32 Dateien.",
+    "pendingTooLarge": "„{{name}}“ wurde nicht angehängt: Warte, bis die Dateien hinzugefügt sind (50 MB auf einmal).",
+    "failed": "„{{name}}“ konnte nicht angehängt werden: {{error}}"
+  },
+  "removeAttachment": "{{name}} entfernen",
+  "draftFilesNotSaved": "Der Entwurf mit den Anhängen konnte nicht gespeichert werden, deshalb wurde nichts gesendet. Versuche es erneut."
 }

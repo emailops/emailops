@@ -33,13 +33,6 @@ impl Default for EmbeddingsConfig {
     }
 }
 
-impl EmbeddingsConfig {
-    /// Returns true when `category` is allowed. Empty `categories` means allow all.
-    pub fn is_category_allowed(&self, category: &str) -> bool {
-        self.categories.is_empty() || self.categories.iter().any(|c| c.eq_ignore_ascii_case(category))
-    }
-}
-
 fn embeddings_config_key(account_id: &str) -> String {
     format!("embeddings_categories:{}", account_id)
 }
@@ -418,10 +411,7 @@ async fn generate_with_service(
         return Ok(0);
     }
 
-    // Load per-account category config. When no specific account is given,
-    // pull the union of all configured categories across accounts so we still
-    // generate something meaningful in the global path. The post-fetch loop
-    // below re-checks each email against its own account's config.
+    // Load per-account category config: every account in the global path.
     let per_account_cfg: std::collections::HashMap<String, EmbeddingsConfig> = match account_id {
         Some(acc) => {
             let mut m = std::collections::HashMap::new();
@@ -437,43 +427,27 @@ async fn generate_with_service(
         }
     };
 
-    // Union of categories across accounts. An empty `categories` means "all
-    // categories" — if any account opts in to all, the SQL filter must also be
-    // permissive (empty Vec). Per-email filtering below narrows back down.
-    let union_categories: Vec<String> = if per_account_cfg.is_empty() {
-        EmbeddingsConfig::default().categories
-    } else if per_account_cfg.values().any(|c| c.categories.is_empty()) {
-        Vec::new()
-    } else {
-        let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for cfg in per_account_cfg.values() {
-            for c in &cfg.categories {
-                set.insert(c.clone());
-            }
-        }
-        set.into_iter().collect()
-    };
-
     // Respect the user's "limit AI work to recent emails" preference so we
-    // never embed emails older than the cutoff. The cutoff depends on each
-    // account's size, so candidates are collected account by account (the
-    // global path included) rather than with one mixed cutoff.
+    // never embed emails older than the cutoff. The cutoff and the categories
+    // depend on the account, so candidates are collected account by account
+    // (the global path included): each account gives its newest pending
+    // emails, and the batch keeps the newest of them all.
     let now = chrono::Utc::now().timestamp();
     let mut email_ids = Vec::new();
-    for acc in per_account_cfg.keys() {
-        let remaining = batch_size - email_ids.len() as i32;
-        if remaining <= 0 {
-            break;
-        }
+    for (acc, cfg) in &per_account_cfg {
         let min_ts = db.ai_processing_min_timestamp(acc, now)?;
-        email_ids.extend(db.get_emails_without_embeddings(Some(acc), remaining, &union_categories, min_ts)?);
+        email_ids.extend(db.get_emails_without_embeddings(Some(acc), batch_size, &cfg.categories, min_ts)?);
     }
 
     if email_ids.is_empty() {
         return Ok(0);
     }
 
-    let total = email_ids.len() as u32;
+    let mut emails = db.get_emails_by_ids(&email_ids)?;
+    emails.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
+    emails.truncate(usize::try_from(batch_size).unwrap_or(0));
+
+    let total = emails.len() as u32;
     let mut generated = 0u32;
 
     emit_log(
@@ -500,8 +474,6 @@ async fn generate_with_service(
         }
     }
 
-    let emails = db.get_emails_by_ids(&email_ids)?;
-
     let mut stopped = false;
     for (idx, email) in emails.iter().enumerate() {
         // Checked between emails, not between batches: once the user stops
@@ -510,15 +482,6 @@ async fn generate_with_service(
             stopped = true;
             break;
         }
-        // Per-account category filter: if the email's account opted out of
-        // the email's category, skip it entirely. The union-based SQL
-        // pre-filter is permissive across accounts; this is the precise check.
-        if let Some(cfg) = per_account_cfg.get(&email.account_id) {
-            if !cfg.is_category_allowed(&email.category) {
-                continue;
-            }
-        }
-
         // `get_emails_by_ids` leaves `body` empty: the text lives in its own table.
         let body = crate::services::thread_clean::clean_email_body(
             &db.get_email_body(&email.id)?,
@@ -919,6 +882,81 @@ mod tests {
         assert_eq!(fake.embed_calls().len(), 5);
         assert_eq!(embedded_emails(&db), 5);
         crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+    }
+
+    fn insert_email(db: &Database, account_id: &str, subject: &str, category: &str, timestamp: i64) {
+        let conn = db.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO accounts (id, provider, email, name, created_at)
+             VALUES (?1, 'gmail', ?1, 'Test', 0)",
+            [account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO emails
+                 (id, account_id, thread_id, subject, sender, sender_email, sender_domain,
+                  recipients_json, cc_json, snippet, timestamp, is_read, category, mailbox, created_at)
+             VALUES (?1, ?2, ?1, ?1, 'Test Sender', 'sender@example.com',
+                     'example.com', '[]', '[]', 'Short body', ?3, 0, ?4, 'inbox', 0)",
+            rusqlite::params![subject, account_id, timestamp, category],
+        )
+        .unwrap();
+    }
+
+    fn embedded_subjects(calls: &[String]) -> Vec<String> {
+        calls
+            .iter()
+            .filter_map(|text| text.strip_prefix("Subject: "))
+            .filter_map(|rest| rest.split('\n').next())
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn run_all_accounts(db: &Arc<Database>, batch_size: i32) -> Vec<String> {
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new().with_embedding_dim(768));
+        let service = AiService::with_provider(db.clone(), fake.clone());
+        test_runtime()
+            .block_on(generate_with_service(db, &service, None, None, batch_size, None, true))
+            .expect("run");
+        embedded_subjects(&fake.embed_calls())
+    }
+
+    /// The bug this pins: a batch was filled account by account, so one
+    /// account's backlog kept another account's new mail waiting.
+    #[test]
+    fn a_batch_over_all_accounts_embeds_the_newest_mail_first() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        insert_email(&db, "acc1", "acc1-old", "primary", 100);
+        insert_email(&db, "acc1", "acc1-new", "primary", 300);
+        insert_email(&db, "acc2", "acc2-mid", "primary", 200);
+
+        assert_eq!(run_all_accounts(&db, 3), vec!["acc1-new", "acc2-mid", "acc1-old"]);
+        assert_eq!(run_all_accounts(&db, 3), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_batch_over_all_accounts_keeps_only_the_newest_up_to_its_size() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        insert_email(&db, "acc1", "acc1-old", "primary", 100);
+        insert_email(&db, "acc1", "acc1-older", "primary", 50);
+        insert_email(&db, "acc2", "acc2-new", "primary", 300);
+
+        assert_eq!(run_all_accounts(&db, 2), vec!["acc2-new", "acc1-old"]);
+    }
+
+    /// Each account is queried with its own categories: a batch spent on mail
+    /// one account excluded would embed nothing and end the drain early.
+    #[test]
+    fn a_batch_over_all_accounts_skips_categories_an_account_excluded() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        insert_email(&db, "acc1", "acc1-primary", "primary", 100);
+        insert_email(&db, "acc2", "acc2-promo", "promotions", 300);
+        save_embeddings_config(&db, "acc1", &EmbeddingsConfig { categories: Vec::new() }).unwrap();
+
+        assert_eq!(run_all_accounts(&db, 1), vec!["acc1-primary"]);
     }
 
     fn embed_one_email(db: &Arc<Database>) -> Vec<String> {

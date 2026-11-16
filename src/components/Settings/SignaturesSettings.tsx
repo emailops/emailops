@@ -13,6 +13,7 @@ import {
 import { useLogStore } from '@/stores/logStore';
 import { useSignatureStore } from '@/stores/signatureStore';
 import type { Account, AccountSignature, SignatureInput } from '@/types';
+import { SentFooterSetting } from './SentFooterSetting';
 
 type Status = { kind: 'idle' } | { kind: 'busy'; label: string } | { kind: 'notice'; text: string };
 
@@ -246,6 +247,7 @@ export function SignaturesSettings({ accounts }: { accounts: Account[] }) {
         </>
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
+      <SentFooterSetting />
     </div>
   );
 }

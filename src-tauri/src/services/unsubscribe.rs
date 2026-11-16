@@ -453,6 +453,7 @@ pub async fn unsubscribe(
                 &account.id,
                 vec![to.clone()],
                 Vec::new(),
+                Vec::new(),
                 subject.as_deref().unwrap_or("Unsubscribe"),
                 &body,
                 Vec::new(),

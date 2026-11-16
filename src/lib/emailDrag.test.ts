@@ -162,7 +162,7 @@ describe('email drag preview', () => {
   });
 
   it('shows the sender and subject on a card attached to the page', () => {
-    const card = buildDragPreview(document, { sender: 'Alice Martin', subject: 'Invoice 42' });
+    const card = buildDragPreview(document, { label: 'Alice Martin', subject: 'Invoice 42' });
     expect(document.body.contains(card)).toBe(true);
     expect(card.textContent).toContain('Alice Martin');
     expect(card.textContent).toContain('Invoice 42');
@@ -171,22 +171,22 @@ describe('email drag preview', () => {
   });
 
   it('never interprets sender or subject as markup', () => {
-    const card = buildDragPreview(document, { sender: '<img src=x onerror=alert(1)>', subject: '<b>hi</b>' });
+    const card = buildDragPreview(document, { label: '<img src=x onerror=alert(1)>', subject: '<b>hi</b>' });
     expect(card.querySelector('img, b')).toBeNull();
     expect(card.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 
   it('shortens long subjects and shows a count badge for several emails', () => {
-    const card = buildDragPreview(document, { sender: 'A', subject: 'x'.repeat(200), count: 3 });
+    const card = buildDragPreview(document, { label: 'A', subject: 'x'.repeat(200), count: 3 });
     expect(card.textContent?.length).toBeLessThan(60);
     expect(card.querySelector('[data-role="count"]')?.textContent).toBe('3');
     expect(
-      buildDragPreview(document, { sender: 'A', subject: 's', count: 1 }).querySelector('[data-role="count"]'),
+      buildDragPreview(document, { label: 'A', subject: 's', count: 1 }).querySelector('[data-role="count"]'),
     ).toBeNull();
   });
 
   it('keeps the sender whole and lets a long subject give way', () => {
-    const card = buildDragPreview(document, { sender: 'PayPal', subject: 'Notification de paiement reçu' });
+    const card = buildDragPreview(document, { label: 'PayPal', subject: 'Notification de paiement reçu' });
     const [sender, subject] = Array.from(card.children) as HTMLElement[];
     expect(sender.textContent).toBe('PayPal');
     expect(sender.style.flexShrink).toBe('0');
@@ -194,7 +194,7 @@ describe('email drag preview', () => {
   });
 
   it('stays compact: one line, small text, at most 200px wide', () => {
-    const card = buildDragPreview(document, { sender: 'Alice Martin', subject: 'Invoice 42', count: 3 });
+    const card = buildDragPreview(document, { label: 'Alice Martin', subject: 'Invoice 42', count: 3 });
     expect(card.style.maxWidth).toBe('200px');
     expect(card.style.whiteSpace).toBe('nowrap');
     expect(card.style.font).toContain('10px');
@@ -203,15 +203,15 @@ describe('email drag preview', () => {
   });
 
   it('keeps a single preview on the page', () => {
-    buildDragPreview(document, { sender: 'A', subject: '1' });
-    buildDragPreview(document, { sender: 'B', subject: '2' });
+    buildDragPreview(document, { label: 'A', subject: '1' });
+    buildDragPreview(document, { label: 'B', subject: '2' });
     expect(document.querySelectorAll('#emailops-drag-preview')).toHaveLength(1);
   });
 
   it('hands the card to setDragImage and removes it right after', () => {
     vi.useFakeTimers();
     const setDragImage = vi.fn();
-    setEmailDragImage({ dataTransfer: { setDragImage } as unknown as DataTransfer }, { sender: 'A', subject: 'S' });
+    setEmailDragImage({ dataTransfer: { setDragImage } as unknown as DataTransfer }, { label: 'A', subject: 'S' });
     expect(setDragImage).toHaveBeenCalledTimes(1);
     const [card, x, y] = setDragImage.mock.calls[0];
     expect((card as HTMLElement).textContent).toContain('S');
@@ -221,8 +221,8 @@ describe('email drag preview', () => {
   });
 
   it('does nothing where setDragImage is unavailable', () => {
-    expect(() => setEmailDragImage({ dataTransfer: {} as DataTransfer }, { sender: 'A', subject: 'S' })).not.toThrow();
-    expect(() => setEmailDragImage({ dataTransfer: null }, { sender: 'A', subject: 'S' })).not.toThrow();
+    expect(() => setEmailDragImage({ dataTransfer: {} as DataTransfer }, { label: 'A', subject: 'S' })).not.toThrow();
+    expect(() => setEmailDragImage({ dataTransfer: null }, { label: 'A', subject: 'S' })).not.toThrow();
     expect(document.getElementById('emailops-drag-preview')).toBeNull();
   });
 });

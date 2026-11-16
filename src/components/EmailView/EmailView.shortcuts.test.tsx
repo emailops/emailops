@@ -12,6 +12,8 @@ vi.mock('@/lib/api', () => ({
   // No reply draft saved for the thread.
   listDrafts: vi.fn(async () => []),
   currentPlatform: () => 'macos',
+  // No message of the thread names a Reply-To.
+  getThreadReplyTo: vi.fn(async () => ({})),
   getThreadNewContent: vi.fn(async () => [
     { emailId: 'e0', text: 'Opening question' },
     { emailId: 'e1', text: 'Latest answer' },

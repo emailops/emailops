@@ -41,6 +41,22 @@ Die Ansicht **Alle Konten** führt jedes aktivierte Postfach in einer Liste zusa
 Ansichten je Konto. Eigene IMAP-Ordner werden ebenfalls synchronisiert, und Sie können sie
 direkt in der App anlegen, umbenennen, löschen und Nachrichten per Drag-and-drop verschieben.
 
+## Antworten
+
+<!-- claim:reading-pane-reply -->
+**Antworten** geht an den Absender oder an die Adresse, die die Nachricht in ihrem
+*Reply-To*-Header nennt, wie es Mailinglisten oder die *No-Reply*-Adresse eines Shops tun.
+**Allen antworten** nimmt alle anderen Beteiligten der Unterhaltung hinzu. Den Betreff einer
+Antwort oder Weiterleitung kann man vor dem Senden ändern, und die Antwort bleibt in ihrer
+Unterhaltung. Jedes Verfassen-Fenster hat **Cc** und **Bcc**: Blindkopien erreichen ihre
+Empfänger, ohne dass die anderen sie sehen, und eine Nachricht kann auch nur an Cc oder Bcc
+gehen.
+
+<!-- claim:compose-drafts-keep-files -->
+Was du schreibst, wird beim Tippen als Entwurf gespeichert, Anhänge eingeschlossen: Schließt du
+das Verfassen-Fenster oder die App, bleibt es erhalten, auch bei einer Weiterleitung. Eine
+Nachricht fasst bis zu 32 Dateien mit je höchstens 25 MB.
+
 ## Weiterleiten
 
 <!-- claim:reading-pane-forward -->
@@ -66,6 +82,12 @@ archivierte Post von Gmail- und Outlook-Konten sowie in **Alle Konten**; ein IMA
 in seinen eigenen Archivordner, der bei seinen übrigen Ordnern erscheint. Archivierte Post ist nur
 aus dem Posteingang heraus: Suche, intelligente Filter und die KI-Funktionen erreichen sie
 weiterhin.
+
+<!-- claim:feat-list-sent-rows -->
+In jeder Liste nennt die Zeile einer Nachricht, die Sie gesendet haben, die Empfänger („An: Ana,
+Luis +1“) statt Ihres eigenen Namens, und ihr Tooltip listet alle Empfänger auf. Der Name eines
+Empfängers stammt aus der Nachricht selbst oder daraus, wie diese Person unterschreibt, wenn sie
+Ihnen schreibt; sonst zeigt die Zeile die Adresse.
 
 <!-- claim:feat-organize-3 -->
 Setzen Sie das Häkchen am Anfang einer Zeile, um sie auszuwählen. Sobald eine oder mehrere ausgewählt
@@ -155,6 +177,12 @@ In der Nur-Text-Fassung einer Nachricht steht vor einer abschließenden Signatur
 Nachricht, lassen KI-Entwürfe Ihren Namen und Ihre Kontaktdaten weg und überlassen das
 Unterschreiben der Signatur.
 
+<!-- claim:feat-signatures-4 -->
+Unter der Signatur legt **„Gesendet mit EmailOps“ am Ende meiner gesendeten Nachrichten
+hinzufügen** fest, ob Ihre gesendeten Nachrichten mit dieser Zeile enden. Die Option ist
+standardmäßig aktiv und gilt für alle Konten; bereits gesendete Nachrichten behalten ihre
+Fußzeile.
+
 ## Intelligente Filter
 
 <!-- claim:feat-smart-filters-1 -->
@@ -187,7 +215,10 @@ Synchronisiert werden alle Kalender eines Kontos, nicht nur der primäre — ein
 eine Kollegin mit Ihnen geteilt hat, erscheint hier also genauso wie in Google oder Outlook.
 Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Raster blendet
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
-**Einstellungen → Kalender**.
+**Einstellungen → Kalender**. Erinnerungen an Besprechungen kommen nur aus Ihren eigenen
+Kalendern: Ein Kalender, den jemand mit Ihnen geteilt hat, zeigt seine Besprechungen, ohne Sie
+daran zu erinnern. Zu einer Besprechung, zu der Sie eingeladen sind, erhalten Sie weiterhin
+genau eine Erinnerung.
 
 <!-- claim:feat-calendar-4 -->
 IMAP-Konten erhalten einen Kalender, indem sie einen veröffentlichten Kalender-Link (ICS)
@@ -315,12 +346,22 @@ Suchen lassen sich mit Operatoren eingrenzen, allein oder neben freiem Text:
 |---|---|
 | `from:ana` | Absenderadresse oder -name |
 | `to:ana` | Empfänger |
+| `cc:ana` | jemand in Kopie (Cc) |
 | `subject:rechnung` | Betreff |
 | `before:2026-09-01` / `after:2026-09-01` | Empfangsdatum |
 | `id:<E-Mail-ID>` | eine bestimmte E-Mail |
 | `tag:newsletter` / `tag:intent=request` | ein Tag der Klassifizierung, optional innerhalb einer Facette |
 | `domain:example.com` | die Domain des Absenders |
 | `ext:pdf` | ein Anhang dieses Dateityps |
+| `has:attachment` / `-has:attachment` | E-Mails mit / ohne Anhang |
+
+<!-- claim:feat-search-3 -->
+Im freien Text sucht eine Wortfolge in Anführungszeichen ihre Wörter in dieser Reihenfolge,
+`OR` zwischen zwei Wörtern findet eines von beiden, ein `-` (oder `NOT`) vor einem Wort lässt
+die E-Mails weg, die es enthalten, und Klammern gruppieren: `(rechnung OR quittung) -entwurf`.
+Nebeneinanderstehende Wörter müssen alle vorkommen und werden vor `OR` gruppiert: `rechnung OR
+quittung märz` heißt Rechnung, oder Quittung und März. Operatoren werden großgeschrieben; ein
+kleingeschriebenes „or“ ist ein normales Wort.
 
 ## Junk und Massen-E-Mails {#junk-and-bulk-mail}
 

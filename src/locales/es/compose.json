@@ -17,7 +17,6 @@
   "generatingDraft": "Generando borrador…",
   "openInTab": "Abrir en pestaña",
   "attachFiles": "Adjuntar archivos",
-  "attachFromDraftHint": "Los adjuntos de este borrador se añadieron desde la CLI; quítalos para adjuntar nuevos archivos aquí",
   "sameDomain": "mismo dominio",
   "yourReply": "tu respuesta",
   "body": "Mensaje",
@@ -37,7 +36,7 @@
   "discardHint": "Esta acción no se puede deshacer.",
   "closeWithFiles": {
     "title": "¿Cerrar sin tus archivos?",
-    "body": "El texto queda en Borradores, pero los archivos adjuntos no se guardan con él.",
+    "body": "Tu texto se queda en Borradores, pero un archivo que aún se está adjuntando, o un documento de EO Docs, no se guarda con él.",
     "keep": "Seguir editando"
   },
   "attachFile": "Adjuntar archivo",
@@ -178,5 +177,14 @@
     "sending": "Enviando…"
   },
   "attachFromComputer": "Desde el equipo",
-  "attachFromEoDocs": "Desde EO Docs"
+  "attachFromEoDocs": "Desde EO Docs",
+  "intake": {
+    "empty": "«{{name}}» está vacío y no se ha adjuntado.",
+    "tooLarge": "«{{name}}» ocupa más de 25 MB y no se ha adjuntado.",
+    "tooMany": "«{{name}}» no se ha adjuntado: un mensaje admite como mucho 32 archivos.",
+    "pendingTooLarge": "«{{name}}» no se ha adjuntado: espera a que terminen de añadirse los archivos (50 MB a la vez).",
+    "failed": "«{{name}}» no se ha podido adjuntar: {{error}}"
+  },
+  "removeAttachment": "Quitar {{name}}",
+  "draftFilesNotSaved": "No se ha podido guardar el borrador con los archivos adjuntos, así que no se ha enviado nada. Inténtalo de nuevo."
 }

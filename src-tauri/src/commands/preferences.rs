@@ -96,7 +96,9 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
         return Err(AppError::InvalidInput(format!(
             "calendar.enabled must be true or false, got: {value}"
         )));
-    } else if is_new_mail_notification_switch(key) && !matches!(value, "true" | "false") {
+    } else if (is_new_mail_notification_switch(key) || key == crate::services::emails::APPEND_FOOTER_PREF)
+        && !matches!(value, "true" | "false")
+    {
         return Err(AppError::InvalidInput(format!(
             "{key} must be true or false, got: {value}"
         )));
@@ -193,6 +195,17 @@ mod tests {
         }
         for bad in ["7", "-5", "60", "ten", ""] {
             assert!(validate_pref("compose.undo_send_delay_secs", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_app_footer_switch_is_true_or_false() {
+        let key = crate::services::emails::APPEND_FOOTER_PREF;
+        for ok in ["true", "false"] {
+            assert!(validate_pref(key, ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "off", "0", "TRUE"] {
+            assert!(validate_pref(key, bad).is_err(), "{bad}");
         }
     }
 

@@ -42,6 +42,22 @@ par compte. Les dossiers IMAP personnalisés sont également synchronisés, et v
 créer, les renommer, les supprimer et y déplacer des messages par glisser-déposer depuis
 l'application.
 
+## Répondre
+
+<!-- claim:reading-pane-reply -->
+**Répondre** s'adresse à l'expéditeur, ou à l'adresse que le message indique dans son en-tête
+*Reply-To*, comme le font les listes de diffusion ou l'adresse *no-reply* d'une boutique.
+**Répondre à tous** ajoute tous les autres participants de la conversation. L'objet d'une
+réponse ou d'un transfert se modifie avant l'envoi, et la réponse reste dans sa conversation.
+Chaque fenêtre de rédaction propose **Cc** et **Cci** : les copies cachées parviennent à leurs
+destinataires sans que les autres les voient, et un message peut partir uniquement en Cc ou en
+Cci.
+
+<!-- claim:compose-drafts-keep-files -->
+Ce que vous écrivez est enregistré comme brouillon au fil de la saisie, pièces jointes
+comprises : fermer la fenêtre de rédaction ou l'application le conserve, et un transfert est
+conservé aussi. Un message contient jusqu'à 32 fichiers de 25 Mo au plus chacun.
+
 ## Transférer
 
 <!-- claim:reading-pane-forward -->
@@ -68,6 +84,12 @@ liste le courrier archivé des comptes Gmail et Outlook, ainsi que dans **Tous l
 compte IMAP archive dans son propre dossier d'archives, qui apparaît avec ses autres dossiers. Le
 courrier archivé quitte seulement la boîte de réception : la recherche, les filtres intelligents
 et les fonctions d'IA y ont toujours accès.
+
+<!-- claim:feat-list-sent-rows -->
+Dans toutes les listes, la ligne d'un message que vous avez envoyé indique à qui il était
+adressé (« À : Ana, Luis +1 ») au lieu de votre propre nom, et son info-bulle liste tous les
+destinataires. Le nom de chaque destinataire vient du message lui-même ou de la façon dont cette
+personne signe quand elle vous écrit ; à défaut, la ligne affiche l'adresse.
 
 <!-- claim:feat-organize-3 -->
 Cochez la case au début d'une ligne pour la sélectionner. Dès qu'une ou plusieurs lignes sont
@@ -156,6 +178,11 @@ standard `-- `, pour que les autres applications de messagerie la reconnaissent.
 une signature pour ce type de message, les brouillons de l'IA omettent votre nom et vos
 coordonnées et laissent la signature signer.
 
+<!-- claim:feat-signatures-4 -->
+Sous la signature, **Ajouter « Envoyé avec EmailOps » à la fin des messages que j'envoie**
+décide si les messages que vous envoyez se terminent par cette ligne. Elle est activée par
+défaut et s'applique à tous les comptes ; les messages déjà envoyés gardent leur pied de message.
+
 ## Filtres intelligents
 
 <!-- claim:feat-smart-filters-1 -->
@@ -189,7 +216,9 @@ Tous les agendas d'un compte sont synchronisés, pas seulement le principal — 
 qu'un collègue a partagé avec vous apparaît donc ici comme dans Google ou Outlook. Chacun
 prend la couleur que lui donne son fournisseur, et la légende au-dessus de la grille masque
 ou affiche les agendas un par un ; les mêmes interrupteurs se trouvent dans
-**Paramètres → Calendrier**.
+**Paramètres → Calendrier**. Les rappels de réunion ne viennent que de vos propres agendas :
+un agenda qu'une autre personne a partagé avec vous affiche ses réunions sans vous les
+rappeler. Une réunion à laquelle vous êtes invité reçoit toujours un seul rappel.
 
 <!-- claim:feat-calendar-4 -->
 Les comptes IMAP ont un calendrier en s'abonnant à un lien de calendrier publié (ICS), par
@@ -320,12 +349,22 @@ Les recherches se précisent avec des opérateurs, seuls ou à côté de texte l
 |---|---|
 | `from:ana` | adresse ou nom de l'expéditeur |
 | `to:ana` | destinataire |
+| `cc:ana` | une personne en copie (Cc) |
 | `subject:facture` | objet |
 | `before:2026-09-01` / `after:2026-09-01` | date de réception |
 | `id:<id du courriel>` | un courriel précis |
 | `tag:newsletter` / `tag:intent=request` | une étiquette du classifieur, éventuellement dans une facette |
 | `domain:example.com` | le domaine de l'expéditeur |
 | `ext:pdf` | une pièce jointe de ce type de fichier |
+| `has:attachment` / `-has:attachment` | courriels avec / sans pièce jointe |
+
+<!-- claim:feat-search-3 -->
+Dans le texte libre, une expression entre guillemets cherche ses mots dans cet ordre, `OR`
+entre deux mots trouve l'un ou l'autre, un `-` (ou `NOT`) devant un mot écarte les courriels
+qui le contiennent, et les parenthèses regroupent : `(facture OR reçu) -brouillon`. Les mots
+côte à côte doivent tous être présents et se regroupent avant `OR` : `facture OR reçu mars`
+veut dire facture, ou reçu et mars. Les opérateurs s'écrivent en majuscules ; un « or » en
+minuscules est un mot ordinaire.
 
 ## Indésirables et courrier de masse {#junk-and-bulk-mail}
 

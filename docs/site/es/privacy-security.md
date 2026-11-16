@@ -115,10 +115,11 @@ funcione sin conexión, y la cuenta se pone al día en segundo plano. Todo lo de
 filtros, carpetas que no has tocado — se queda exactamente como está.
 
 <!-- claim:priv-what-emailops-3 -->
-Cada mensaje que envías desde EmailOps termina con una breve línea «Enviado con EmailOps» que
-enlaza a getemailops.com. El enlace lleva `utm_source=email_footer`, que solo indica a la
-analítica de la web que la visita llegó desde el pie de un correo; no contiene nada que os
-identifique ni a ti ni al destinatario.
+Salvo que lo desactives, cada mensaje que envías desde EmailOps termina con una breve línea
+«Enviado con EmailOps» que enlaza a getemailops.com; desmarca **Añadir «Enviado con EmailOps» al
+final de los mensajes que envío** en **Ajustes → Firmas** para enviar sin ella. El enlace lleva
+`utm_source=email_footer`, que solo indica a la analítica de la web que la visita llegó desde el
+pie de un correo; no contiene nada que os identifique ni a ti ni al destinatario.
 
 ## Sin telemetría
 

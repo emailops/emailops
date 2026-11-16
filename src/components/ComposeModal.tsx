@@ -2,6 +2,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
 import { Modal } from '@/components/common/Modal';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
@@ -10,8 +11,10 @@ import { SendSplitButton } from '@/components/shared/SendSplitButton';
 import { TranslateComposeControl } from '@/components/shared/TranslateComposeControl';
 import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
+import { useDraftFiles } from '@/hooks/useDraftFiles';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import type {
+  DraftAttachmentInput,
   DraftFailedEvent,
   DraftGeneratedEvent,
   EmailAttachment,
@@ -44,14 +47,17 @@ export interface ComposeMaximizeState {
   /** Includes a valid address still sitting in the input box. */
   toAddresses: string[];
   ccAddresses: string[];
+  bccAddresses: string[];
   subject: string;
   /** Rich-text HTML body so the maximized tab can keep formatting + inline images. */
   bodyHtml: string;
   /** Draft row this composer auto-saved, so the tab upserts it instead of
    *  creating a second draft. Undefined when nothing was saved yet. */
   draftId?: string;
-  /** Files attached in the modal (base64), carried into the tab. */
+  /** EO Docs attached in the modal, carried into the tab. */
   attachments: EmailAttachment[];
+  /** Files attached in the modal, already stored for the draft. */
+  draftFiles: DraftAttachmentInput[];
 }
 
 interface ComposeModalProps {
@@ -63,10 +69,7 @@ interface ComposeModalProps {
   onMaximize?: (state: ComposeMaximizeState) => void;
 }
 
-interface LoadingFile {
-  name: string;
-  progress: number; // 0–100
-}
+type RecipientField = 'to' | 'cc' | 'bcc';
 
 function getDomain(email: string): string {
   return extractEmail(email).split('@')[1]?.toLowerCase() || '';
@@ -112,13 +115,18 @@ export function ComposeModal({
   );
   const [ccRecipients, setCcRecipients] = useState<string[]>([]);
   const [showCc, setShowCc] = useState(false);
+  const [bccRecipients, setBccRecipients] = useState<string[]>([]);
+  const [showBcc, setShowBcc] = useState(false);
+  // Files held only here: EO Docs, which are shared rather than attached.
   const [attachments, setAttachments] = useState<EmailAttachment[]>([]);
-  const [loadingFiles, setLoadingFiles] = useState<LoadingFile[]>([]);
+  // Files are stored for the draft as they are attached, so it keeps them.
+  const draftFiles = useDraftFiles(fromAccountId);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [toInput, setToInput] = useState('');
   const [ccInput, setCcInput] = useState('');
+  const [bccInput, setBccInput] = useState('');
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
-  const [activeField, setActiveField] = useState<'to' | 'cc' | null>(null);
+  const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
   // Serializes debounced auto-saves so this composer upserts one draft row
@@ -185,24 +193,20 @@ export function ComposeModal({
     };
   }, [addLog]);
 
-  const allRecipients = [...toRecipients, ...ccRecipients];
+  const allRecipients = [...toRecipients, ...ccRecipients, ...bccRecipients];
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
-  const isLoadingAttachments = loadingFiles.length > 0;
+  const isLoadingAttachments = draftFiles.isStoring;
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
+    cc: mergePendingRecipient(ccRecipients, ccInput),
+    bcc: mergePendingRecipient(bccRecipients, bccInput),
     subject,
     requireSubject: true,
     plainBody: outgoing.plainText,
     inlineImages: outgoing.inlineImages.length,
-    attachments: attachments.length,
+    attachments: attachments.length + draftFiles.files.length,
   });
-
-  // Overall attachment load progress (average across all loading files)
-  const loadProgress =
-    loadingFiles.length === 0
-      ? 100
-      : Math.round(loadingFiles.reduce((sum, f) => sum + f.progress, 0) / loadingFiles.length);
 
   const contextDomain = (() => {
     const domains = allRecipients.filter((r) => !selfEmails.includes(r.toLowerCase())).map(getDomain);
@@ -224,68 +228,40 @@ export function ComposeModal({
       try {
         const results = await api.autocompleteRecipients(account.id, prefix, contextDomain, 8);
         if (suggestionsRef.current !== reqId) return;
-        const existing = new Set([...toRecipients, ...ccRecipients].map((r) => r.toLowerCase()));
+        const existing = new Set([...toRecipients, ...ccRecipients, ...bccRecipients].map((r) => r.toLowerCase()));
         setSuggestions(results.filter((r) => !existing.has(r.email.toLowerCase())));
         setSelectedIdx(0);
       } catch {
         setSuggestions([]);
       }
     },
-    [fromAccountId, accounts, toRecipients, ccRecipients, contextDomain],
+    [fromAccountId, accounts, toRecipients, ccRecipients, bccRecipients, contextDomain],
   );
 
-  const addRecipient = (field: 'to' | 'cc', email: string) => {
+  const recipientFields = {
+    to: { list: toRecipients, setList: setToRecipients, setInput: setToInput },
+    cc: { list: ccRecipients, setList: setCcRecipients, setInput: setCcInput },
+    bcc: { list: bccRecipients, setList: setBccRecipients, setInput: setBccInput },
+  };
+
+  const addRecipient = (field: RecipientField, email: string) => {
     const trimmed = extractEmail(email);
     if (!trimmed || !trimmed.includes('@')) return;
-    if (field === 'to') {
-      if (!toRecipients.includes(trimmed)) setToRecipients((prev) => [...prev, trimmed]);
-      setToInput('');
-    } else {
-      if (!ccRecipients.includes(trimmed)) setCcRecipients((prev) => [...prev, trimmed]);
-      setCcInput('');
-    }
+    const { list, setList, setInput } = recipientFields[field];
+    if (!list.includes(trimmed)) setList((prev) => [...prev, trimmed]);
+    setInput('');
     setSuggestions([]);
   };
 
-  const removeRecipient = (field: 'to' | 'cc', email: string) => {
-    if (field === 'to') setToRecipients((prev) => prev.filter((r) => r !== email));
-    else setCcRecipients((prev) => prev.filter((r) => r !== email));
+  const removeRecipient = (field: RecipientField, email: string) => {
+    recipientFields[field].setList((prev) => prev.filter((r) => r !== email));
   };
 
-  const handleFiles = useCallback((files: FileList | null) => {
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const name = file.name;
-      setLoadingFiles((prev) => [...prev, { name, progress: 0 }]);
-
-      const reader = new FileReader();
-
-      reader.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          setLoadingFiles((prev) => prev.map((f) => (f.name === name ? { ...f, progress: pct } : f)));
-        }
-      };
-
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        const data = result.split(',')[1] ?? '';
-        setAttachments((prev) => [
-          ...prev,
-          { filename: name, mimeType: file.type || 'application/octet-stream', data },
-        ]);
-        setLoadingFiles((prev) => prev.filter((f) => f.name !== name));
-      };
-
-      reader.onerror = () => {
-        setLoadingFiles((prev) => prev.filter((f) => f.name !== name));
-      };
-
-      reader.readAsDataURL(file);
-    });
+  const handleFiles = (files: FileList | File[] | null) => {
+    draftFiles.addFiles(files);
     // Reset the input so the same file can be re-selected if removed
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
+  };
   // A file dropped anywhere on the composer is attached, not opened.
   const { isOver: fileOver, dropProps } = useFileDrop(handleFiles);
 
@@ -293,7 +269,7 @@ export function ComposeModal({
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleKeyDown = (field: 'to' | 'cc', e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
+  const handleKeyDown = (field: RecipientField, e: React.KeyboardEvent<HTMLInputElement>, input: string) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIdx((i) => Math.min(i + 1, suggestions.length - 1));
@@ -308,13 +284,14 @@ export function ComposeModal({
       addRecipient(field, input);
     } else if (e.key === 'Backspace' && input === '') {
       e.preventDefault();
-      const list = field === 'to' ? toRecipients : ccRecipients;
+      const { list } = recipientFields[field];
       if (list.length > 0) removeRecipient(field, list[list.length - 1]);
     }
   };
 
-  // The autosaved draft keeps the text, not the files: those live here until
-  // the message goes out, so closing with some asks first.
+  // The autosaved draft keeps the text and the files, once they are stored;
+  // a file still being stored, or an EO Doc, lives only here, so closing with
+  // one asks first.
   const [confirmingClose, setConfirmingClose] = useState(false);
   const requestClose = () => {
     if (isSending) return;
@@ -349,9 +326,11 @@ export function ComposeModal({
       // recipient the user means; the saved draft must not drop it.
       toAddresses: mergePendingRecipient(toRecipients, toInput),
       ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
       subject,
       plainBody: prepared.plainText,
       bodyHtml,
+      attachments: draftFiles.forSave,
       isSending,
       sent,
     };
@@ -363,7 +342,20 @@ export function ComposeModal({
       return;
     }
     debouncedRef.current.schedule(state);
-  }, [toRecipients, ccRecipients, toInput, ccInput, subject, bodyHtml, fromAccountId, isSending, sent]);
+  }, [
+    toRecipients,
+    ccRecipients,
+    bccRecipients,
+    toInput,
+    ccInput,
+    bccInput,
+    subject,
+    bodyHtml,
+    draftFiles.forSave,
+    fromAccountId,
+    isSending,
+    sent,
+  ]);
 
   // Closing the composer must not drop the edit still inside the quiet period.
   useEffect(() => {
@@ -381,10 +373,12 @@ export function ComposeModal({
       accountId: fromAccountId,
       toAddresses: mergePendingRecipient(toRecipients, toInput),
       ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
       subject,
       bodyHtml,
       draftId,
       attachments,
+      draftFiles: draftFiles.files,
     });
   };
 
@@ -395,15 +389,18 @@ export function ComposeModal({
     // tokenized) so it isn't silently dropped from the outgoing message.
     const to = mergePendingRecipient(toRecipients, toInput);
     const cc = mergePendingRecipient(ccRecipients, ccInput);
+    const bcc = mergePendingRecipient(bccRecipients, bccInput);
     const prepared = prepareOutgoingHtml(bodyHtml);
     const plain = prepared.plainText.trim();
     const ready = canSend({
       to,
+      cc,
+      bcc,
       subject,
       requireSubject: true,
       plainBody: plain,
       inlineImages: prepared.inlineImages.length,
-      attachments: attachments.length,
+      attachments: attachments.length + draftFiles.files.length,
     });
     if (!ready || isLoadingAttachments) return;
     setSendError(null);
@@ -413,11 +410,18 @@ export function ComposeModal({
       // the draft id is final; auto-save stops while sending.
       debouncedRef.current.flushPending();
       const draftId = await autosaverRef.current?.flush();
+      // The files go out from the draft, which queueing reads.
+      const draftHoldsFiles = draftFiles.files.length > 0;
+      if (draftHoldsFiles && !draftId) {
+        setSendError(t('compose:draftFilesNotSaved'));
+        return;
+      }
       const message: OutgoingMessage = {
         accountId: fromAccountId,
         replyToEmailId: null,
         to,
         cc,
+        bcc,
         subject: subject.trim(),
         body: plain,
         bodyHtml: prepared.bodyHtml,
@@ -434,6 +438,7 @@ export function ComposeModal({
       }
       const outcome = await outbox.send(message, {
         draftId,
+        draftHoldsFiles,
         sendDirect: async () => {
           await api.sendNewEmail(
             fromAccountId,
@@ -444,8 +449,9 @@ export function ComposeModal({
             attachments,
             prepared.bodyHtml,
             prepared.inlineImages,
+            bcc,
           );
-          addLog('success', 'sync', `Email sent to ${to.join(', ')}`);
+          addLog('success', 'sync', `Email sent to ${[...to, ...cc, ...bcc].join(', ')}`);
           setSent(true);
           // Drop the auto-saved draft (local + provider copy) now that it's
           // sent, so it doesn't linger in Drafts or get re-pulled on the next sync.
@@ -495,7 +501,7 @@ export function ComposeModal({
   };
 
   const renderTokenInput = (
-    field: 'to' | 'cc',
+    field: RecipientField,
     label: string,
     recipients: string[],
     input: string,
@@ -641,17 +647,31 @@ export function ComposeModal({
           {/* To */}
           {renderTokenInput('to', t('compose:to'), toRecipients, toInput, setToInput)}
 
-          {/* Cc toggle */}
-          {!showCc && (
-            <button
-              type="button"
-              onClick={() => setShowCc(true)}
-              className="text-xs text-primary-500 hover:text-primary-600 mb-2 ml-16"
-            >
-              + {t('compose:cc')}
-            </button>
+          {/* Cc / Bcc toggles */}
+          {(!showCc || !showBcc) && (
+            <div className="flex gap-3 mb-2 ml-16">
+              {!showCc && (
+                <button
+                  type="button"
+                  onClick={() => setShowCc(true)}
+                  className="text-xs text-primary-500 hover:text-primary-600"
+                >
+                  + {t('compose:cc')}
+                </button>
+              )}
+              {!showBcc && (
+                <button
+                  type="button"
+                  onClick={() => setShowBcc(true)}
+                  className="text-xs text-primary-500 hover:text-primary-600"
+                >
+                  + {t('compose:bcc')}
+                </button>
+              )}
+            </div>
           )}
           {showCc && renderTokenInput('cc', t('compose:cc'), ccRecipients, ccInput, setCcInput)}
+          {showBcc && renderTokenInput('bcc', t('compose:bcc'), bccRecipients, bccInput, setBccInput)}
 
           {/* Unusual recipient warning */}
           {unusualRecipients.length > 0 && (
@@ -688,36 +708,39 @@ export function ComposeModal({
             onChange={setBodyHtml}
             placeholder={t('compose:bodyPlaceholder')}
             contentClassName="min-h-[240px]"
+            onAttachFiles={handleFiles}
           />
 
-          {/* Attachment loading progress */}
+          {/* Files being stored for the draft */}
           {isLoadingAttachments && (
-            <div className="mt-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-500">
-                  {t('compose:readingFiles', { count: loadingFiles.length })}
-                </span>
-                <span className="text-xs text-gray-400">{loadProgress}%</span>
-              </div>
-              <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary-500 rounded-full transition-all duration-100"
-                  style={{ width: `${loadProgress}%` }}
-                />
-              </div>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {loadingFiles.map((f) => (
-                  <span key={f.name} className="text-xs text-gray-400 truncate max-w-[200px]">
-                    {f.name}
-                  </span>
-                ))}
-              </div>
+            <div className="mt-3 text-xs text-gray-500">
+              {t('compose:readingFiles', { count: draftFiles.storingNames.length })}{' '}
+              <span className="text-gray-400">{draftFiles.storingNames.join(', ')}</span>
             </div>
           )}
+          <InlineError message={draftFiles.error} className="mt-2" />
 
-          {/* Attached files */}
-          {attachments.length > 0 && (
+          {/* Attached files: the draft's, then EO Docs */}
+          {draftFiles.files.length + attachments.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
+              {draftFiles.files.map((file, i) => (
+                <div
+                  key={file.filePath}
+                  className="flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs text-gray-700"
+                >
+                  <span className="max-w-[180px] truncate" title={file.filename ?? undefined}>
+                    {file.filename}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => draftFiles.remove(i)}
+                    aria-label={t('compose:removeAttachment', { name: file.filename ?? '' })}
+                    className="ml-0.5 text-gray-400 hover:text-red-500"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
               {attachments.map((att, i) => (
                 <div
                   key={att.filename}

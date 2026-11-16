@@ -361,6 +361,12 @@ export async function getThread(accountId: string, threadId: string): Promise<Em
   return invoke('get_thread', { accountId, threadId });
 }
 
+/** Email id → the `Reply-To` addresses a reply to that message goes to
+ *  instead of its sender; messages without one are left out. */
+export async function getThreadReplyTo(accountId: string, threadId: string): Promise<Record<string, string[]>> {
+  return invoke('get_thread_reply_to', { accountId, threadId });
+}
+
 /** Each message of a thread with what it adds to it, oldest first. */
 export async function getThreadNewContent(accountId: string, threadId: string): Promise<ThreadMessageText[]> {
   return invoke('get_thread_new_content', { accountId, threadId });
@@ -452,6 +458,7 @@ export interface OutgoingMessage {
   replyToEmailId?: string | null;
   to: string[];
   cc: string[];
+  bcc?: string[];
   /** For a reply, empty = the parent's subject ("Re: …"). */
   subject: string;
   /** Plain-text body. */
@@ -529,6 +536,9 @@ export async function sendReply(
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
   attachments?: EmailAttachment[],
+  bccEmails?: string[],
+  /** Unset replies to the parent's subject. */
+  subject?: string,
 ): Promise<void> {
   return invoke('send_reply', {
     emailId,
@@ -536,6 +546,8 @@ export async function sendReply(
     fromAccountId,
     toEmails,
     ccEmails,
+    bccEmails,
+    subject,
     bodyHtml,
     inlineImages,
     attachments,
@@ -562,11 +574,13 @@ export async function sendNewEmail(
   attachments?: EmailAttachment[],
   bodyHtml?: string,
   inlineImages?: EmailAttachment[],
+  bccEmails?: string[],
 ): Promise<void> {
   return invoke('send_new_email', {
     accountId,
     toEmails,
     ccEmails,
+    bccEmails,
     subject,
     body,
     attachments,
@@ -755,8 +769,11 @@ export async function getSyncStatus(accountId: string): Promise<SyncStatus> {
 // Search commands
 export interface ParsedSearchQuery {
   keywords: string[];
+  /** The free text as typed: phrases, brackets and AND / OR / NOT kept. */
+  text: string;
   fromFilter: string | null;
   toFilter: string | null;
+  ccFilter: string | null;
   subjectFilter: string | null;
   hasAttachment: boolean | null;
   isUnread: boolean | null;
@@ -1061,13 +1078,10 @@ export async function getEmailAttachmentMetas(accountId: string, emailId: string
   return invoke('get_email_attachment_metas', { accountId, emailId });
 }
 
-/** Fetch attachment bytes from the provider; returns standard base64. */
-export async function fetchEmailAttachmentBytes(
-  accountId: string,
-  emailId: string,
-  providerAttachmentId: string,
-): Promise<string> {
-  return invoke('fetch_email_attachment_bytes', { accountId, emailId, providerAttachmentId });
+/** The bytes of an attachment, by its row id, as standard base64: from its
+ *  downloaded file, its stored bytes or the provider. */
+export async function fetchEmailAttachmentBytes(accountId: string, metaId: string): Promise<string> {
+  return invoke('fetch_email_attachment_bytes', { accountId, metaId });
 }
 
 /** Open a locally-cached email attachment with the OS default app; `confirmed` as in `openAttachmentExternally`. */
@@ -1633,6 +1647,11 @@ export async function listContactsByCompany(accountId: string): Promise<CompanyC
   return invoke('list_contacts_by_company', { accountId });
 }
 
+/** Lowercased address → the name it uses when it writes to the account. */
+export async function getSenderNames(accountId: string): Promise<Record<string, string>> {
+  return invoke('get_sender_names', { accountId });
+}
+
 /** The account's organization domain ("Mi organización"); `null` for a free
  *  personal provider such as gmail.com. */
 export async function getOrganizationDomain(accountId: string): Promise<string | null> {
@@ -1668,12 +1687,19 @@ export interface DraftAttachmentInput {
   mimeType?: string | null;
 }
 
+/** Store a file attached in a composer so its draft keeps it; the result goes
+ *  into the draft's next save. */
+export async function storeDraftFile(accountId: string, file: EmailAttachment): Promise<DraftAttachmentInput> {
+  return invoke('store_draft_file', { accountId, file });
+}
+
 export interface SaveDraftRequest {
   id?: string;
   emailId?: string | null;
   accountId: string;
   toAddresses: string[];
   ccAddresses?: string[];
+  bccAddresses?: string[];
   subject: string;
   body: string;
   bodyHtml?: string | null;

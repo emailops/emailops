@@ -48,6 +48,7 @@ IGNORE_SEGMENTS = {
 # Keyed by "<file>:<english text>".
 NOT_A_CONTROL = {
     "getting-started.md:Embeddings",   # "Embeddings are generated in the background"
+    "ai-features.md:you",              # "what **you** wrote", not the inbox row's "To: you"
 }
 
 

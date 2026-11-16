@@ -113,10 +113,11 @@ in the background. Everything else — labels, filters, folders you have not tou
 exactly as it is.
 
 <!-- claim:priv-what-emailops-3 -->
-Every message you send from EmailOps ends with a short "Sent with EmailOps" line that links
-to getemailops.com. The link carries `utm_source=email_footer`, which only tells the
-website's analytics that a visit came from an email footer; nothing in it identifies you or
-the recipient.
+Unless you turn it off, every message you send from EmailOps ends with a short "Sent with
+EmailOps" line that links to getemailops.com; clear **Add "Sent with EmailOps" at the end of the
+messages I send** in **Settings → Signatures** to send without it. The link carries
+`utm_source=email_footer`, which only tells the website's analytics that a visit came from an
+email footer; nothing in it identifies you or the recipient.
 
 ## No telemetry
 

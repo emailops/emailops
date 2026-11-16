@@ -699,6 +699,8 @@
     "useForNew": "Insert in new messages",
     "useForReplies": "Insert in replies and forwards",
     "placementHelp": "In a reply the signature goes below your text; in a forward, above the forwarded message.",
+    "sentFooter": "Add \"Sent with EmailOps\" at the end of the messages I send",
+    "sentFooterHelp": "Applies to every account. Messages already sent keep their footer.",
     "imagesHelp": "Images travel inside each message. Wide images are scaled down to 600 px; each may be 200 KB at most, the whole signature 512 KB.",
     "save": "Save signature",
     "saving": "Saving…",

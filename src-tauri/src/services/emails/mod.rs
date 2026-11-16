@@ -12,6 +12,7 @@ mod optimistic;
 mod provider;
 mod reconcile;
 mod redownload;
+mod reply_to;
 mod send;
 mod snooze;
 mod spam;
@@ -33,6 +34,7 @@ pub use compose::{
     check_webview_draft_attachments, compose_draft, delete_draft, plan_compose, pull_provider_drafts,
     refresh_provider_drafts, send_draft, ComposeInput, ComposePlan,
 };
+pub use draft_files::{store_composer_file, sweep_abandoned_draft_files};
 pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
@@ -46,6 +48,7 @@ pub use redownload::{redownload_email, redownload_email_with_provider, redownloa
 pub(crate) use send::validate_new_email;
 pub use send::{
     outgoing_body, send_new_email, send_new_email_with_provider, send_outgoing, send_reply, send_reply_with_provider,
+    APPEND_FOOTER_PREF,
 };
 pub use snooze::{
     due_snoozes, list_thread_snoozes, snooze_threads, unsnooze_threads, wake_due_snoozes, SnoozesWoken,
@@ -95,6 +98,8 @@ pub fn get_emails(
 pub fn get_folders(db: &Arc<Database>, account_id: &str) -> Result<Vec<crate::models::Folder>> {
     db.list_folders(account_id, Some(crate::models::FolderRole::Custom))
 }
+
+pub use reply_to::thread_reply_to;
 
 pub fn get_thread(db: &Arc<Database>, account_id: &str, thread_id: &str) -> Result<Vec<Email>> {
     db.get_thread(account_id, thread_id)

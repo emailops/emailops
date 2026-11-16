@@ -16,7 +16,7 @@ use crate::services::accounts;
 use crate::sync::folder_plan::{plan_folders, FolderPlan, ListedFolder, WellKnownFolder};
 use crate::sync::provider::{EmailProvider, ExtraMailbox};
 
-use super::events::{emit_account_log, emit_progress};
+use super::events::{emit_account_log, emit_log, emit_progress};
 use super::provider::build_provider_for_account;
 
 /// How long a [`SyncContention::Wait`] caller waits for the in-flight sync to
@@ -1567,13 +1567,14 @@ async fn enqueue_ai_followups(
         }
     }
 
-    // Search embeddings — drain the entire backlog in 50-row batches.
+    // Search embeddings — drain the entire backlog in 50-row batches. The
+    // drain covers every account, newest mail first, and re-reads what is
+    // pending before each batch: mail that arrives in any account while one
+    // account's backlog drains goes ahead of that backlog.
     {
         let db_clone = Arc::clone(db);
-        let account_id_clone = account_id.to_string();
         let app_handle = app.clone();
-        let email_embed = account_email.to_string();
-        let task_label = format!("embeddings:after_sync:{}:{}", account_id_clone, label_suffix);
+        let task_label = format!("embeddings:after_sync:{}:{}", account_id, label_suffix);
         ai_background
             .submit_named(&task_label, async move {
                 const BATCH_SIZE: i32 = 50;
@@ -1582,10 +1583,10 @@ async fn enqueue_ai_followups(
                 for _ in 0..MAX_BATCHES {
                     match crate::services::embeddings::generate_embeddings(
                         &db_clone,
-                        Some(&account_id_clone),
+                        None,
                         Some(app_handle.clone()),
                         BATCH_SIZE,
-                        Some(email_embed.as_str()),
+                        None,
                     )
                     .await
                     {
@@ -1594,10 +1595,9 @@ async fn enqueue_ai_followups(
                             total += n;
                         }
                         Err(e) => {
-                            emit_account_log(
+                            emit_log(
                                 "error",
                                 "embeddings",
-                                &email_embed,
                                 &format!("Embedding generation failed after {}: {}", total, e),
                             );
                             return;
@@ -1607,12 +1607,7 @@ async fn enqueue_ai_followups(
                 // Only report when embeddings were actually generated — a
                 // "Generated 0 embeddings" line is noise on an idle sync.
                 if total > 0 {
-                    emit_account_log(
-                        "success",
-                        "embeddings",
-                        &email_embed,
-                        &format!("Generated {} embeddings", total),
-                    );
+                    emit_log("success", "embeddings", &format!("Generated {} embeddings", total));
                 }
             })
             .await;

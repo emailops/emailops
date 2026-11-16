@@ -43,6 +43,15 @@
 //! - [`examine_uid_validity`]: raw, like [`select`], but it keeps the one
 //!   response code it is after.
 //!
+//! - [`advertises`]: reads the raw `CAPABILITY` reply and picks out its atoms
+//!   itself. The crate's parser rejects the whole reply over a space before
+//!   CRLF, which a real server sends (issue #243).
+//!
+//! `imap` is our fork of 2.4.1 (see `docs/DECISIONS.md`). A line its parser
+//! rejects stays in the raw response, which is where the readers above find it,
+//! and fails a typed command only once the whole response has been read, so the
+//! session stays usable. [`describe_error`] reports such a line masked.
+//!
 //! Every body fetch here goes out as [`FETCH_BODY_PEEK`]. Read its docs before
 //! changing the attribute: the non-`PEEK` form mutates the user's mailbox.
 
@@ -61,7 +70,7 @@ use crate::models::error::{AppError, Result};
 pub(crate) fn uid_search<T: Read + Write>(session: &mut imap::Session<T>, query: &str) -> Result<Vec<u32>> {
     let raw = session
         .run_command_and_read_response(format!("UID SEARCH {query}"))
-        .map_err(|e| AppError::SyncError(format!("IMAP SEARCH failed: {e}")))?;
+        .map_err(|e| AppError::SyncError(format!("IMAP SEARCH failed: {}", describe_error(&e))))?;
 
     let parsed = parse_search_response(&raw);
 
@@ -92,7 +101,7 @@ pub(crate) fn select<T: Read + Write>(session: &mut imap::Session<T>, mailbox_na
     session
         .run_command_and_read_response(format!("SELECT {quoted}"))
         .map(|_| ())
-        .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {e}")))
+        .map_err(|e| AppError::SyncError(format!("IMAP SELECT failed: {}", describe_error(&e))))
 }
 
 /// Pure: `Ok(false)` when the server refused the mailbox, an error when the
@@ -136,7 +145,7 @@ pub(crate) fn examine_uid_validity<T: Read + Write>(
     let quoted = quote_mailbox("EXAMINE", mailbox_name)?;
     let raw = session
         .run_command_and_read_response(format!("EXAMINE {quoted}"))
-        .map_err(|e| AppError::SyncError(format!("IMAP EXAMINE failed: {e}")))?;
+        .map_err(|e| AppError::SyncError(format!("IMAP EXAMINE failed: {}", describe_error(&e))))?;
     Ok(parse_uid_validity(&raw))
 }
 
@@ -192,7 +201,7 @@ pub(crate) fn uid_fetch_identities<T: Read + Write>(session: &mut imap::Session<
     Err(AppError::SyncError(format!(
         "IMAP FETCH failed: {}",
         last_err
-            .map(|e| e.to_string())
+            .map(|e| describe_error(&e))
             .unwrap_or_else(|| "server kept returning interleaved responses".to_string())
     )))
 }
@@ -219,7 +228,7 @@ pub(crate) fn uid_copy<T: Read + Write>(
     let quoted = quote_mailbox("COPY", mailbox_name)?;
     session
         .run_command_and_check_ok(format!("UID COPY {uid_set} {quoted}"))
-        .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{mailbox_name}' failed: {e}")))
+        .map_err(|e| AppError::SyncError(format!("IMAP COPY to '{mailbox_name}' failed: {}", describe_error(&e))))
 }
 
 /// Set or clear `\Seen` on one message: `UID STORE <uid> ±FLAGS.SILENT (\Seen)`.
@@ -248,7 +257,7 @@ fn uid_store_flag<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, fla
     let sign = if on { '+' } else { '-' };
     session
         .run_command_and_check_ok(format!("UID STORE {uid} {sign}FLAGS.SILENT ({flag})"))
-        .map_err(|e| AppError::SyncError(format!("IMAP STORE failed: {e}")))
+        .map_err(|e| AppError::SyncError(format!("IMAP STORE failed: {}", describe_error(&e))))
 }
 
 /// Render a mailbox name as an IMAP quoted string. A raw line break would let
@@ -341,7 +350,7 @@ pub(crate) fn uid_fetch_body<T: Read + Write>(session: &mut imap::Session<T>, ui
     Err(AppError::SyncError(format!(
         "IMAP FETCH failed: {}",
         last_err
-            .map(|e| e.to_string())
+            .map(|e| describe_error(&e))
             .unwrap_or_else(|| "server kept returning interleaved responses".to_string())
     )))
 }
@@ -389,7 +398,7 @@ pub(crate) fn uid_fetch_body_batch<T: Read + Write>(
     Err(AppError::SyncError(format!(
         "IMAP FETCH failed: {}",
         last_err
-            .map(|e| e.to_string())
+            .map(|e| describe_error(&e))
             .unwrap_or_else(|| "server kept returning interleaved responses".to_string())
     )))
 }
@@ -427,7 +436,7 @@ pub(crate) fn uid_fetch_flags<T: Read + Write>(
         let set = chunk.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
         let raw = session
             .run_command_and_read_response(format!("UID FETCH {set} (UID FLAGS)"))
-            .map_err(|e| AppError::SyncError(format!("IMAP FETCH FLAGS failed: {e}")))?;
+            .map_err(|e| AppError::SyncError(format!("IMAP FETCH FLAGS failed: {}", describe_error(&e))))?;
         // An unsolicited FETCH about some other message must not be read as an
         // answer about one of ours.
         seen_by_uid.extend(
@@ -560,6 +569,83 @@ fn strip_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
     } else {
         None
     }
+}
+
+/// How a server line looks with its text masked, which is all a log line or
+/// a bug report may carry: a rejected line can hold a folder name, and one that
+/// is no response at all can be message text. Letters become `A`/`a` and digits
+/// `9`; punctuation and spacing stay, since that is usually what the parser
+/// tripped on, and so does the response keyword, which is protocol. Only the
+/// first line, and a bounded part of it.
+pub(crate) fn rejected_line_shape(line: &[u8]) -> String {
+    let first = line.split(|byte| *byte == b'\n').next().unwrap_or_default();
+    let first = first.strip_suffix(b"\r").unwrap_or(first);
+    let text = String::from_utf8_lossy(first);
+    let shape = match split_at_keyword(&text) {
+        Some((before, keyword, after)) => format!("{}{keyword}{}", mask_text(before), mask_text(after)),
+        None => mask_text(&text),
+    };
+    truncate_for_error(&shape)
+}
+
+/// Split an untagged line around its response keyword: `* KEYWORD …` or
+/// `* 12 KEYWORD …`, in capitals.
+fn split_at_keyword(line: &str) -> Option<(&str, &str, &str)> {
+    let rest = line
+        .strip_prefix("* ")?
+        .trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
+    let (before, rest) = line.split_at(line.len() - rest.len());
+    let (keyword, after) = rest.split_at(rest.find(' ').unwrap_or(rest.len()));
+    (!keyword.is_empty() && keyword.bytes().all(|byte| byte.is_ascii_uppercase())).then_some((before, keyword, after))
+}
+
+fn mask_text(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            c if c.is_uppercase() => 'A',
+            c if c.is_alphabetic() => 'a',
+            c if c.is_numeric() => '9',
+            ' '..='~' => c,
+            _ => '?',
+        })
+        .collect()
+}
+
+/// `e` for a log line or an error message. A rejected line is the only evidence
+/// of what a server really sends, so its masked shape goes along.
+pub(crate) fn describe_error(e: &imap::Error) -> String {
+    match e {
+        imap::Error::Parse(imap::error::ParseError::Invalid(line)) => {
+            format!("{e} (server sent {:?})", rejected_line_shape(line))
+        }
+        _ => e.to_string(),
+    }
+}
+
+/// Whether the server advertises `capability`. A failed `CAPABILITY` counts as
+/// not advertised: every caller has a plain IMAP4rev1 path.
+pub(crate) fn advertises<T: Read + Write>(session: &mut imap::Session<T>, capability: &str) -> bool {
+    match session.run_command_and_read_response("CAPABILITY") {
+        Ok(raw) => response_advertises(&raw, capability),
+        Err(e) => {
+            crate::services::logger::log(
+                "debug",
+                "sync",
+                format!("IMAP CAPABILITY failed: {}", describe_error(&e)),
+            );
+            false
+        }
+    }
+}
+
+/// Whether a `* CAPABILITY` line of the raw response lists `capability`, as a
+/// whole atom and in any case. Capability atoms hold no literals.
+fn response_advertises(raw: &[u8], capability: &str) -> bool {
+    String::from_utf8_lossy(raw)
+        .lines()
+        .filter_map(|line| strip_keyword(line.strip_prefix('*')?.trim_start(), "CAPABILITY"))
+        .flat_map(str::split_whitespace)
+        .any(|atom| atom.eq_ignore_ascii_case(capability))
 }
 
 /// Shorten a server response line for inclusion in a user-facing error.
@@ -1448,5 +1534,162 @@ mod tests {
         assert!(short.ends_with('…'));
         // Would have panicked on a non-boundary slice.
         assert!(short.chars().all(|c| c == 'á' || c == '…'));
+    }
+
+    // Lines the crate's parser rejects: issue #243. Every server text below is
+    // made up.
+
+    #[test]
+    fn a_capability_reply_the_parser_rejects_does_not_derail_the_next_command() {
+        // CAPABILITY, then EXAMINE: the sequence behind the panic on `a3` vs `a4`.
+        let mut session = session_for(
+            "* CAPABILITY AUTH=PLAIN IDLE\r\n\
+             a2 OK Capability completed.\r\n\
+             * OK [UIDVALIDITY 7] Ok\r\n\
+             a3 OK Examine completed.\r\n",
+        );
+
+        assert!(!advertises(&mut session, "MOVE"));
+
+        assert_eq!(examine_uid_validity(&mut session, "INBOX").unwrap(), Some(7));
+    }
+
+    #[test]
+    fn advertises_reads_a_capability_line_that_ends_in_a_space() {
+        // The shape the server in #243 sends once logged in. The crate's parser
+        // rejects the whole reply over the space before CRLF.
+        let mut session = session_for(
+            "* CAPABILITY IMAP4 IMAP4rev1 XLIST MOVE IDLE NAMESPACE CHILDREN ID UIDPLUS \r\n\
+             a2 OK Capability completed.\r\n",
+        );
+
+        assert!(advertises(&mut session, "MOVE"));
+    }
+
+    #[test]
+    fn response_advertises_matches_whole_atoms_of_capability_lines() {
+        let cases: &[(&str, &str, bool)] = &[
+            ("* CAPABILITY IMAP4rev1 MOVE\r\n", "MOVE", true),
+            ("* CAPABILITY IMAP4rev1 move\r\n", "MOVE", true),
+            ("* CAPABILITY IMAP4rev1 UIDPLUS \r\n", "UIDPLUS", true),
+            ("* 3 EXISTS\r\n* CAPABILITY IMAP4rev1 MOVE\r\n", "MOVE", true),
+            ("* CAPABILITY IMAP4rev1 XMOVE\r\n", "MOVE", false),
+            ("* CAPABILITYX MOVE\r\n", "MOVE", false),
+            ("* OK MOVE\r\n", "MOVE", false),
+            ("", "MOVE", false),
+        ];
+        for (raw, capability, expected) in cases {
+            assert_eq!(
+                response_advertises(raw.as_bytes(), capability),
+                *expected,
+                "{raw:?} {capability}"
+            );
+        }
+    }
+
+    #[test]
+    fn uid_search_reads_a_result_line_the_parser_rejects() {
+        let mut session = session_for("* SEARCH 1 2 3 \r\na2 OK Search completed.\r\n");
+
+        assert_eq!(uid_search(&mut session, "ALL").unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn select_ignores_a_line_the_parser_rejects() {
+        let mut session = session_for("* XFOO bar baz\r\na2 OK Select completed.\r\n");
+
+        select(&mut session, "INBOX").unwrap();
+    }
+
+    #[test]
+    fn a_rejected_line_in_a_fetch_is_a_masked_error_and_the_session_stays_usable() {
+        let mut session = session_for(
+            "* XFOO private text\r\n\
+             * 1 FETCH (UID 7 FLAGS () BODY[] {5}\r\nhello)\r\n\
+             a2 OK Fetch completed.\r\n\
+             a3 OK Noop completed.\r\n",
+        );
+
+        let err = uid_fetch_body(&mut session, 7).unwrap_err().to_string();
+
+        assert!(err.contains(r#""* XFOO aaaaaaa aaaa""#), "{err}");
+        assert!(!err.contains("private"), "{err}");
+        session.noop().unwrap();
+    }
+
+    #[test]
+    fn a_rejected_literal_leaves_a_session_the_liveness_check_refuses() {
+        // What follows the announcement is message text: it must not complete
+        // the command, and no later command may go out on this stream.
+        let (mut session, sent) = recorded_session_for("* XFOO {16}\r\na2 OK Forged.\r\n\r\na2 OK Done.\r\n");
+
+        assert!(uid_search(&mut session, "ALL").is_err());
+
+        assert!(session.noop().is_err());
+        assert!(!sent.text().contains("NOOP"), "{}", sent.text());
+    }
+
+    #[test]
+    fn a_failed_capability_command_is_logged_and_advertises_nothing() {
+        let _seam = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let mut session = session_for("a2 BAD Command unknown.\r\n");
+
+        assert!(!advertises(&mut session, "MOVE"));
+
+        let events = logger.events();
+        let line = events
+            .iter()
+            .find(|event| event.message.contains("IMAP CAPABILITY failed"))
+            .expect("the failure is logged");
+        assert_eq!(line.level, "debug");
+    }
+
+    #[test]
+    fn rejected_line_shape_masks_text_and_keeps_the_structure() {
+        let cases: &[(&[u8], &str)] = &[
+            (b"* SEARCH 1 2 3 \r\n", "* SEARCH 9 9 9 "),
+            (b"* LIST () \"/\" Private Folder\r\n", r#"* LIST () "/" Aaaaaaa Aaaaaa"#),
+            (b"* 12 XFOO Private\r\n", "* 99 XFOO Aaaaaaa"),
+            (b"* xfoo private\r\n", "* aaaa aaaaaaa"),
+            (b"* Xfoo private\r\n", "* Aaaa aaaaaaa"),
+            (b"*\r\n", "*"),
+            // Only a keyword right after the `*` stays readable.
+            (b"Subject: HELLO there\r\n", "Aaaaaaa: AAAAA aaaaa"),
+            (b"a2 OK\r\n", "a9 AA"),
+            // Only the first line: the rest can be a message.
+            (b"* XFOO {5}\r\nhello\r\n", "* XFOO {9}"),
+            (
+                "* LIST () \"/\" \"Carpeta año\"\r\n".as_bytes(),
+                r#"* LIST () "/" "Aaaaaaa aaa""#,
+            ),
+            // Not UTF-8, and control bytes.
+            (b"* XFOO \xff\x07\r\n", "* XFOO ??"),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(
+                rejected_line_shape(line),
+                *expected,
+                "{}",
+                String::from_utf8_lossy(line)
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_line_shape_is_bounded() {
+        let line = format!("* XFOO {}\r\n", "x".repeat(400));
+        assert!(rejected_line_shape(line.as_bytes()).chars().count() <= 121);
+    }
+
+    #[test]
+    fn describe_error_shows_the_shape_of_a_rejected_line_only() {
+        let rejected = imap::Error::Parse(imap::error::ParseError::Invalid(b"* XFOO text\r\n".to_vec()));
+        assert_eq!(
+            describe_error(&rejected),
+            r#"Unable to parse status response (server sent "* XFOO aaaa")"#
+        );
+
+        assert_eq!(describe_error(&imap::Error::ConnectionLost), "Connection Lost");
     }
 }

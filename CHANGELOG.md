@@ -14,11 +14,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whether it answers every question, or for a better version to copy. Switch
   the chip off to leave the draft out. The chat never writes into the draft.
 
+## [0.6.19] — 2026-11-12
+
+### Added
+
+- **Bcc, editable reply subjects and replies to Reply-To.** Every composer has
+  a Bcc field, and a message can go to Cc or Bcc alone. Drafts keep their blind
+  copies. The subject of a reply or a forward can be edited before it goes. A
+  reply goes to the address a message names in its Reply-To header, such as a
+  mailing list's, instead of its sender.
+- **Drafts keep their attachments, and forwards are drafts too.** A file you
+  attach is saved with the draft as soon as it is added, so closing the
+  composer or the app no longer loses it, and a forward is saved as a draft
+  like a reply. A message takes up to 32 files of at most 25 MB each; an empty
+  file is refused with a message.
+- **Boolean search and two more operators.** In the search box, quotes find an
+  exact phrase, `OR` finds either word, `-word` or `NOT word` leaves mail with
+  that word out, and brackets group: `(invoice OR receipt) -draft`. `cc:` finds
+  mail copied to someone, and `has:attachment` or `-has:attachment` keeps only
+  mail with or without attachments.
+
+### Changed
+
+- **New mail is ready for AI search before older mail.** Embeddings are now
+  generated newest first, across all your accounts. Mail that arrives while a
+  large mailbox is still being processed goes ahead of that backlog.
+
 ### Fixed
 
+- **A deleted IMAP message shows once in Deleted.** Deleting a message on an
+  IMAP account listed it twice in Deleted: once where it had been and once as
+  the copy the next sync found in the server's Trash. The message now moves to
+  Trash in EmailOps too, keeping its tags and AI data.
+- **IMAP accounts connect when the first address of their server does not
+  answer.** EmailOps tried only the first address a mail server's name
+  resolves to, so one unreachable address, IPv6 or IPv4, failed every sync. It
+  now tries each address in turn for up to 20 seconds, moves on after a
+  timeout, and the error says what happened on each address.
+- **Deleting, archiving or filing a message can no longer erase others on
+  older IMAP servers.** On a server without the MOVE and UIDPLUS extensions,
+  moving one message purged every message another mail app had marked for
+  deletion in that folder. EXPUNGE now runs only when no other message there
+  is marked; otherwise the original stays marked for deletion, its copy is
+  already in the new folder, and the log says so. Sync skips messages marked
+  for deletion, so that original does not come back as a new message.
+- **A long brief for a new AI email is no longer cut short.** When the brief
+  did not fit the prompt, its end and the instruction after it were dropped
+  without a word, and the draft ignored them. Now the brief is never cut: the
+  draft is not generated, and the log says how many characters to remove.
+- **AI replies follow your instructions with any prompt template.** With a
+  reply template of your own that leaves out `{instructions}` (Settings → AI
+  drafts), the instructions you typed for Generate or Regenerate never reached
+  the model. They are now added after the template, as the language and
+  sign-off rules already were.
+- **Gmail attachments kept with the message open again.** A small attachment,
+  or one on a message you sent from EmailOps, failed to open, download or
+  forward with a "not found" error: EmailOps asked Gmail for it instead of
+  reading the copy it already had.
 - **A draft Gmail refuses is no longer sent again every minute.** Each sync used
   to repeat the refused upload; now the draft waits until you edit it, and the
   Logs panel shows Gmail's reason once.
+- **An IMAP server reply EmailOps cannot read no longer crashes the sync.** If a
+  command fails because of one, Logs shows the shape of the reply with its text
+  masked. A server whose list of supported features ends in a space now moves
+  mail with its own move command when it has one, instead of a copy and a
+  delete.
+- **Deleting a conversation on Proton Mail Bridge no longer erases a message
+  for good.** A message you sent to yourself is listed in both Inbox and Sent;
+  deleting its conversation moved it to Trash twice, and Bridge then deleted
+  it permanently. On IMAP accounts each message now goes to Trash once.
 
 ## [0.6.18] — 2026-11-03
 

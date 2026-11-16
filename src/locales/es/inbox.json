@@ -84,7 +84,12 @@
     "unstar": "Quitar destacado",
     "archive": "Archivar",
     "moveArchivedToInbox": "Mover a Recibidos",
-    "hideFromFilters": "Ocultar de los filtros inteligentes"
+    "hideFromFilters": "Ocultar de los filtros inteligentes",
+    "toSelf": "ti",
+    "noRecipients": "Para: (sin destinatarios)",
+    "moreRecipients": "+{{count}}",
+    "moreRecipientsLabel": "y {{count}} más",
+    "addRecipientFilter": "Añadir destinatario como filtro inteligente"
   },
   "header": {
     "totalCount": "{{count}} correos",
@@ -174,11 +179,14 @@
     "title": "Consejos de búsqueda",
     "senderHint": "nombre/correo del remitente",
     "recipientHint": "nombre/correo del destinatario",
+    "ccHint": "nombre/correo en copia",
     "subjectHint": "texto del asunto",
+    "attachmentHint": "con adjuntos (-has:attachment: sin ellos)",
     "unreadHint": "correos no leídos",
     "afterHint": "AAAA-MM-DD",
     "beforeHint": "AAAA-MM-DD",
-    "tagHint": "etiqueta de clasificación"
+    "tagHint": "etiqueta de clasificación",
+    "booleanHint": "frase exacta, una u otra palabra, sin una palabra, agrupar"
   },
   "translation": {
     "detectedLabel": "Este correo está en {{language}}",

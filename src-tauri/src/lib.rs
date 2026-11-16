@@ -169,6 +169,7 @@ macro_rules! app_commands {
             commands::emails::delete_folder,
             commands::emails::move_email,
             commands::emails::get_thread,
+            commands::emails::get_thread_reply_to,
             commands::emails::get_email_body,
             commands::emails::get_thread_new_content,
             commands::emails::mark_as_read,
@@ -247,12 +248,14 @@ macro_rules! app_commands {
             commands::contacts::list_contacts,
             commands::contacts::get_contact_detail,
             commands::contacts::list_contacts_by_company,
+            commands::contacts::get_sender_names,
             commands::contacts::get_organization_domain,
             commands::drafts::list_drafts,
             commands::drafts::get_draft,
             commands::drafts::refresh_drafts,
             commands::drafts::list_draft_attachments,
             commands::drafts::save_draft,
+            commands::drafts::store_draft_file,
             commands::drafts::send_draft,
             commands::drafts::delete_draft,
             commands::filters::refresh_filter_stats,
@@ -699,6 +702,20 @@ pub fn run() {
                         STARTUP_BACKUPS_KEPT,
                         services::clock::now_secs(),
                     ));
+                    // Files a composer stored for a draft that was never saved.
+                    match services::emails::sweep_abandoned_draft_files(&db_clone, services::clock::now_secs()) {
+                        Ok(0) => {}
+                        Ok(n) => services::logger::log(
+                            "info",
+                            "system",
+                            format!("Removed {n} attached file(s) no draft kept"),
+                        ),
+                        Err(e) => services::logger::log(
+                            "warn",
+                            "system",
+                            format!("Could not remove attached files no draft kept: {e}"),
+                        ),
+                    }
                 });
             }
 

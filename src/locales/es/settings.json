@@ -699,6 +699,8 @@
     "useForNew": "Insertar en mensajes nuevos",
     "useForReplies": "Insertar en respuestas y reenvíos",
     "placementHelp": "En una respuesta la firma va debajo de tu texto; en un reenvío, encima del mensaje reenviado.",
+    "sentFooter": "Añadir «Enviado con EmailOps» al final de los mensajes que envío",
+    "sentFooterHelp": "Se aplica a todas las cuentas. Los mensajes ya enviados conservan su pie.",
     "imagesHelp": "Las imágenes viajan dentro de cada mensaje. Las anchas se reducen a 600 px; cada una puede ocupar 200 KB como máximo y la firma entera 512 KB.",
     "save": "Guardar firma",
     "saving": "Guardando…",

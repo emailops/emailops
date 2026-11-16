@@ -254,7 +254,7 @@ impl Database {
         Ok(count > 0)
     }
 
-    /// Get emails that don't have embeddings yet.
+    /// Get emails that don't have embeddings yet, newest first.
     ///
     /// `categories` filters to emails matching one of the given Gmail-style
     /// categories. Empty slice = no category filter (all categories).
@@ -299,8 +299,13 @@ impl Database {
             params_vec.push(Box::new(ts));
             sql.push_str(&format!(" AND e.timestamp >= ?{}", params_vec.len()));
         }
+        // Newest first, so mail that just arrived is searchable before the
+        // backlog is drained.
         params_vec.push(Box::new(limit));
-        sql.push_str(&format!(" LIMIT ?{}", params_vec.len()));
+        sql.push_str(&format!(
+            " ORDER BY e.timestamp DESC, e.id DESC LIMIT ?{}",
+            params_vec.len()
+        ));
 
         let mut stmt = conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
@@ -1071,6 +1076,20 @@ mod tests {
             "trash email must be skipped, got {:?}",
             ids
         );
+    }
+
+    // New mail must not wait behind the backlog: a batch takes the newest
+    // pending emails, whatever order they were stored in.
+    #[test]
+    fn get_emails_without_embeddings_returns_the_newest_first() {
+        let db = Database::new_for_testing().unwrap();
+        insert_fts_email_in_mailbox(&db, "e-mid", "acc1", "a@example.com", "subject", "body", 200, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-new", "acc1", "a@example.com", "subject", "body", 300, "inbox");
+        insert_fts_email_in_mailbox(&db, "e-old", "acc1", "a@example.com", "subject", "body", 100, "inbox");
+
+        let ids = db.get_emails_without_embeddings(Some("acc1"), 2, &[], None).unwrap();
+
+        assert_eq!(ids, vec!["e-new".to_string(), "e-mid".to_string()]);
     }
 
     // Optimistic sent copies awaiting reconciliation must not be embedded —

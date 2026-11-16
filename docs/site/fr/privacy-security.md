@@ -117,10 +117,12 @@ reste — libellés, filtres, dossiers auxquels vous n'avez pas touché — rest
 l'état.
 
 <!-- claim:priv-what-emailops-3 -->
-Chaque message envoyé depuis EmailOps se termine par une courte ligne « Envoyé avec
-EmailOps » qui renvoie vers getemailops.com. Le lien porte `utm_source=email_footer`, qui
-indique seulement à l'outil d'analyse du site que la visite vient d'un pied de message ; il
-ne contient rien qui vous identifie, ni vous ni le destinataire.
+Sauf si vous la désactivez, chaque message envoyé depuis EmailOps se termine par une courte
+ligne « Envoyé avec EmailOps » qui renvoie vers getemailops.com ; décochez **Ajouter « Envoyé
+avec EmailOps » à la fin des messages que j'envoie** dans **Paramètres → Signatures** pour
+envoyer sans elle. Le lien porte `utm_source=email_footer`, qui indique seulement à l'outil
+d'analyse du site que la visite vient d'un pied de message ; il ne contient rien qui vous
+identifie, ni vous ni le destinataire.
 
 ## Aucune télémétrie
 

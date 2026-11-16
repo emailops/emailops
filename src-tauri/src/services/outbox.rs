@@ -152,7 +152,7 @@ fn prepare_message(db: &Database, mut message: OutgoingMessage) -> Result<Outgoi
             message.subject = crate::sync::mime_builder::reply_subject(&parent.subject);
         }
     }
-    crate::services::emails::validate_new_email(&message.to, &message.subject)?;
+    crate::services::emails::validate_new_email(&message.to, &message.cc, &message.bcc, &message.subject)?;
     Ok(message)
 }
 
@@ -532,13 +532,14 @@ mod tests {
             from_name: Option<&str>,
             to: &[String],
             cc: &[String],
+            bcc: &[String],
             target: &crate::sync::provider::ReplyTarget<'_>,
             subject: &str,
             body: &crate::sync::provider::EmailBody,
             attachments: &[EmailAttachment],
         ) -> Result<crate::sync::provider::SentMessageMeta> {
             self.0
-                .send_reply(from_email, from_name, to, cc, target, subject, body, attachments)
+                .send_reply(from_email, from_name, to, cc, bcc, target, subject, body, attachments)
                 .await
         }
 
@@ -548,12 +549,13 @@ mod tests {
             from_name: Option<&str>,
             to: &[String],
             cc: &[String],
+            bcc: &[String],
             subject: &str,
             body: &crate::sync::provider::EmailBody,
             attachments: &[EmailAttachment],
         ) -> Result<crate::sync::provider::SentMessageMeta> {
             self.0
-                .send_new_email(from_email, from_name, to, cc, subject, body, attachments)
+                .send_new_email(from_email, from_name, to, cc, bcc, subject, body, attachments)
                 .await
         }
 
@@ -616,6 +618,7 @@ mod tests {
             reply_to_email_id: None,
             to: vec!["ben@example.com".into()],
             cc: vec![],
+            bcc: Vec::new(),
             subject: "Lunch".into(),
             body: "Friday?".into(),
             body_html: Some("<p>Friday?</p><script>x()</script>".into()),
@@ -722,6 +725,7 @@ mod tests {
                 account_id: "acc-1".into(),
                 to_addresses: vec!["ben@example.com".into()],
                 cc_addresses: vec![],
+                bcc_addresses: Vec::new(),
                 subject: "Lunch".into(),
                 body: "Friday?".into(),
                 body_html: None,
@@ -772,6 +776,7 @@ mod tests {
                 account_id: "acc-1".into(),
                 to_addresses: vec!["recipient@example.com".into()],
                 cc_addresses: vec![],
+                bcc_addresses: Vec::new(),
                 subject: "Lunch".into(),
                 body: "Friday?".into(),
                 body_html: None,
@@ -819,6 +824,7 @@ mod tests {
                 account_id: "acc-2".into(),
                 to_addresses: vec!["ben@example.com".into()],
                 cc_addresses: vec![],
+                bcc_addresses: Vec::new(),
                 subject: "Lunch".into(),
                 body: "Friday?".into(),
                 body_html: None,
@@ -859,6 +865,7 @@ mod tests {
                 account_id: "acc-1".into(),
                 to_addresses: vec!["ana@example.com".into()],
                 cc_addresses: vec![],
+                bcc_addresses: Vec::new(),
                 subject: "Re: Quarterly plan".into(),
                 body: "Friday?".into(),
                 body_html: None,
@@ -978,6 +985,22 @@ mod tests {
         let again = dispatch_due_outbox(&db, NOW + 60, &providers).await.unwrap();
         assert!(again.is_empty());
         assert_eq!(fake.sent().len(), 1, "never twice");
+    }
+
+    // The footer switch is read when the message leaves, not when it is
+    // queued: turning it off during the undo window applies to that message.
+    #[tokio::test]
+    async fn the_app_footer_follows_the_switch_at_delivery_time() {
+        let (db, fake) = setup();
+        queue(&db, new_message(), OutboxSchedule::Undo { delay_secs: 10 }).await;
+        db.set_preference(crate::services::emails::APPEND_FOOTER_PREF, "false")
+            .unwrap();
+
+        dispatch_due_outbox(&db, NOW + 10, &FakeProviders(Arc::clone(&fake)))
+            .await
+            .unwrap();
+
+        assert!(!fake.sent()[0].body.append_footer);
     }
 
     #[tokio::test]

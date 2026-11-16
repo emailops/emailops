@@ -491,6 +491,7 @@ checks = [
 [start-after-wizard-first-sync-2]
 checks = [
   { manual = 'Incremental sync needs a real provider; the demo accounts are offline.' },
+  { tests = ['services::embeddings::tests::a_batch_over_all_accounts_embeds_the_newest_mail_first', 'db::embeddings::tests::get_emails_without_embeddings_returns_the_newest_first'], covers = ["Embeddings start with the newest mail across all your accounts, so recent mail is ready for AI Search before older mail"] },
 ]
 
 [start-after-wizard-first-sync-3]
@@ -543,6 +544,18 @@ checks = [
   { manual = 'Renaming, deleting and dragging between folders are not exercised: the demo mailbox has no custom folder.' },
 ]
 
+[reading-pane-reply]
+checks = [
+  { tests = ['services::emails::reply_to::tests::a_thread_answers_each_message_at_its_reply_to', 'sync::mime_builder::tests::a_blind_copy_is_delivered_without_a_header_by_default', 'sync::gmail::tests::a_send_hands_gmail_the_bcc_header', 'sync::outlook_payload::tests::every_payload_carries_the_blind_copies'], covers = ["the address the message names in its *Reply-To* header", "blind copies reach their recipients without the others seeing them"] },
+  { manual = 'The composer side (Reply-To in the To field, Bcc alone, the edited subject) is covered by src/components/EmailView/ReplyCompose.bccSubject.test.tsx and replyRecipients.test.ts (vitest); the demo has no message with a Reply-To.' },
+]
+
+[compose-drafts-keep-files]
+checks = [
+  { tests = ['services::emails::draft_files::tests::a_file_attached_in_a_composer_is_kept_with_the_draft', 'services::emails::draft_files::tests::an_empty_or_oversized_file_is_refused'], covers = ["attached files included", "at most 25 MB each"] },
+  { manual = 'The composer side (a reply or forward saved with its files, a forward kept as a draft, the 32-file limit) is covered by src/components/EmailView/ReplyCompose.files.test.tsx and src/lib/attachmentIntake.test.ts (vitest).' },
+]
+
 [reading-pane-forward]
 checks = [
   { app = true },
@@ -569,6 +582,7 @@ checks = [
 [feat-calendar-2]
 checks = [
   { manual = 'Multiple calendars, provider colours and the legend need a calendar account with several calendars; the demo calendar asks to sign in again.' },
+  { tests = ['services::calendar::notify::tests::a_meeting_on_another_persons_shared_primary_calendar_is_not_planned', 'services::calendar::notify::tests::a_meeting_on_a_calendar_someone_else_owns_is_not_planned', 'services::calendar::notify::tests::a_meeting_on_a_secondary_calendar_the_user_owns_is_planned', 'services::calendar::notify::tests::an_invitation_also_on_a_shared_calendar_is_planned_once_from_the_users_copy'], covers = ["Meeting reminders come only from your own calendars: a calendar someone shared with you shows its meetings without reminding you of them.", "A meeting you are invited to still gets exactly one reminder."] },
 ]
 
 [feat-calendar-4]
@@ -713,6 +727,11 @@ checks = [
   { app = true },
 ]
 
+[feat-search-3]
+checks = [
+  { tests = ['db::emails::list::tests::a_quoted_phrase_matches_its_words_in_order', 'db::emails::list::tests::words_joined_by_or_list_mail_with_either', 'db::emails::list::tests::a_minus_word_takes_mail_away', 'db::emails::list::tests::brackets_group_before_and', 'db::emails::text_query::tests::only_uppercase_operators_are_operators'] },
+]
+
 [feat-junk-bulk-1]
 checks = [
   { app = true },
@@ -765,6 +784,11 @@ checks = [
   { tests = ['sync::folder_plan::tests::the_special_use_archive_folder_wins_over_a_folder_named_archive', 'sync::folder_plan::tests::a_folder_named_archive_or_archives_is_the_fallback'], covers = ["an IMAP account archives into its own Archive folder, which appears with its other folders"] },
   { tests = ['db::emails::crud::tests::archived_mail_leaves_the_inbox_and_has_its_own_view', 'db::emails::list::tests::inbox_searches_live_mail_and_folders_but_not_spam_or_trash', 'db::emails::search::tests::filtered_emails_tag_filter_includes_archived_mail', 'db::emails::search::tests::quick_filter_stats_count_archived_mail'], covers = ["Archived mail is only out of the inbox: search, the smart filters and the AI features still reach it."] },
   { manual = 'That the AI features (chat tools, embeddings, classification, lenses) reach archived mail rests on the shared live-mailbox list (DECISIONS 2026-10-02); no single test or demo screen shows it, and the demo has no Gmail or Outlook account.', covers = ["the AI features still reach it"] },
+]
+
+[feat-list-sent-rows]
+checks = [
+  { manual = 'Who a row names, the To/Cc tooltip, "you" and the name chain (header, then the name the address uses when it writes to the account, then the address) are covered by src/lib/emailFormatting.test.ts, src/components/Inbox/EmailRow.recipients.test.tsx (vitest) and db::emails::contacts::tests::sender_names_keep_the_latest_real_name_of_each_address; the demo harness has no case for it yet.' },
 ]
 
 [feat-organize-3]
@@ -852,6 +876,13 @@ checks = [
 checks = [
   { manual = 'The "-- " line is derived in the frontend (htmlToPlainText with signatureDelimiter) and covered by src/lib/composeHtml vitest tests; not run by this harness.', covers = ["In the plain-text version of a message, a signature that ends it is preceded by the standard -- line, so other mail apps can recognise it."] },
   { tests = ['services::emails::drafts::tests::sign_off_is_left_to_the_app_when_the_signature_applies', 'services::emails::drafts::tests::sign_off_follows_the_option_for_the_draft_kind', 'services::emails::drafts::tests::per_draft_section_carries_the_sign_off_rule_with_a_signature', 'services::emails::drafts::tests::sign_off_is_the_first_name_without_a_signature'], covers = ["When the account has a signature for that kind of message, AI drafts leave your name and contact details out and let the signature sign."] },
+]
+
+[feat-signatures-4]
+checks = [
+  { app = true },
+  { tests = ['services::outbox::tests::the_app_footer_follows_the_switch_at_delivery_time', 'sync::mime_builder::tests::without_footer_suppresses_the_footer'], covers = ["decides whether the messages you send end with that line"] },
+  { manual = 'Turning the switch off changes only what is sent from then on; nothing rewrites a message already in Sent, and the demo cannot send to show it.', covers = ["messages already sent keep their footer"] },
 ]
 
 [feat-interface-3]
@@ -1417,7 +1448,9 @@ checks = [
 
 [priv-what-emailops-3]
 checks = [
+  { app = true },
   { tests = ['sync::mime_builder::tests::footer_follows_body_language'], covers = ["ends with a short \"Sent with EmailOps\" line"] },
+  { tests = ['services::outbox::tests::the_app_footer_follows_the_switch_at_delivery_time', 'sync::mime_builder::tests::without_footer_suppresses_the_footer'], covers = ["Unless you turn it off", "to send without it"] },
   { file = 'src-tauri/src/sync/provider.rs', quoted = 'utm_source=email_footer' },
 ]
 

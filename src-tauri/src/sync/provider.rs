@@ -482,6 +482,7 @@ pub trait EmailProvider: Send + Sync {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -502,6 +503,7 @@ pub trait EmailProvider: Send + Sync {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -700,9 +702,18 @@ pub trait EmailProvider: Send + Sync {
     /// can hand to a different message, so it checks the header before moving
     /// anything; Gmail and Graph ids are never reused and ignore it.
     ///
+    /// `Some` is where the message is now when the provider re-keyed it and
+    /// found it in Trash (IMAP gives it a new UID there); the row has to follow
+    /// it, or the Trash sync stores it a second time. `None` leaves the row's
+    /// id as it is.
+    ///
     /// `AppError::NotFound` means the provider no longer has the message under
     /// this id, so there is nothing left to trash.
-    async fn trash_message(&self, _message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
+    async fn trash_message(
+        &self,
+        _message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<Option<MessageLocation>> {
         Err(AppError::InvalidInput(
             "mailbox state writes are not supported by this provider".to_string(),
         ))
@@ -804,6 +815,7 @@ pub trait EmailProvider: Send + Sync {
         _from_email: &str,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _subject: &str,
         _body: &EmailBody,
         _attachments: &[EmailAttachment],
@@ -823,6 +835,7 @@ pub trait EmailProvider: Send + Sync {
         _from_email: &str,
         _to_emails: &[String],
         _cc_emails: &[String],
+        _bcc_emails: &[String],
         _subject: &str,
         _body: &EmailBody,
         _attachments: &[EmailAttachment],
@@ -943,6 +956,9 @@ pub struct FakeEmailProvider {
     /// message's own id under `archive` — models a provider that re-keys
     /// (Graph, IMAP) or files the message in a folder (IMAP).
     archive_location: std::sync::RwLock<Option<MessageLocation>>,
+    /// What `trash_message` answers: `None` (the message keeps its id, as on
+    /// Gmail) unless set — models IMAP re-keying it in Trash.
+    trash_location: std::sync::RwLock<Option<MessageLocation>>,
     /// When `Some`, `send_reply` / `send_new_email` fail with this message and
     /// record nothing — a provider refusing the send (5xx, offline).
     send_failure: std::sync::RwLock<Option<String>>,
@@ -1061,6 +1077,7 @@ pub struct FakeSentMessage {
     pub from_name: Option<String>,
     pub to_emails: Vec<String>,
     pub cc_emails: Vec<String>,
+    pub bcc_emails: Vec<String>,
     pub thread_id: Option<String>,
     pub original_message_id: Option<String>,
     /// The parent's `References` chain as handed to the provider, so tests can
@@ -1103,6 +1120,7 @@ impl FakeEmailProvider {
             lists_by_arrival: std::sync::atomic::AtomicBool::new(false),
             after_batch: std::sync::RwLock::new(None),
             archive_location: std::sync::RwLock::new(None),
+            trash_location: std::sync::RwLock::new(None),
             send_failure: std::sync::RwLock::new(None),
             listing_failure: std::sync::RwLock::new(None),
             signature: std::sync::RwLock::new(None),
@@ -1122,6 +1140,11 @@ impl FakeEmailProvider {
     /// Make `archive_message` answer `location` from now on.
     pub fn set_archive_location(&self, location: MessageLocation) {
         *self.archive_location.write().unwrap_or_else(PoisonError::into_inner) = Some(location);
+    }
+
+    /// Make `trash_message` answer `location` from now on.
+    pub fn set_trash_location(&self, location: MessageLocation) {
+        *self.trash_location.write().unwrap_or_else(PoisonError::into_inner) = Some(location);
     }
 
     /// Report `uid_validity` for `mailbox` from now on, replacing any earlier
@@ -1684,6 +1707,7 @@ impl EmailProvider for FakeEmailProvider {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -1698,6 +1722,7 @@ impl EmailProvider for FakeEmailProvider {
                 from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
+                bcc_emails: bcc_emails.to_vec(),
                 provider_message_id: Some(target.provider_message_id.to_string()),
                 thread_id: Some(target.thread_id.to_string()),
                 original_message_id: target.message_id.map(str::to_string),
@@ -1715,6 +1740,7 @@ impl EmailProvider for FakeEmailProvider {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1728,6 +1754,7 @@ impl EmailProvider for FakeEmailProvider {
                 from_name: from_name.map(str::to_string),
                 to_emails: to_emails.to_vec(),
                 cc_emails: cc_emails.to_vec(),
+                bcc_emails: bcc_emails.to_vec(),
                 provider_message_id: None,
                 thread_id: None,
                 original_message_id: None,
@@ -1942,7 +1969,11 @@ impl EmailProvider for FakeEmailProvider {
         Ok(location)
     }
 
-    async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
+    async fn trash_message(
+        &self,
+        message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<MessageLocation>> {
         self.mailbox_write_gate()?;
         self.messages
             .write()
@@ -1955,7 +1986,11 @@ impl EmailProvider for FakeEmailProvider {
                 message_id: message_id.to_string(),
                 message_id_header: message_id_header.map(str::to_string),
             });
-        Ok(())
+        Ok(self
+            .trash_location
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone())
     }
 
     /// Models both provider shapes: the message is found under its own id
@@ -2121,6 +2156,7 @@ impl EmailProvider for FakeEmailProvider {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -2134,6 +2170,7 @@ impl EmailProvider for FakeEmailProvider {
             provider_draft_id: id.clone(),
             to_addresses: to_emails.to_vec(),
             cc_addresses: cc_emails.to_vec(),
+            bcc_addresses: bcc_emails.to_vec(),
             subject: subject.to_string(),
             body: body.text.clone(),
             body_html: body.html.clone(),
@@ -2155,6 +2192,7 @@ impl EmailProvider for FakeEmailProvider {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -2179,6 +2217,7 @@ impl EmailProvider for FakeEmailProvider {
             provider_draft_id: provider_draft_id.to_string(),
             to_addresses: to_emails.to_vec(),
             cc_addresses: cc_emails.to_vec(),
+            bcc_addresses: bcc_emails.to_vec(),
             subject: subject.to_string(),
             body: body.text.clone(),
             body_html: body.html.clone(),
@@ -2300,6 +2339,7 @@ mod tests {
             None,
             &["x@y.com".to_string()],
             &[],
+            &[],
             "subj",
             &EmailBody::plain("body"),
             &[],
@@ -2330,6 +2370,7 @@ mod tests {
             None,
             &["x@y.com".to_string()],
             &[],
+            &[],
             "subj",
             &body,
             &[],
@@ -2352,6 +2393,7 @@ mod tests {
                 None,
                 &["x@y.com".to_string()],
                 &[],
+                &[],
                 "subj",
                 &EmailBody::plain("body"),
                 &[],
@@ -2373,6 +2415,7 @@ mod tests {
                 "me@example.com",
                 None,
                 &["x@y.com".to_string()],
+                &[],
                 &[],
                 &ReplyTarget {
                     provider_message_id: "prov-1",
@@ -2562,6 +2605,7 @@ mod tests {
             _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
+            _bcc_emails: &[String],
             _target: &ReplyTarget<'_>,
             _subject: &str,
             _body: &EmailBody,
@@ -2575,6 +2619,7 @@ mod tests {
             _from_name: Option<&str>,
             _to_emails: &[String],
             _cc_emails: &[String],
+            _bcc_emails: &[String],
             _subject: &str,
             _body: &EmailBody,
             _attachments: &[EmailAttachment],
@@ -2613,7 +2658,7 @@ mod tests {
         for result in [
             p.set_read_state("m", true).await,
             p.set_starred("m", true).await,
-            p.trash_message("m", None).await,
+            p.trash_message("m", None).await.map(|_| ()),
         ] {
             match result {
                 Err(crate::models::error::AppError::InvalidInput(msg)) => {
