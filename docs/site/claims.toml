@@ -582,6 +582,7 @@ checks = [
 [feat-calendar-2]
 checks = [
   { manual = 'Multiple calendars, provider colours and the legend need a calendar account with several calendars; the demo calendar asks to sign in again.' },
+  { tests = ['services::calendar::notify::tests::a_meeting_on_another_persons_shared_primary_calendar_is_not_planned', 'services::calendar::notify::tests::a_meeting_on_a_calendar_someone_else_owns_is_not_planned', 'services::calendar::notify::tests::a_meeting_on_a_secondary_calendar_the_user_owns_is_planned', 'services::calendar::notify::tests::an_invitation_also_on_a_shared_calendar_is_planned_once_from_the_users_copy'], covers = ["Meeting reminders come only from your own calendars: a calendar someone shared with you shows its meetings without reminding you of them.", "A meeting you are invited to still gets exactly one reminder."] },
 ]
 
 [feat-calendar-4]

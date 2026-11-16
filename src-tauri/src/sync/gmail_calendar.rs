@@ -443,6 +443,7 @@ fn parse_google_calendar(raw: &serde_json::Value) -> Option<ProviderCalendar> {
             .to_string(),
         is_primary: raw.get("primary").and_then(|v| v.as_bool()).unwrap_or(false),
         access_role: normalize_access_role(raw.get("accessRole").and_then(|v| v.as_str()).unwrap_or_default()),
+        owner_email: raw.get("dataOwner").and_then(|v| v.as_str()).map(str::to_string),
         // Only an explicit `false` hides a calendar: a missing flag must never
         // make a calendar silently vanish from the app.
         selected: raw.get("selected").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -703,6 +704,33 @@ mod tests {
         assert_eq!(calendar.access_role, "reader");
         assert!(!calendar.is_primary);
         assert!(calendar.selected);
+    }
+
+    #[test]
+    fn a_secondary_calendar_carries_its_data_owner() {
+        let raw = serde_json::json!({
+            "id": "team123@group.calendar.google.com",
+            "summary": "Team calendar",
+            "dataOwner": "colleague@example.com",
+            "accessRole": "writer",
+        });
+
+        let calendar = parse_google_calendar(&raw).expect("parse");
+
+        assert_eq!(calendar.owner_email.as_deref(), Some("colleague@example.com"));
+    }
+
+    #[test]
+    fn a_calendar_without_data_owner_has_no_owner() {
+        // Google sets dataOwner only on secondary calendars, so another
+        // person's primary calendar shared with the user carries none.
+        let raw = serde_json::json!({
+            "id": "colleague@example.com",
+            "summary": "colleague@example.com",
+            "accessRole": "reader",
+        });
+
+        assert_eq!(parse_google_calendar(&raw).expect("parse").owner_email, None);
     }
 
     #[test]

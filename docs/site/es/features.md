@@ -207,7 +207,9 @@ Se sincronizan todos los calendarios de una cuenta, no solo el principal — as�
 calendario que un compañero haya compartido contigo aparece aquí igual que en Google o en
 Outlook. Cada uno se tiñe con el color que le da su proveedor, y la leyenda sobre la
 cuadrícula oculta o muestra calendarios individuales; los mismos interruptores están en
-**Ajustes → Calendario**.
+**Ajustes → Calendario**. Los avisos de reunión solo salen de tus propios calendarios: un
+calendario que alguien ha compartido contigo muestra sus reuniones sin avisarte de ellas. Una
+reunión a la que te han invitado te sigue avisando, una sola vez.
 
 <!-- claim:feat-calendar-4 -->
 Las cuentas IMAP tienen calendario al suscribirse a un enlace de calendario publicado (ICS), por
