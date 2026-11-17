@@ -454,6 +454,13 @@ Voreinstellung, und **Kompakt**, das die Zeilen der Seitenleistenliste niedriger
 davon ohne Scrollen hineinpassen. Text, Symbole sowie der obere und untere Bereich der Seitenleiste
 bleiben gleich, und die Wahl bleibt über Neustarts erhalten.
 
+<!-- claim:feat-interface-6 -->
+Die Ordnerleiste und, in der geteilten Ansicht, die E-Mail-Liste lassen sich breiter oder schmaler
+machen: Ziehen Sie die Linie an ihrem rechten Rand, oder springen Sie mit Tab dorthin und verwenden
+Sie die Pfeiltasten (Umschalt für größere Schritte), Pos1 und Ende. Ein Doppelklick auf die Linie
+stellt die Standardbreite wieder her. Eine Spalte wächst nur so weit, dass der Lesebereich
+mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten.
+
 ## Tastenkombinationen {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

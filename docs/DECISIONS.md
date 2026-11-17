@@ -4553,3 +4553,25 @@ the least.
 - *All text rows at 28 px*: 0.820 with 2 px gaps (misses the 0.8 target); 0.782 without gaps,
   where the active and hover backgrounds of neighbouring rows touch.
 - *Smaller icons*: the row height comes from the text's line height, so they save no space.
+
+## 2026-11-17 — Resizable columns keep a 320 px reading-area floor, enforced by the handles
+
+**Decision:** The folder sidebar (180–420 px, default 256) and the split-view email list
+(300–800 px, default 384) resize from a handle on their right edge. A handle never lets its
+column grow past the point where the reading pane, or the main area in a view without one,
+would be narrower than 320 px, the floor the tag board already gives its reading pane. The
+limit is read from the layout when a drag or key press starts. A drag saves the width once, on
+release. The email frame hands the wheel to the reading pane only when the email is wider than
+the frame.
+**Context:** Contributor PR #134 added the columns. Its review asked for one preference write per
+drag, a reading pane the columns cannot squeeze, one clamp for every key, and native scrolling
+for emails that do not need the wheel handoff. The floor applies to the handles only: opening
+the right dock or narrowing the window after widening the columns can still leave the reading
+pane under 320 px, as the fixed widths already did (180 px at 1200 px with the dock open).
+**Rejected:**
+- *Clamping the rendered widths to the space available, on every layout change*: it needs a
+  layout solver across two flex containers (the sidebar and main, then the list and the reading
+  pane) and a rule for which column gives way first. That is a separate decision.
+- *Pointer capture for the drag (the PR's version)*: the app already keeps a drag alive over an
+  email iframe with a window-wide capture layer (`RightDock`). The layer appears only after the
+  pointer moves 3 px, so a double-click still reaches the handle.

@@ -442,6 +442,13 @@ fuente**. Los dos siguen al cursor, así que muestran la fuente y el tamaño del
 desplazarse. El texto, los iconos y las partes superior e inferior de la barra no cambian, y la
 elección se conserva entre reinicios.
 
+<!-- claim:feat-interface-6 -->
+La barra lateral de carpetas y, en la vista dividida, la lista de correos se pueden ensanchar o
+estrechar: arrastra la línea de su borde derecho, o llega a ella con Tab y usa las flechas
+(Mayúsculas para pasos más grandes), Inicio y Fin. Haz doble clic en la línea para volver al ancho
+predeterminado. Una columna deja de crecer antes de que el panel de lectura quede por debajo de
+320 px, y los anchos se conservan entre reinicios.
+
 ## Atajos de teclado {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

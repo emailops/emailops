@@ -457,6 +457,13 @@ défaut, et **Compacte**, qui réduit la hauteur des lignes de la liste de la ba
 afficher davantage sans défiler. Le texte, les icônes ainsi que le haut et le bas de la barre ne
 changent pas, et le choix est conservé d'un redémarrage à l'autre.
 
+<!-- claim:feat-interface-6 -->
+La barre latérale des dossiers et, en vue divisée, la liste des e-mails peuvent être élargies ou
+rétrécies : faites glisser la ligne de leur bord droit, ou atteignez-la avec Tab et utilisez les
+flèches (Maj pour des pas plus grands), Début et Fin. Double-cliquez sur la ligne pour revenir à la
+largeur par défaut. Une colonne cesse de s'élargir avant que le volet de lecture ne descende
+sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre.
+
 ## Raccourcis clavier {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

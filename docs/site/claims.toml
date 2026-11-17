@@ -900,6 +900,11 @@ checks = [
   { judge = "Open Settings → Appearance. Does Sidebar density offer Comfortable (selected by default) and Compact, does choosing Compact make the rows of the sidebar's scrolling list shorter at once while the text, the icons, and the sidebar's top and bottom keep their look, and is Compact still selected after a relaunch?", evidence = ["file:src/lib/sidebarDensity.ts", "file:src/components/Settings/SidebarDensitySetting.tsx", "file:src/components/Sidebar/Sidebar.density.test.tsx"], visual = true, covers = ["Settings → Appearance → Sidebar density offers Comfortable, the default, and Compact, which makes the rows of the sidebar list shorter so more of them fit without scrolling.", "Text, icons, and the top and bottom of the sidebar stay the same, and the choice is kept across restarts."] },
 ]
 
+[feat-interface-6]
+checks = [
+  { judge = "In the split inbox view, can the folder sidebar and the email list each be made wider or narrower by dragging the line on their right edge and, with the line focused, with the arrow keys, Home and End; does a double-click on the line restore the default width; does a column stop growing before the reading pane gets narrower than 320 px; and are the widths kept after a relaunch?", evidence = ["file:src/lib/columnResize.ts", "file:src/components/shared/ColumnResizeHandle.tsx", "file:src/components/shared/ColumnResizeHandle.test.tsx", "file:src/lib/columnResize.test.ts"], visual = true, covers = ["The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps), Home and End.", "Double-click the line to go back to the default width.", "A column stops growing before the reading pane gets narrower than 320 px, and the widths are kept across restarts."] },
+]
+
 [feat-shortcuts-1]
 checks = [
   { app = true },

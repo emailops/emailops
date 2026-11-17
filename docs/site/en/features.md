@@ -422,6 +422,12 @@ the font and size of the text you are in.
 which makes the rows of the sidebar list shorter so more of them fit without scrolling. Text,
 icons, and the top and bottom of the sidebar stay the same, and the choice is kept across restarts.
 
+<!-- claim:feat-interface-6 -->
+The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the
+line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps),
+Home and End. Double-click the line to go back to the default width. A column stops growing
+before the reading pane gets narrower than 320 px, and the widths are kept across restarts.
+
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

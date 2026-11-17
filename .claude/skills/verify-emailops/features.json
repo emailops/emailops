@@ -286,6 +286,8 @@
         "src/lib/inbox",
         "src/lib/threadOrder",
         "src/components/shared/EmailHtmlFrame",
+        "src/lib/columnResize",
+        "src/components/shared/ColumnResizeHandle",
         "src/lib/emailFormatting",
         "src/lib/threadSearch",
         "src/lib/threadCollapse",
