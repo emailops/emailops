@@ -38,6 +38,9 @@ pub const MAX_KEEP: usize = 3;
 /// How often the background thread checks whether a copy is due.
 pub const CHECK_EVERY: Duration = Duration::from_secs(5 * 60);
 
+/// When the user last deleted the full copies, in unix seconds.
+const FULL_DELETED_PREF: &str = "backup.full_deleted_at";
+
 const FULL_DIR: &str = "backups";
 const FULL_PREFIX: &str = "emailops-";
 const LOCAL_DIR: &str = "local-backups";
@@ -189,7 +192,8 @@ pub fn status(db: &Database, data_dir: &Path) -> Result<BackupStatus> {
 
 /// Delete every full copy and return how many there were. A copy still being
 /// written is left alone: its temp name is not a copy's.
-pub fn delete_full(data_dir: &Path) -> Result<usize> {
+pub fn delete_full(db: &Database, data_dir: &Path, now: DateTime<Utc>) -> Result<usize> {
+    db.set_preference(FULL_DELETED_PREF, &now.timestamp().to_string())?;
     let dir = data_dir.join(FULL_DIR);
     let found = copies(&dir, FULL_PREFIX)?;
     for copy in &found {
@@ -262,7 +266,13 @@ fn local_copy<Tz: TimeZone>(db: &Database, dir: &Path, settings: BackupSettings,
 }
 
 fn full_copy<Tz: TimeZone>(db: &Database, dir: &Path, settings: BackupSettings, now: &DateTime<Tz>) -> Result<Ran> {
-    if !schedule::is_due(now, settings.hour, settings.full, newest(dir, FULL_PREFIX)?) {
+    let deleted_at = db
+        .get_preference(FULL_DELETED_PREF)?
+        .and_then(|value| value.parse::<i64>().ok());
+    // The later of the two (`None` sorts first): after "Delete copies" the
+    // next copy waits for the next scheduled time, not the next check.
+    let since = newest(dir, FULL_PREFIX)?.max(deleted_at);
+    if !schedule::is_due(now, settings.hour, settings.full, since) {
         return Ok(Ran::NotDue);
     }
     let db_bytes = std::fs::metadata(db.db_path())
@@ -360,6 +370,7 @@ pub fn full_dir(data_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{FixedOffset, TimeDelta};
     use std::fs;
 
     const GIB: u64 = 1024 * 1024 * 1024;
@@ -540,8 +551,9 @@ mod tests {
         fs::write(dir.join(copy_name(FULL_PREFIX, now - 86_400)), b"x").expect("seed");
         fs::write(dir.join(copy_name(FULL_PREFIX, now)), b"x").expect("seed");
         fs::write(dir.join(".emailops-backup.tmp"), b"x").expect("seed temp");
+        let db = Database::new_for_testing().expect("test db");
 
-        assert_eq!(delete_full(data.path()).expect("delete"), 2);
+        assert_eq!(delete_full(&db, data.path(), Utc::now()).expect("delete"), 2);
 
         assert!(names(&dir, FULL_PREFIX).is_empty());
         assert!(dir.join(".emailops-backup.tmp").exists());
@@ -550,8 +562,9 @@ mod tests {
     #[test]
     fn delete_full_before_the_first_copy_deletes_nothing() {
         let data = tempfile::tempdir().expect("data dir");
+        let db = Database::new_for_testing().expect("test db");
 
-        assert_eq!(delete_full(data.path()).expect("delete"), 0);
+        assert_eq!(delete_full(&db, data.path(), Utc::now()).expect("delete"), 0);
     }
 
     #[test]
@@ -617,6 +630,33 @@ mod tests {
 
         assert_eq!(checked.full.expect("full"), Ran::Written);
         assert_eq!(names(&dir, FULL_PREFIX).len(), 2);
+    }
+
+    #[test]
+    fn deleted_full_copies_come_back_at_the_next_scheduled_time_not_the_next_check() {
+        let data = tempfile::tempdir().expect("data dir");
+        let db = Database::new(data.path().to_path_buf()).expect("open db");
+        let local_off = BackupSettings {
+            local: BackupFrequency::Off,
+            ..BackupSettings::default()
+        };
+        save_settings(&db, data.path(), local_off).expect("save");
+        let madrid_winter = FixedOffset::east_opt(3600).expect("valid offset");
+        let evening = madrid_winter
+            .with_ymd_and_hms(2026, 11, 17, 20, 50, 0)
+            .single()
+            .expect("valid time");
+        let next_night = madrid_winter
+            .with_ymd_and_hms(2026, 11, 18, 3, 0, 0)
+            .single()
+            .expect("valid time");
+
+        delete_full(&db, data.path(), evening.with_timezone(&Utc)).expect("delete");
+        let next_check = run_due(&db, data.path(), &(evening + TimeDelta::minutes(5))).expect("check");
+        let at_the_hour = run_due(&db, data.path(), &next_night).expect("check");
+
+        assert_eq!(next_check.full.expect("full"), Ran::NotDue);
+        assert_eq!(at_the_hour.full.expect("full"), Ran::Written);
     }
 
     #[test]

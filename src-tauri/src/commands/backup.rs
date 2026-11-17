@@ -44,7 +44,7 @@ pub async fn set_backup_settings(
 
 #[tauri::command]
 pub async fn delete_full_backups(state: State<'_, AppState>) -> Result<BackupStatus> {
-    backup::delete_full(&state.app_data_dir)?;
+    backup::delete_full(&state.db, &state.app_data_dir, chrono::Utc::now())?;
     backup::status(&state.db, &state.app_data_dir)
 }
 
