@@ -4530,3 +4530,26 @@ invited to also lands on their own calendar, so it keeps exactly one reminder.
   request needs; hiding a calendar already silences it.
 - *Google `accessRole == owner` as the ownership test*: a calendar shared with "manage sharing"
   rights reports `owner` too.
+
+## 2026-11-17 — Sidebar density is a two-level preference that only changes vertical spacing
+
+**Decision:** The sidebar gets a remembered `sidebar_density` preference for the whole
+installation (not per account): `comfortable`, the default and the sidebar as it was, or
+`compact`, chosen in Settings → Appearance. Compact only reduces the vertical padding and gaps
+of the sidebar's scrolling list; it never changes text size, icon size, horizontal padding, or
+the fixed header and footer, and every row it changes stays at least 24 px tall (WCAG 2.5.8).
+The stored values are plain strings and are not renamed without a migration.
+**Context:** Issue #279: with several accounts and groups open, the list makes users scroll or
+fold useful groups. On the demo mailbox the list's content height drops from 2106 to 1618 px
+(0.768), mostly from the view rows and the smart-filter rows; account rows already use
+`text-xs`, keep a `min-h-6` floor (WebKit lays their truncated label out 1 px short), and gain
+the least.
+**Rejected:**
+- *A `data-density` attribute with Tailwind `in-data-*` variants*: the precedence between a row's
+  class and its compact override cannot be checked in jsdom, only in a real browser.
+- *A React context for the density*: a provider and a hook for three components; a required prop
+  lets `tsc` catch a component that was not given it.
+- *Thumbnail cards in Settings*: two new drawings to maintain; the shared `Select` is enough.
+- *All text rows at 28 px*: 0.820 with 2 px gaps (misses the 0.8 target); 0.782 without gaps,
+  where the active and hover backgrounds of neighbouring rows touch.
+- *Smaller icons*: the row height comes from the text's line height, so they save no space.

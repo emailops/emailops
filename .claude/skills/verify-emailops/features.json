@@ -709,6 +709,7 @@
         "src/lib/version",
         "src/lib/apiContract/ajustes.api.test",
         "src/lib/theme",
+        "src/lib/sidebarDensity",
         "src/components/DataLocation",
         "src/components/LockGate",
         "src/components/LockScreen",

@@ -895,6 +895,11 @@ checks = [
   { judge = "Open the composer. Does its toolbar offer a Font and a Font size picker, and do both show the font and size at the cursor as it moves through differently formatted text?", evidence = ["file:src/components/shared/RichTextEditor.tsx", "file:src/locales/en/compose.json"], covers = ["The compose toolbar has a Font and a Font size picker.", "Both follow the cursor, so they show the font and size of the text you are in."] },
 ]
 
+[feat-interface-5]
+checks = [
+  { judge = "Open Settings → Appearance. Does Sidebar density offer Comfortable (selected by default) and Compact, does choosing Compact make the rows of the sidebar's scrolling list shorter at once while the text, the icons, and the sidebar's top and bottom keep their look, and is Compact still selected after a relaunch?", evidence = ["file:src/lib/sidebarDensity.ts", "file:src/components/Settings/SidebarDensitySetting.tsx", "file:src/components/Sidebar/Sidebar.density.test.tsx"], visual = true, covers = ["Settings → Appearance → Sidebar density offers Comfortable, the default, and Compact, which makes the rows of the sidebar list shorter so more of them fit without scrolling.", "Text, icons, and the top and bottom of the sidebar stay the same, and the choice is kept across restarts."] },
+]
+
 [feat-shortcuts-1]
 checks = [
   { app = true },

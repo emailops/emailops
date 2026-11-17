@@ -451,6 +451,12 @@ code source sur GitHub et **Soutenir le projet ♥**, qui ouvre la page GitHub S
 La barre d'outils de rédaction propose un sélecteur de **Police** et un de **Taille de police**.
 Tous deux suivent le curseur : ils montrent la police et la taille du texte où vous vous trouvez.
 
+<!-- claim:feat-interface-5 -->
+**Paramètres → Apparence → Densité de la barre latérale** offre **Confortable**, le réglage par
+défaut, et **Compacte**, qui réduit la hauteur des lignes de la liste de la barre latérale pour en
+afficher davantage sans défiler. Le texte, les icônes ainsi que le haut et le bas de la barre ne
+changent pas, et le choix est conservé d'un redémarrage à l'autre.
+
 ## Raccourcis clavier {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

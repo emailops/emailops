@@ -417,6 +417,11 @@ on GitHub and **Sponsor the project ♥**, which opens the project's GitHub Spon
 The compose toolbar has a **Font** and a **Font size** picker. Both follow the cursor, so they show
 the font and size of the text you are in.
 
+<!-- claim:feat-interface-5 -->
+**Settings → Appearance → Sidebar density** offers **Comfortable**, the default, and **Compact**,
+which makes the rows of the sidebar list shorter so more of them fit without scrolling. Text,
+icons, and the top and bottom of the sidebar stay the same, and the choice is kept across restarts.
+
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

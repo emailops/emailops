@@ -436,6 +436,12 @@ fuente en GitHub y a **Apoya el proyecto ♥**, que abre la página de GitHub Sp
 La barra de herramientas de redacción tiene un selector de **Fuente** y otro de **Tamaño de
 fuente**. Los dos siguen al cursor, así que muestran la fuente y el tamaño del texto en el que estás.
 
+<!-- claim:feat-interface-5 -->
+**Ajustes → Apariencia → Densidad de la barra lateral** ofrece **Cómoda**, la predeterminada, y
+**Compacta**, que hace más bajas las filas de la lista de la barra lateral para que quepan más sin
+desplazarse. El texto, los iconos y las partes superior e inferior de la barra no cambian, y la
+elección se conserva entre reinicios.
+
 ## Atajos de teclado {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

@@ -448,6 +448,12 @@ Die Werkzeugleiste beim Verfassen hat eine Auswahl für **Schriftart** und eine 
 **Schriftgröße**. Beide folgen dem Cursor und zeigen Schriftart und Größe des Textes, in dem Sie
 gerade schreiben.
 
+<!-- claim:feat-interface-5 -->
+**Einstellungen → Erscheinungsbild → Dichte der Seitenleiste** bietet **Komfortabel**, die
+Voreinstellung, und **Kompakt**, das die Zeilen der Seitenleistenliste niedriger macht, damit mehr
+davon ohne Scrollen hineinpassen. Text, Symbole sowie der obere und untere Bereich der Seitenleiste
+bleiben gleich, und die Wahl bleibt über Neustarts erhalten.
+
 ## Tastenkombinationen {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->
