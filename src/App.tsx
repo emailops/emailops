@@ -223,7 +223,7 @@ function AppInner() {
   // Sidebar row spacing (Settings → Appearance); plain-string pref like
   // tagboard_density. This is its only owner: the sidebar and the setting
   // both read it from here, so a change shows without a restart.
-  const [sidebarDensity] = usePersistedPref<SidebarDensity>('sidebar_density', 'comfortable', {
+  const [sidebarDensity, setSidebarDensity] = usePersistedPref<SidebarDensity>('sidebar_density', 'comfortable', {
     parse: (raw) => (isSidebarDensity(raw) ? raw : null),
     serialize: (v) => v,
   });
@@ -2162,6 +2162,8 @@ function AppInner() {
           accounts={accounts}
           currentLayout={inboxLayout}
           onChangeLayout={handleChangeLayout}
+          sidebarDensity={sidebarDensity}
+          onChangeSidebarDensity={setSidebarDensity}
           classificationPrefill={classificationRulePrefill}
           tasksEnabled={tasksEnabled}
           onChangeTasksEnabled={setTasksEnabled}
