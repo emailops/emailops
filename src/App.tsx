@@ -50,6 +50,7 @@ import { TagBoardView } from '@/components/TagBoard/TagBoardView';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
+import { useColumnSpace } from '@/hooks/useColumnSpace';
 import { useEmails } from '@/hooks/useEmails';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
@@ -61,7 +62,7 @@ import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appU
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
-import { LIST_COLUMN, parseWidth, readingAreaRoom, SIDEBAR_COLUMN } from '@/lib/columnResize';
+import { fitColumns, LIST_COLUMN, parseWidth, readingAreaRoom, SIDEBAR_COLUMN } from '@/lib/columnResize';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
@@ -224,6 +225,9 @@ function AppInner() {
   // handles measure how much room it has left when a drag or key press starts.
   const mainRef = useRef<HTMLElement>(null);
   const columnRoomToGrow = useCallback(() => readingAreaRoom(mainRef.current), []);
+  // ...and when the space shrinks afterwards (the right dock opens, the window
+  // narrows), the columns are drawn narrower: see `fitColumns` below.
+  const columnSpace = useColumnSpace(mainRef);
   // Tag board "group by" dimension. Persisted in SQLite (never localStorage)
   // so the board opens on the dimension the user left it on.
   const [tagBoardType, setTagBoardType] = usePersistedPref<TagBoardType>('tagboard_tag_type', 'company', {
@@ -1562,6 +1566,14 @@ function AppInner() {
   const rightDock = rightDockMode(rightDockState);
   const isChatPanelOpen = rightDock.kind === 'panel' && rightDock.content === 'chat';
   const isCalendarPanelOpen = rightDock.kind === 'panel' && rightDock.content === 'calendar';
+  // The widths the columns are drawn at; the saved ones come back with the space.
+  const columns = fitColumns(
+    {
+      sidebar: sidebarWidth,
+      list: isEmailListView(viewMode) && inboxLayout === 'split' && !isInboxCollapsed ? listWidth : null,
+    },
+    columnSpace,
+  );
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
@@ -1636,11 +1648,11 @@ function AppInner() {
             void useLensStore.getState().selectLens(lensId);
             setViewMode('lenses');
           }}
-          width={sidebarWidth}
+          width={columns.sidebar}
         />
         <ColumnResizeHandle
           spec={SIDEBAR_COLUMN}
-          width={sidebarWidth}
+          width={columns.sidebar}
           roomToGrow={columnRoomToGrow}
           onCommit={setSidebarWidth}
           label={t('common:layout.resizeSidebar')}
@@ -1862,7 +1874,7 @@ function AppInner() {
                     selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
                     disableAutoSelect={inboxLayout === 'full-width'}
                     fullWidth={inboxLayout === 'full-width'}
-                    width={listWidth}
+                    width={columns.list ?? listWidth}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
                     onRetry={retryEmails}
@@ -1932,7 +1944,7 @@ function AppInner() {
                     {!isInboxCollapsed && (
                       <ColumnResizeHandle
                         spec={LIST_COLUMN}
-                        width={listWidth}
+                        width={columns.list ?? listWidth}
                         roomToGrow={columnRoomToGrow}
                         onCommit={setListWidth}
                         label={t('common:layout.resizeList')}

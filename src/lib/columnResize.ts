@@ -64,6 +64,32 @@ export function readingAreaRoom(main: HTMLElement | null): number {
   return area.clientWidth - READING_AREA_MIN_WIDTH;
 }
 
+/**
+ * The widths to draw the columns at in `space`, the width the sidebar, the
+ * list and the reading area share (`useColumnSpace`); `list` is null in a view
+ * without a list column. The handles keep the reading area at its minimum
+ * while the user resizes, but the space can shrink afterwards: the right dock
+ * opens, the window narrows. A column widened past its default then gives the
+ * extra width back, the list first, until the reading area has its minimum
+ * again. Neither goes below its default, so a tight window looks as it did
+ * before the columns could be resized; the saved widths stay, and come back
+ * with the space. Null space (not measured yet) draws the saved widths.
+ */
+export function fitColumns(
+  widths: { sidebar: number; list: number | null },
+  space: number | null,
+): { sidebar: number; list: number | null } {
+  if (space === null) return widths;
+  let excess = widths.sidebar + (widths.list ?? 0) + READING_AREA_MIN_WIDTH - Math.floor(space);
+  const giveBack = (width: number, spec: ColumnSpec) => {
+    const given = Math.min(Math.max(0, excess), Math.max(0, width - spec.defaultWidth));
+    excess -= given;
+    return width - given;
+  };
+  const list = widths.list === null ? null : giveBack(widths.list, LIST_COLUMN);
+  return { sidebar: giveBack(widths.sidebar, SIDEBAR_COLUMN), list };
+}
+
 /** Parse a stored width; anything unusable means "use the default". */
 export function parseWidth(raw: string, spec: ColumnSpec): number | null {
   const n = Number(raw);

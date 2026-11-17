@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampWidth,
   dragWidth,
+  fitColumns,
   KEY_STEP,
   keyWidth,
   LIST_COLUMN,
@@ -114,5 +115,50 @@ describe('readingAreaRoom', () => {
 
   it('gives no room before the main area is mounted', () => {
     expect(readingAreaRoom(null)).toBe(0);
+  });
+});
+
+// The handles keep the reading area at its minimum while the user resizes; the
+// space can still shrink afterwards (the right dock opens, the window narrows).
+// The columns are then drawn narrower, never the saved widths changed.
+describe('fitColumns', () => {
+  it('draws the saved widths while the reading area has its minimum', () => {
+    expect(fitColumns({ sidebar: 420, list: 500 }, 420 + 500 + READING_AREA_MIN_WIDTH)).toEqual({
+      sidebar: 420,
+      list: 500,
+    });
+  });
+
+  it('gives the reading area back the width it lost, list first', () => {
+    const lost = 140;
+    expect(fitColumns({ sidebar: 420, list: 600 }, 420 + 600 + READING_AREA_MIN_WIDTH - lost)).toEqual({
+      sidebar: 420,
+      list: 460,
+    });
+  });
+
+  it('narrows the sidebar once the list is back at its default width', () => {
+    expect(fitColumns({ sidebar: 420, list: 400 }, 1050)).toEqual({ sidebar: 346, list: 384 });
+  });
+
+  it('stops at the default widths, the layout the app had before columns resized', () => {
+    // 1200 px window with the 380 px dock open: the pane gets 180 px, as it did.
+    expect(fitColumns({ sidebar: 420, list: 420 }, 820)).toEqual({ sidebar: 256, list: 384 });
+  });
+
+  it('leaves a column narrower than its default alone', () => {
+    expect(fitColumns({ sidebar: 200, list: 300 }, 600)).toEqual({ sidebar: 200, list: 300 });
+  });
+
+  it('fits the sidebar alone in a view without a list column', () => {
+    expect(fitColumns({ sidebar: 420, list: null }, 600)).toEqual({ sidebar: 280, list: null });
+  });
+
+  it('keeps whole pixels on a fractional space', () => {
+    expect(fitColumns({ sidebar: 420, list: null }, 699.6)).toEqual({ sidebar: 379, list: null });
+  });
+
+  it('draws the saved widths until the space is measured', () => {
+    expect(fitColumns({ sidebar: 420, list: 600 }, null)).toEqual({ sidebar: 420, list: 600 });
   });
 });
