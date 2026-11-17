@@ -448,6 +448,23 @@ Die Werkzeugleiste beim Verfassen hat eine Auswahl für **Schriftart** und eine 
 **Schriftgröße**. Beide folgen dem Cursor und zeigen Schriftart und Größe des Textes, in dem Sie
 gerade schreiben.
 
+<!-- claim:feat-interface-5 -->
+**Einstellungen → Erscheinungsbild → Dichte der Seitenleiste** bietet **Kompakt**, die
+Voreinstellung, das die Zeilen der Seitenleistenliste niedriger macht, damit mehr davon ohne Scrollen
+hineinpassen, und **Komfortabel**, mit mehr Abstand zwischen den Zeilen. Text, Symbole sowie der obere
+und untere Bereich der Seitenleiste sind in beiden gleich, und die Wahl bleibt über Neustarts
+erhalten.
+
+<!-- claim:feat-interface-6 -->
+Die Ordnerleiste und, in der geteilten Ansicht, die E-Mail-Liste lassen sich breiter oder schmaler
+machen: Ziehen Sie die Linie an ihrem rechten Rand, oder springen Sie mit Tab dorthin und verwenden
+Sie die Pfeiltasten (Umschalt für größere Schritte), Pos1 und Ende. Ein Doppelklick auf die Linie
+stellt die Standardbreite wieder her. Eine Spalte wächst nur so weit, dass der Lesebereich
+mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten. Öffnet sich das
+Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verbreiterte Spalte
+diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
+Platz frei wird.
+
 ## Tastenkombinationen {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

@@ -90,8 +90,10 @@ export function ReadingPane({
     else onCloseTab(id);
   };
 
+  // `data-reading-pane` is what the column resize handles measure, so they
+  // never squeeze this pane below its minimum width (`readingAreaRoom`).
   return (
-    <div className={className}>
+    <div className={className} data-reading-pane="">
       {tabs.length > 0 && (
         <EmailTabBar
           mainEmail={selectedEmail}

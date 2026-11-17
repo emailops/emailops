@@ -436,6 +436,21 @@ fuente en GitHub y a **Apoya el proyecto ♥**, que abre la página de GitHub Sp
 La barra de herramientas de redacción tiene un selector de **Fuente** y otro de **Tamaño de
 fuente**. Los dos siguen al cursor, así que muestran la fuente y el tamaño del texto en el que estás.
 
+<!-- claim:feat-interface-5 -->
+**Ajustes → Apariencia → Densidad de la barra lateral** ofrece **Compacta**, la predeterminada,
+que hace más bajas las filas de la lista de la barra lateral para que quepan más sin desplazarse, y
+**Cómoda**, con más espacio entre ellas. El texto, los iconos y las partes superior e inferior de la
+barra son iguales en las dos, y la elección se conserva entre reinicios.
+
+<!-- claim:feat-interface-6 -->
+La barra lateral de carpetas y, en la vista dividida, la lista de correos se pueden ensanchar o
+estrechar: arrastra la línea de su borde derecho, o llega a ella con Tab y usa las flechas
+(Mayúsculas para pasos más grandes), Inicio y Fin. Haz doble clic en la línea para volver al ancho
+predeterminado. Una columna deja de crecer antes de que el panel de lectura quede por debajo de
+320 px, y los anchos se conservan entre reinicios. Si se abre el panel de la derecha (chat o
+calendario) o la ventana se estrecha, una columna ensanchada devuelve ese ancho, primero la lista,
+hasta su ancho predeterminado, y lo recupera cuando vuelve a haber sitio.
+
 ## Atajos de teclado {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

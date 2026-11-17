@@ -7,7 +7,7 @@
 // content. We exercise the real BRIDGE_SCRIPT under jsdom, reading the zoom
 // back from the `data-email-zoom` attribute the script maintains.
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BRIDGE_SCRIPT } from './EmailHtmlFrame';
 
 function runBridge() {
@@ -41,6 +41,24 @@ interface FrameMessage {
   height?: number;
 }
 
+// The frame's own document. jsdom lays nothing out, so a test sets the sizes
+// the webview would report; `afterEach` drops them again.
+const FRAME_SIZES = ['scrollWidth', 'clientWidth', 'scrollHeight', 'clientHeight', 'scrollTop'] as const;
+type FrameSize = (typeof FRAME_SIZES)[number];
+
+function frameDocument(sizes: Partial<Record<FrameSize, number>>) {
+  for (const [name, value] of Object.entries(sizes)) {
+    Object.defineProperty(document.documentElement, name, { configurable: true, value });
+  }
+}
+
+/** A fixed-width layout wider than the reading pane: the frame scrolls sideways. */
+const wideEmail = () => frameDocument({ scrollWidth: 1200, clientWidth: 600 });
+
+function wheelMessages(spy: { mock: { calls: unknown[][] } }) {
+  return spy.mock.calls.map((c) => c[0] as { type?: string; deltaY?: number }).filter((m) => m.type === 'wheel');
+}
+
 function lastHeightMessage(calls: unknown[][]): number | null {
   const heights = calls
     .map((call) => call[0] as FrameMessage)
@@ -61,6 +79,10 @@ describe('EmailHtmlFrame bridge pinch-zoom', () => {
     resetZoom();
   });
 
+  afterEach(() => {
+    for (const name of FRAME_SIZES) delete (document.documentElement as unknown as Record<string, unknown>)[name];
+  });
+
   it('ctrl+wheel up zooms in and consumes the event', () => {
     const ev = pinch(-100);
     expect(currentZoom()).toBeGreaterThan(1);
@@ -72,10 +94,82 @@ describe('EmailHtmlFrame bridge pinch-zoom', () => {
     expect(currentZoom()).toBeLessThan(1);
   });
 
+  // An email that fits the pane keeps native scrolling, overscroll bounce
+  // included: the webview already passes its wheel turns to the pane.
   it('a plain scroll wheel without ctrl does not zoom or consume the event', () => {
+    const spy = vi.spyOn(window, 'postMessage');
     const ev = pinch(-100, false);
     expect(currentZoom()).toBe(1);
     expect(ev.defaultPrevented).toBe(false);
+    expect(wheelMessages(spy)).toEqual([]);
+  });
+
+  // A wide email makes the frame scrollable sideways, and the webview then
+  // keeps every wheel turn over it: the reading pane only scrolled with the
+  // pointer off the email. Vertical turns are handed to the parent.
+  it('hands a vertical wheel turn over a wide email to the reading pane', () => {
+    wideEmail();
+    const spy = vi.spyOn(window, 'postMessage');
+    const ev = pinch(120, false);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(wheelMessages(spy)[0]?.deltaY).toBe(120);
+  });
+
+  it('converts line-based wheel deltas to pixels', () => {
+    wideEmail();
+    const spy = vi.spyOn(window, 'postMessage');
+    window.dispatchEvent(new WheelEvent('wheel', { deltaY: 3, deltaMode: 1, cancelable: true, bubbles: true }));
+    expect(wheelMessages(spy)[0]?.deltaY).toBe(48);
+  });
+
+  it('leaves a sideways turn to the email, which may scroll horizontally', () => {
+    wideEmail();
+    const spy = vi.spyOn(window, 'postMessage');
+    const ev = new WheelEvent('wheel', { deltaX: 120, deltaY: 10, cancelable: true, bubbles: true });
+    window.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(spy.mock.calls.some((c) => (c[0] as { type?: string }).type === 'wheel')).toBe(false);
+  });
+
+  it('lets a scrollable block inside the email scroll itself', () => {
+    wideEmail();
+    const spy = vi.spyOn(window, 'postMessage');
+    const box = document.createElement('div');
+    box.style.overflowY = 'auto';
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, value: 500 });
+    Object.defineProperty(box, 'clientHeight', { configurable: true, value: 100 });
+    box.scrollTop = 0;
+    const inner = document.createElement('p');
+    box.appendChild(inner);
+    document.body.appendChild(box);
+    try {
+      const ev = new WheelEvent('wheel', { deltaY: 120, cancelable: true, bubbles: true });
+      inner.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(false);
+      expect(wheelMessages(spy)).toEqual([]);
+    } finally {
+      box.remove();
+    }
+  });
+
+  // The frame's height is clamped at 50 000 px, so a longer email scrolls its
+  // own document: it keeps the wheel until it reaches that end.
+  it('lets an email taller than the frame scroll its own document first', () => {
+    wideEmail();
+    frameDocument({ scrollHeight: 60_000, clientHeight: 50_000, scrollTop: 0 });
+    const spy = vi.spyOn(window, 'postMessage');
+    const ev = pinch(120, false);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(wheelMessages(spy)).toEqual([]);
+  });
+
+  it('hands the turn to the reading pane once that long email is at its end', () => {
+    wideEmail();
+    frameDocument({ scrollHeight: 60_000, clientHeight: 50_000, scrollTop: 10_000 });
+    const spy = vi.spyOn(window, 'postMessage');
+    const ev = pinch(120, false);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(wheelMessages(spy)[0]?.deltaY).toBe(120);
   });
 
   it('clamps zoom to at most 3x', () => {

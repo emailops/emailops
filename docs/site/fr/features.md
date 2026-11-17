@@ -451,6 +451,21 @@ code source sur GitHub et **Soutenir le projet ♥**, qui ouvre la page GitHub S
 La barre d'outils de rédaction propose un sélecteur de **Police** et un de **Taille de police**.
 Tous deux suivent le curseur : ils montrent la police et la taille du texte où vous vous trouvez.
 
+<!-- claim:feat-interface-5 -->
+**Paramètres → Apparence → Densité de la barre latérale** offre **Compacte**, le réglage par
+défaut, qui réduit la hauteur des lignes de la liste de la barre latérale pour en afficher davantage
+sans défiler, et **Confortable**, plus aérée. Le texte, les icônes ainsi que le haut et le bas de la
+barre sont les mêmes dans les deux cas, et le choix est conservé d'un redémarrage à l'autre.
+
+<!-- claim:feat-interface-6 -->
+La barre latérale des dossiers et, en vue divisée, la liste des e-mails peuvent être élargies ou
+rétrécies : faites glisser la ligne de leur bord droit, ou atteignez-la avec Tab et utilisez les
+flèches (Maj pour des pas plus grands), Début et Fin. Double-cliquez sur la ligne pour revenir à la
+largeur par défaut. Une colonne cesse de s'élargir avant que le volet de lecture ne descende
+sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre. Si le panneau de droite
+(chat ou calendrier) s'ouvre ou si la fenêtre rétrécit, une colonne élargie rend cette largeur, la
+liste d'abord, jusqu'à sa largeur par défaut, et la retrouve quand la place revient.
+
 ## Raccourcis clavier {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

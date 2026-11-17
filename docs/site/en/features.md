@@ -417,6 +417,21 @@ on GitHub and **Sponsor the project ♥**, which opens the project's GitHub Spon
 The compose toolbar has a **Font** and a **Font size** picker. Both follow the cursor, so they show
 the font and size of the text you are in.
 
+<!-- claim:feat-interface-5 -->
+**Settings → Appearance → Sidebar density** offers **Compact**, the default, which makes the rows
+of the sidebar list shorter so more of them fit without scrolling, and **Comfortable**, with more
+room between them. Text, icons, and the top and bottom of the sidebar are the same in both, and the
+choice is kept across restarts.
+
+<!-- claim:feat-interface-6 -->
+The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the
+line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps),
+Home and End. Double-click the line to go back to the default width. A column stops growing
+before the reading pane gets narrower than 320 px, and the widths are kept across restarts. When
+the panel on the right (chat or calendar) opens or the window gets narrower, a widened column gives
+that width back, the list first, down to its default width, and gets it back when there is room
+again.
+
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->
