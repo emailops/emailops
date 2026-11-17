@@ -3,7 +3,7 @@ title: 'Privacidad y seguridad'
 description: 'Dónde se guarda tu correo, qué sale de tu máquina y los controles que te protegen del propio correo.'
 weight: 45
 nav:
-  where-your-data-is-stored: settings/privacy
+  where-your-data-is-stored: settings/data
   protection-from-the-mail-itself: settings/privacy
   locking-the-app: settings/privacy
 ---
@@ -33,7 +33,7 @@ Dentro:
 - **Una carpeta `backups/`** — copias completas de la base de datos que EmailOps hace mientras está
   abierta: por defecto una al día a las 03:00, conservando solo la más reciente. Time Machine se
   salta esta carpeta. Desactívalas, hazlas semanales, conserva hasta tres o bórralas en **Ajustes →
-  Privacidad y seguridad → Copias de seguridad**. <!-- claim:priv-where-data-8 -->
+  Datos y copias de seguridad → Copias de seguridad**. <!-- claim:priv-where-data-8 -->
 - **Una carpeta `local-backups/`** — copias pequeñas de lo que solo existe en este ordenador:
   ajustes, cuentas sin sus contraseñas, reglas, memoria, tareas, lentes y chats. El correo no va en
   ellas. Por defecto una al día, conservando las siete más recientes; restaura una desde la misma
@@ -41,7 +41,7 @@ Dentro:
 
 <!-- claim:priv-where-data-5 -->
 Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa **Ajustes →
-Privacidad y seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
+Datos y copias de seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
 EmailOps copia todo allí, se reinicia y deja la carpeta anterior para que la borres tú. Si ese
 disco no está conectado al arrancar, EmailOps lo avisa y se cierra en lugar de abrir un buzón
 vacío. Un modelo que añadiste con **Usar archivo existente…** no se copia: la carpeta nueva

@@ -24,6 +24,7 @@ pub const SETTINGS_TABS: &[&str] = &[
     "aisearch",
     "skills",
     "privacy",
+    "data",
 ];
 
 /// Main-view modes the effect may switch to. Mirrors the fixed members of

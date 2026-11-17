@@ -4861,14 +4861,15 @@ that reason.
 **Decision:** The app backs up while it is open, from an hour the user picks (default 03:00):
 a check 30 s after launch and every 5 minutes makes a copy that is due, and catches up a slot
 missed while the app was closed or the computer asleep. There are two copies, each Off, Daily or
-Weekly (default Daily) in Settings → Privacy & Security → Backups:
+Weekly (default Daily) in Settings → Data & Backups → Backups:
 - *Local data*: a SQLite file with only the tables that exist nowhere else — accounts without
   secrets, settings, rules, memory, tasks, lenses, chats, shared documents — the newest seven in
   `local-backups/`, unencrypted, left to Time Machine. Settings restores one by writing its rows
   over the live ones by key, without deleting anything else, then restarts the app. A copy from a
   newer schema is refused, and so is one whose account was added again under a new id.
 - *Full database copy*: the whole database, 1 to 3 copies (default 1) in `backups/`, a folder
-  marked so Time Machine skips it, with the 2 GiB free-space check and "Delete copies".
+  marked so Time Machine skips it, with the 2 GiB free-space check and "Delete copies"; after a
+  delete the next copy waits for the next scheduled time rather than the next check.
 Every table of the schema is listed in `services/backup/tables.rs` as backed up or left out with
 a reason; the `backup-tables` gate and Rust tests fail when a migration leaves a table unlisted,
 and the `backup-tables` agent classifies it.

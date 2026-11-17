@@ -8,6 +8,8 @@ language, and the update check. AI provider settings have their own recipe
 
 - `settings.tabs` each tab renders; Escape and **Close settings** close the dialog.
 - `settings.privacy` remote content, trusted senders, password; load and save failures are shown.
+- `settings.data` Data & Backups: the data folder (Data location) and the scheduled backups (Backups), on
+  their own tab after Privacy & Security.
 - `settings.language` UI language and AI output language; four locales with the same keys.
 - `settings.updates` update check and install prompt.
 - `settings.guard` the generic preference command refuses `security.*` and `app_data_dir` keys.

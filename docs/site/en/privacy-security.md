@@ -3,7 +3,7 @@ title: 'Privacy & security'
 description: 'Where your mail is stored, what leaves your machine, and the controls that protect you from the mail itself.'
 weight: 45
 nav:
-  where-your-data-is-stored: settings/privacy
+  where-your-data-is-stored: settings/data
   protection-from-the-mail-itself: settings/privacy
   locking-the-app: settings/privacy
 ---
@@ -33,14 +33,14 @@ Inside it:
 - **A `backups/` folder** — full copies of the database that EmailOps makes while it is open: by
   default one a day at 03:00, keeping only the newest one. Time Machine skips this folder. Turn
   them off, make them weekly, keep up to three or delete them in
-  **Settings → Privacy & Security → Backups**. <!-- claim:priv-where-data-8 -->
+  **Settings → Data & Backups → Backups**. <!-- claim:priv-where-data-8 -->
 - **A `local-backups/` folder** — small copies of what exists only on this computer: settings,
   accounts without their passwords, rules, memory, tasks, lenses and chats. Mail is not in them.
   By default one a day, keeping the newest seven; restore one from the same section. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 To keep it somewhere else — an external disk, or an encrypted volume — use **Settings →
-Privacy & Security → Data location**, or the link at the foot of the first onboarding step. EmailOps
+Data & Backups → Data location**, or the link at the foot of the first onboarding step. EmailOps
 copies everything there, restarts, and leaves the old folder for you to delete. If that disk is
 not connected when EmailOps starts, it says so and quits rather than opening an empty mailbox.
 A model you added with **Use existing file…** is not copied: the new folder points to the same file.

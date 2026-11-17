@@ -7,7 +7,7 @@ import { useLogStore } from '@/stores/logStore';
 import { DataMoveDialog } from './DataMoveDialog';
 import { useDataMove } from './useDataMove';
 
-/** Settings → Privacy: where the data folder is, and moving it. */
+/** Settings → Data & Backups: where the data folder is, and moving it. */
 export function DataLocationSection() {
   const { t, i18n } = useTranslation(['settings']);
   const { addLog } = useLogStore();

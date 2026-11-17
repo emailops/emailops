@@ -1,14 +1,12 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DataLocationSection } from '@/components/DataLocation/DataLocationSection';
 import { FALLBACK_LANGUAGE, isSupportedLanguage } from '@/i18n/resources';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { privacyPolicyUrl } from '@/lib/privacyPolicy';
 import { useLogStore } from '@/stores/logStore';
 import { useOverlay } from '@/stores/overlayStore';
-import { BackupsSection } from './BackupsSection';
 import { TrustedSendersSection } from './TrustedSendersSection';
 
 const MIN_MAIN_PASSWORD_CHARS = 6;
@@ -354,10 +352,6 @@ export function PrivacySettings() {
             </button>
           </div>
         </section>
-
-        <DataLocationSection />
-
-        <BackupsSection />
 
         {dialog && <PasswordDialog mode={dialog} onClose={() => setDialog(null)} onSuccess={handlePasswordSuccess} />}
       </div>

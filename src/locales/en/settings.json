@@ -31,6 +31,8 @@
     "documentsDesc": "Docs and sheets edited together by email",
     "privacy": "Privacy & Security",
     "privacyDesc": "Password, remote content",
+    "data": "Data & Backups",
+    "dataDesc": "Data location, backups",
     "about": "About",
     "aboutDesc": "Version and links",
     "junk": "Junk",

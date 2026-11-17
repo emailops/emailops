@@ -1,4 +1,4 @@
-// Settings → Privacy → Backups: the hour copies are made at, the local data
+// Settings → Data & Backups → Backups: the hour copies are made at, the local data
 // copy (and restoring one), and the full database copy (and deleting them).
 
 import { act } from 'react';

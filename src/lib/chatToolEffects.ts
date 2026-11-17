@@ -19,6 +19,7 @@ export const NAVIGABLE_SETTINGS_TABS: readonly SettingsTab[] = [
   'aisearch',
   'skills',
   'privacy',
+  'data',
 ];
 
 /** Main views a guide section may open. Mirrors `VIEWS` in `nav.rs`. */

@@ -31,7 +31,8 @@
     "src-tauri/src/services/backup/mod.rs::a_check_with_both_copies_off_writes_nothing": "Con las dos copias en Off, la comprobación no escribe nada ni crea carpetas.",
     "src-tauri/src/services/backup/mod.rs::the_first_check_makes_both_copies_and_the_next_one_none": "La primera comprobación hace las dos copias y la siguiente, el mismo día, ninguna.",
     "src-tauri/src/services/backup/mod.rs::a_full_copy_keeps_the_copies_the_user_chose": "Tras una copia completa quedan tantas como el usuario eligió conservar.",
-    "src-tauri/src/services/backup/mod.rs::restore_local_only_takes_the_name_of_a_listed_copy": "Restaurar solo acepta el nombre de una copia de la carpeta de copias locales, nunca una ruta."
+    "src-tauri/src/services/backup/mod.rs::restore_local_only_takes_the_name_of_a_listed_copy": "Restaurar solo acepta el nombre de una copia de la carpeta de copias locales, nunca una ruta.",
+    "src-tauri/src/services/backup/mod.rs::deleted_full_copies_come_back_at_the_next_scheduled_time_not_the_next_check": "Tras borrar las copias completas, la siguiente se hace a la próxima hora programada, no en la comprobación siguiente."
   },
   "vitest": {
     "src/components/Settings/BackupsSection.test.tsx::shows the stored hour, how often each copy is made and the copies to keep": "La sección Backups muestra la hora, la frecuencia de cada copia y cuántas copias completas se guardan.",
@@ -46,6 +47,8 @@
     "src/components/Settings/BackupsSection.test.tsx::confirming the delete removes the full copies and logs it": "Confirmar el borrado elimina las copias completas y lo anota en Logs.",
     "src/components/Settings/BackupsSection.test.tsx::restoring asks first with the newest copy chosen, and cancelling restores nothing": "Restaurar pide confirmación con la copia más reciente elegida, y cancelar no restaura nada.",
     "src/components/Settings/BackupsSection.test.tsx::confirming the restore restores the chosen copy": "Confirmar restaura la copia elegida en el selector.",
-    "src/components/Settings/BackupsSection.test.tsx::a failed restore shows the error and logs it": "Si restaurar falla, se ve el error y queda en Logs."
+    "src/components/Settings/BackupsSection.test.tsx::a failed restore shows the error and logs it": "Si restaurar falla, se ve el error y queda en Logs.",
+    "src/components/Settings/SettingsDialog.dataTab.test.tsx::SettingsDialog data tab shows the data location and the backups": "La pestaña Data & Backups de Ajustes muestra la ubicación de los datos y las copias de seguridad.",
+    "src/components/Settings/SettingsDialog.dataTab.test.tsx::SettingsDialog data tab leaves them out of Privacy & Security": "Privacy & Security ya no muestra la ubicación de los datos ni las copias de seguridad."
   }
 }

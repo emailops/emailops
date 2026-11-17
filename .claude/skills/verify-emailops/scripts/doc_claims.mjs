@@ -605,11 +605,12 @@ async function afterWizard() {
     return ok(/Use a main password/.test(priv), '«Use a main password» en Privacy & Security', 'no está');
   });
   await claim('priv-where-data-8', 'copia completa diaria a las 03:00, una copia, fuera de Time Machine', {
-    covers: ['by default one a day at 03:00, keeping only the newest one', 'Time Machine skips this folder.', 'Settings → Privacy & Security → Backups'],
-    how: 'En una instalación nueva abre Ajustes → Privacy & Security y lee en «Backups» la hora, la frecuencia de la copia completa y cuántas copias están marcadas, y las compara con la doc; espera a la primera copia en backups/ y lee en la carpeta la marca de exclusión de Time Machine que pone tmutil addexclusion.',
+    covers: ['by default one a day at 03:00, keeping only the newest one', 'Time Machine skips this folder.', 'Settings → Data & Backups → Backups'],
+    how: 'En una instalación nueva abre Ajustes → Data & Backups y lee en «Backups» la hora, la frecuencia de la copia completa y cuántas copias están marcadas, y las compara con la doc; espera a la primera copia en backups/ y lee en la carpeta la marca de exclusión de Time Machine que pone tmutil addexclusion.',
     proof: 'behaviour',
   }, async ({ doc }) => {
-    doc.match(/Settings → Privacy & Security → Backups/);
+    doc.match(/Settings → Data & Backups → Backups/);
+    const shown = await tab('Data & Backups');
     const hour = Number(doc.match(/one a day at (\d\d):00/)[1]);
     const keep = doc.number(/keeping only the newest (\w+)/);
     const marked = await js(() => ({
@@ -625,20 +626,20 @@ async function afterWizard() {
     try {
       excluded = /com\.apple\.backupd/.test(execFileSync('/usr/bin/xattr', ['-p', 'com.apple.metadata:com_apple_backup_excludeItem', dir], { encoding: 'latin1' }));
     } catch { excluded = false; }
-    const good = /Backups/.test(priv) && Number(marked.hour) === hour && marked.daily === 'true'
+    const good = /Backups/.test(shown) && Number(marked.hour) === hour && marked.daily === 'true'
       && Number(marked.keep) === keep && copies.length === keep && excluded;
     return ok(good, `«Backups» a las ${marked.hour}:00 con Daily y ${marked.keep} copia; ${copies.length} copia en backups/, excluida de Time Machine`,
       `marcado: ${JSON.stringify(marked)}; copias en backups/: ${copies.length}; excluida: ${excluded}`);
   });
   await claim('priv-where-data-9', 'copia local diaria, siete copias, se puede restaurar', {
     covers: ['By default one a day, keeping the newest seven', 'restore one from the same section'],
-    how: 'Espera a la primera copia en local-backups/, vuelve a abrir Ajustes → Privacy & Security y comprueba que «Local data» está en Daily, que la ayuda dice que guarda las copias que dice la doc y que la sección ofrece «Restore…».',
+    how: 'Espera a la primera copia en local-backups/, vuelve a abrir Ajustes → Data & Backups y comprueba que «Local data» está en Daily, que la ayuda dice que guarda las copias que dice la doc y que la sección ofrece «Restore…».',
     proof: 'behaviour',
   }, async ({ doc }) => {
     const keep = doc.number(/keeping the newest (\w+); restore/);
     const copies = await filesIn(path.join(DATA_DIR, 'local-backups'), /^local-.*\.db$/);
     // The section lists the copies when it opens: reopen it to see the new one.
-    const shown = await tab('Privacy & Security');
+    const shown = await tab('Data & Backups');
     const state = await js(() => ({
       daily: document.querySelector('[data-testid="backup-local-daily"]')?.getAttribute('aria-checked'),
       restore: !!document.querySelector('[data-testid="backup-restore"]'),

@@ -1,5 +1,5 @@
 //! The two backups the app makes while it is open, at the hour the user picks
-//! in Settings → Privacy & Security → Backups:
+//! in Settings → Data & Backups → Backups:
 //!
 //! - the local data copy ([`local`]): only the tables that exist nowhere else
 //!   ([`tables`]), the newest [`local::KEEP`] in `local-backups/`. Settings
