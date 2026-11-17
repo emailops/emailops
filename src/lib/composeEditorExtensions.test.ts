@@ -394,6 +394,66 @@ describe('composeEditorExtensions — font family', () => {
   });
 });
 
+describe('composeEditorExtensions — pasted colours', () => {
+  /** Paste `html` into an empty composer, as a clipboard paste does, and read the HTML back. */
+  function paste(html: string): string {
+    const editor = new Editor({ element: document.createElement('div'), extensions: composeEditorExtensions });
+    // jsdom has no ClipboardEvent, which ProseMirror would create by default.
+    editor.view.pasteHTML(html, new Event('paste') as ClipboardEvent);
+    const out = editor.getHTML();
+    editor.destroy();
+    return out;
+  }
+
+  it('drops the white text colour a dark-themed app puts on a copied list', () => {
+    // The shape a dark-themed note app puts on the clipboard: its theme's text
+    // colour serialised onto the list. On the composer's dark surface it looks
+    // like any other text; on a recipient's white page it is invisible.
+    const list = parse(
+      paste(
+        '<ul style="color: rgb(255, 255, 255); font-style: normal; text-indent: 0px;"><li><p>first point</p></li></ul>',
+      ),
+    ).querySelector('ul');
+
+    expect(list?.style.color).toBe('');
+    expect(list?.style.fontStyle).toBe('normal');
+    expect(list?.textContent).toBe('first point');
+  });
+
+  it('keeps a colour that reads on the page', () => {
+    const span = parse(paste('<p><span style="color: rgb(220, 38, 38);">warning</span></p>')).querySelector('span');
+    expect(span?.style.color).toBe('rgb(220, 38, 38)');
+  });
+});
+
+describe('composeEditorExtensions — text colour', () => {
+  it('sets the colour of the selected text and keeps its font', () => {
+    const editor = createEditor('<p><span style="font-family: Georgia, serif">Hello</span></p>');
+    editor.chain().selectAll().setColor('rgb(220, 38, 38)').run();
+    const span = parse(editor.getHTML()).querySelector('span');
+    expect(span?.style.color).toBe('rgb(220, 38, 38)');
+    expect(span?.style.fontFamily).toBe('Georgia, serif');
+    editor.destroy();
+  });
+
+  it('replaces the colour a webmail draft carried', () => {
+    const editor = createEditor('<p><span style="color: red; font-size: 18px">Hello</span></p>');
+    editor.chain().selectAll().setColor('rgb(37, 99, 235)').run();
+    const span = parse(editor.getHTML()).querySelector('span');
+    expect(span?.getAttribute('style')?.match(/(^|;\s*)color/g)).toHaveLength(1);
+    expect(span?.style.color).toBe('rgb(37, 99, 235)');
+    expect(span?.style.fontSize).toBe('18px');
+    editor.destroy();
+  });
+
+  it('goes back to the default colour', () => {
+    const editor = createEditor('<p><span style="color: red">Hello</span></p>');
+    editor.chain().selectAll().unsetColor().run();
+    expect(editor.getHTML()).toBe('<p>Hello</p>');
+    editor.destroy();
+  });
+});
+
 describe('composeEditorExtensions — font size', () => {
   it('sets the size of the selected text and keeps its font', () => {
     const editor = createEditor('<p><span style="font-family: Georgia, serif">Hello</span></p>');

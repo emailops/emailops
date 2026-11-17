@@ -47,6 +47,16 @@
   "defaultFont": "Standardschrift",
   "fontSize": "Schriftgröße",
   "defaultFontSize": "Standardgröße",
+  "textColor": "Textfarbe",
+  "defaultColor": "Standardfarbe",
+  "colors": {
+    "grey": "Grau",
+    "red": "Rot",
+    "orange": "Orange",
+    "green": "Grün",
+    "blue": "Blau",
+    "purple": "Lila"
+  },
   "showCc": "Cc hinzufügen",
   "showBcc": "Bcc hinzufügen",
   "minimize": "Minimieren",

@@ -47,6 +47,16 @@
   "defaultFont": "Fuente predeterminada",
   "fontSize": "Tamaño de fuente",
   "defaultFontSize": "Tamaño predeterminado",
+  "textColor": "Color del texto",
+  "defaultColor": "Color predeterminado",
+  "colors": {
+    "grey": "Gris",
+    "red": "Rojo",
+    "orange": "Naranja",
+    "green": "Verde",
+    "blue": "Azul",
+    "purple": "Morado"
+  },
   "showCc": "Añadir Cc",
   "showBcc": "Añadir Cco",
   "minimize": "Minimizar",

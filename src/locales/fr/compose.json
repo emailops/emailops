@@ -47,6 +47,16 @@
   "defaultFont": "Police par défaut",
   "fontSize": "Taille de police",
   "defaultFontSize": "Taille par défaut",
+  "textColor": "Couleur du texte",
+  "defaultColor": "Couleur par défaut",
+  "colors": {
+    "grey": "Gris",
+    "red": "Rouge",
+    "orange": "Orange",
+    "green": "Vert",
+    "blue": "Bleu",
+    "purple": "Violet"
+  },
   "showCc": "Ajouter Cc",
   "showBcc": "Ajouter Cci",
   "minimize": "Réduire",

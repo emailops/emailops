@@ -1,7 +1,7 @@
-// The compose toolbar offers font and size pickers, and every control names
-// the formatting of the text at the cursor, following it as the cursor moves.
-// Applying a font or size to a selection is covered on the schema side
-// (`composeEditorExtensions.test.ts`).
+// The compose toolbar offers font, size and colour pickers, and every control
+// names the formatting of the text at the cursor, following it as the cursor
+// moves. Applying a font, size or colour to a selection is covered on the
+// schema side (`composeEditorExtensions.test.ts`).
 
 import type { Editor } from '@tiptap/react';
 import { act } from 'react';
@@ -43,6 +43,7 @@ function picker(label: string): HTMLSelectElement {
 
 const fontPicker = () => picker('Font');
 const sizePicker = () => picker('Font size');
+const colorPicker = () => picker('Text colour');
 
 function shownLabel(select: HTMLSelectElement): string | null | undefined {
   return select.selectedOptions[0]?.textContent;
@@ -122,5 +123,45 @@ describe('RichTextEditor font picker', () => {
     expect(shownLabel(fontPicker())).toBe('Georgia');
     expect(shownLabel(sizePicker())).toBe('24');
     expect(boldButton().className).toContain('bg-primary-100');
+  });
+});
+
+describe('RichTextEditor colour picker', () => {
+  it('offers the default colour and a palette', () => {
+    render('<p>Hello</p>');
+
+    const labels = Array.from(colorPicker().options).map((option) => option.textContent);
+    expect(labels[0]).toBe('Default colour');
+    expect(labels).toContain('Red');
+    expect(labels).toContain('Blue');
+  });
+
+  it('names the colour of the text at the cursor', () => {
+    render('<p>plain <span style="color: rgb(220, 38, 38)">red</span></p>');
+    moveCursorInto('plain');
+    expect(shownLabel(colorPicker())).toBe('Default colour');
+
+    moveCursorInto('red');
+
+    expect(shownLabel(colorPicker())).toBe('Red');
+  });
+
+  it('colours the selected text with the chosen colour', () => {
+    render('<p>Hello</p>');
+    act(() => {
+      editor().commands.selectAll();
+    });
+    const select = colorPicker();
+    const blue = Array.from(select.options).find((option) => option.textContent === 'Blue');
+    if (!blue) throw new Error('Blue not offered');
+
+    act(() => {
+      select.value = blue.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const span = new DOMParser().parseFromString(editor().getHTML(), 'text/html').querySelector('span');
+    expect(span?.style.color).toBe(blue.value);
+    expect(span?.textContent).toBe('Hello');
   });
 });

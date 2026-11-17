@@ -18,6 +18,7 @@ import { Table, TableCell, TableHeader, TableRow, TableView } from '@tiptap/exte
 import { TextStyle } from '@tiptap/extension-text-style';
 import Underline from '@tiptap/extension-underline';
 import { DOMSerializer, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
 import {
   type Attributes,
   type CommandProps,
@@ -28,6 +29,7 @@ import {
   Node,
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import { dropUnreadableColors } from './pastedColors';
 
 /** Attributes carried verbatim: parsed from and rendered to the same HTML attribute. */
 function verbatim(...names: string[]): Attributes {
@@ -322,7 +324,19 @@ function setStyleProperty(property: string, value: string | null) {
   };
 }
 
-/** The toolbar's font and size pickers. */
+/**
+ * Pasted HTML passes through `dropUnreadableColors` before it is parsed: the
+ * schema keeps inline styles (for webmail drafts), so a colour the source app's
+ * theme put on copied text would otherwise be sent as it is.
+ */
+const ReadablePaste = Extension.create({
+  name: 'readablePaste',
+  addProseMirrorPlugins() {
+    return [new Plugin({ key: new PluginKey('readablePaste'), props: { transformPastedHTML: dropUnreadableColors } })];
+  },
+});
+
+/** The toolbar's font, size and colour pickers. */
 const FontControls = Extension.create({
   name: 'fontControls',
   addCommands() {
@@ -331,6 +345,8 @@ const FontControls = Extension.create({
       unsetFontFamily: () => setStyleProperty('font-family', null),
       setFontSize: (size: string) => setStyleProperty('font-size', size),
       unsetFontSize: () => setStyleProperty('font-size', null),
+      setColor: (color: string) => setStyleProperty('color', color),
+      unsetColor: () => setStyleProperty('color', null),
     };
   },
 });
@@ -422,6 +438,7 @@ export const composeEditorExtensions: Extensions = [
     },
   }),
   FontControls,
+  ReadablePaste,
   inlineTagMark('subscript', 'sub'),
   inlineTagMark('superscript', 'sup'),
   inlineTagMark('small', 'small'),

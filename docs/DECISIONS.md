@@ -4583,3 +4583,24 @@ open).
 - *Pointer capture for the drag (the PR's version)*: the app already keeps a drag alive over an
   email iframe with a window-wide capture layer (`RightDock`). The layer appears only after the
   pointer moves 3 px, so a double-click still reaches the handle.
+
+## 2026-11-17 — Pasted rich text keeps only colours that read; the composer gets a text colour picker
+
+**Decision:** When rich text is pasted into the composer, any text colour whose contrast with
+the background it will be shown on is below 3:1 (WCAG's floor for large text) is dropped. The
+background is the nearest one the pasted HTML declares, otherwise the white page a message
+renders on (`dropUnreadableColors`, run as the editor's `transformPastedHTML`). All other pasted
+styles stay, and drafts opened from a webmail client are not filtered. The toolbar offers a text
+colour picker: a fixed palette where every colour has 4.5:1 or more on white, plus the default.
+**Context:** A list copied from a note app in dark mode arrived with the theme's white text
+colour as an inline style. The composer keeps inline styles (so webmail drafts survive), and on
+its dark surface the white text looked like the rest. It was sent as white text, invisible on a
+recipient's white page and black under the dark reader's inversion. The developer asked for
+colour support in the editor rather than losing colours on paste.
+**Rejected:**
+- *Dropping every pasted colour and background*: a colour the sender chose (a red warning)
+  would be lost, and the editor could not put it back.
+- *Dropping only near-white or near-black colours*: a fixed list of theme colours misses the
+  mid greys of other themes. A contrast ratio against the actual background covers them all.
+- *Painting the composer with the reader's scheme (inverted on the dark theme)*: it shows the
+  problem but does not prevent it, and it is a larger change to the editor's CSS.

@@ -146,8 +146,22 @@ const FONTS = [
 /** Sizes offered by the picker, in px (the label is the number alone). */
 const FONT_SIZES = ['10', '12', '14', '16', '18', '20', '24', '32'].map((px) => ({ label: px, value: `${px}px` }));
 
+/**
+ * Text colours offered by the picker. Each reads on the white page a message
+ * renders on (contrast 4.5:1 or more), so none is one the paste filter
+ * (`dropUnreadableColors`) would drop.
+ */
+const TEXT_COLORS = [
+  { key: 'grey', value: 'rgb(107, 114, 128)' },
+  { key: 'red', value: 'rgb(220, 38, 38)' },
+  { key: 'orange', value: 'rgb(194, 65, 12)' },
+  { key: 'green', value: 'rgb(21, 128, 61)' },
+  { key: 'blue', value: 'rgb(37, 99, 235)' },
+  { key: 'purple', value: 'rgb(124, 58, 237)' },
+] as const;
+
 /** The value of `property` at the cursor if the picker offers it, else '' (the default). */
-function offered(style: string | null, property: string, options: { value: string }[]): string {
+function offered(style: string | null, property: string, options: readonly { value: string }[]): string {
   const current = styleProperty(style, property);
   return options.some((option) => option.value === current) ? (current as string) : '';
 }
@@ -178,6 +192,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         link: editor.isActive('link'),
         font: offered(style, 'font-family', FONTS),
         size: offered(style, 'font-size', FONT_SIZES),
+        color: offered(style, 'color', TEXT_COLORS),
       };
     },
   });
@@ -270,6 +285,19 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
           value ? editor.chain().focus().setFontSize(value).run() : editor.chain().focus().unsetFontSize().run()
         }
         ariaLabel={t('compose:fontSize')}
+        disabled={disabled}
+        size="xs"
+      />
+      <Select
+        value={format.color}
+        options={[
+          { value: '', label: t('compose:defaultColor') },
+          ...TEXT_COLORS.map(({ key, value }) => ({ value, label: t(`compose:colors.${key}`) })),
+        ]}
+        onChange={(value) =>
+          value ? editor.chain().focus().setColor(value).run() : editor.chain().focus().unsetColor().run()
+        }
+        ariaLabel={t('compose:textColor')}
         disabled={disabled}
         size="xs"
       />

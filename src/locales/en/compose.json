@@ -47,6 +47,16 @@
   "defaultFont": "Default font",
   "fontSize": "Font size",
   "defaultFontSize": "Default size",
+  "textColor": "Text colour",
+  "defaultColor": "Default colour",
+  "colors": {
+    "grey": "Grey",
+    "red": "Red",
+    "orange": "Orange",
+    "green": "Green",
+    "blue": "Blue",
+    "purple": "Purple"
+  },
   "showCc": "Add Cc",
   "showBcc": "Add Bcc",
   "minimize": "Minimize",
