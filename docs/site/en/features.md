@@ -414,8 +414,11 @@ design that is already dark is left as it is.
 on GitHub and **Sponsor the project ♥**, which opens the project's GitHub Sponsors page.
 
 <!-- claim:feat-interface-4 -->
-The compose toolbar has a **Font** and a **Font size** picker. Both follow the cursor, so they show
-the font and size of the text you are in.
+The compose toolbar has a **Font**, a **Font size** and a **Text colour** picker. All three follow
+the cursor, so they show the font, size and colour of the text you are in. Text pasted from another
+app keeps its colours only where they can be read: a colour too faint against its background, such
+as the white text of an app in dark mode, is dropped, so the message does not arrive with invisible
+text.
 
 <!-- claim:feat-interface-5 -->
 **Settings → Appearance → Sidebar density** offers **Compact**, the default, which makes the rows

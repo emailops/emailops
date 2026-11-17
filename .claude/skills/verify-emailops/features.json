@@ -377,6 +377,7 @@
         "src/components/shared/RichTextEditor",
         "src/components/EmailView/ComposeTabView",
         "src/lib/composeEditorExtensions",
+        "src/lib/pastedColors",
         "src/lib/draftRequest",
         "src/lib/sendWarnings",
         "src/stores/translationStore",

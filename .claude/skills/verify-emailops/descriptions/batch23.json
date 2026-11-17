@@ -1,0 +1,24 @@
+{
+  "vitest": {
+    "src/lib/pastedColors.test.ts::drops a text colour that does not read on a white page and keeps the other styles": "Un color de texto pegado sin contraste sobre la página blanca se descarta y el resto de estilos del elemento se conserva.",
+    "src/lib/pastedColors.test.ts::removes the style attribute when the colour was all it had": "Si el color era el único estilo del elemento pegado, el atributo style desaparece.",
+    "src/lib/pastedColors.test.ts::keeps black text on a white page": "El texto negro pegado se conserva: se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::keeps dark grey text on a white page": "El texto gris oscuro pegado se conserva: se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::keeps red text on a white page": "El texto rojo pegado se conserva: es un color elegido que se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::keeps blue text on a white page": "El texto azul pegado se conserva: es un color elegido que se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::judges the colour against the background the element itself declares": "Texto claro con fondo oscuro propio se conserva: el contraste se mide contra ese fondo.",
+    "src/lib/pastedColors.test.ts::judges the colour against the background of an enclosing pasted element": "Texto claro dentro de un bloque pegado con fondo oscuro se conserva: el contraste se mide contra el fondo del bloque.",
+    "src/lib/pastedColors.test.ts::takes a bgcolor attribute as the background": "Un bgcolor de celda cuenta como fondo al medir el contraste del texto pegado.",
+    "src/lib/pastedColors.test.ts::drops a pale colour on a pale background": "Un color pálido sobre un fondo pálido se descarta y el fondo se conserva.",
+    "src/lib/pastedColors.test.ts::drops the colour of a <font> tag that does not read and keeps its face": "El atributo color ilegible de un <font> pegado se descarta y la fuente se conserva.",
+    "src/lib/pastedColors.test.ts::leaves a colour it cannot measure as it is": "Un color que no se puede medir (var(--…)) se deja tal cual.",
+    "src/lib/composeEditorExtensions.test.ts::drops the white text colour a dark-themed app puts on a copied list": "Al pegar una lista copiada de una app en modo oscuro, el blanco del tema se descarta y la lista conserva sus otros estilos (regresión T-0065).",
+    "src/lib/composeEditorExtensions.test.ts::keeps a colour that reads on the page": "Al pegar, un color legible (rojo) se conserva.",
+    "src/lib/composeEditorExtensions.test.ts::sets the colour of the selected text and keeps its font": "El selector de color colorea la selección y conserva su fuente.",
+    "src/lib/composeEditorExtensions.test.ts::replaces the colour a webmail draft carried": "Elegir un color sustituye el que traía un borrador del webmail, sin duplicar la propiedad, y conserva el tamaño.",
+    "src/lib/composeEditorExtensions.test.ts::goes back to the default colour": "«Color predeterminado» quita el color del texto.",
+    "src/components/shared/RichTextEditor.font.test.tsx::offers the default colour and a palette": "La barra del compositor ofrece el color predeterminado y una paleta de colores.",
+    "src/components/shared/RichTextEditor.font.test.tsx::names the colour of the text at the cursor": "El selector de color muestra el color del texto bajo el cursor y lo sigue al moverse.",
+    "src/components/shared/RichTextEditor.font.test.tsx::colours the selected text with the chosen colour": "Elegir un color en la barra colorea el texto seleccionado."
+  }
+}

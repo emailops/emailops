@@ -448,8 +448,11 @@ simple ou au design clair est adapté, et un design déjà sombre est laissé te
 code source sur GitHub et **Soutenir le projet ♥**, qui ouvre la page GitHub Sponsors du projet.
 
 <!-- claim:feat-interface-4 -->
-La barre d'outils de rédaction propose un sélecteur de **Police** et un de **Taille de police**.
-Tous deux suivent le curseur : ils montrent la police et la taille du texte où vous vous trouvez.
+La barre d'outils de rédaction propose un sélecteur de **Police**, un de **Taille de police** et
+un de **Couleur du texte**. Tous trois suivent le curseur : ils montrent la police, la taille et la
+couleur du texte où vous vous trouvez. Le texte collé depuis une autre application ne garde ses
+couleurs que là où elles se lisent : une couleur trop pâle sur son fond, comme le texte blanc d'une
+application en mode sombre, est retirée, pour que le message n'arrive pas avec du texte invisible.
 
 <!-- claim:feat-interface-5 -->
 **Paramètres → Apparence → Densité de la barre latérale** offre **Compacte**, le réglage par
