@@ -137,18 +137,25 @@ export const BRIDGE_SCRIPT = String.raw`
     // a wide email (fixed-width table, narrow column) makes the frame
     // scrollable sideways, and the webview then gives every wheel turn over
     // it to the frame — the pane only scrolled with the pointer off the
-    // email. Hand vertical turns to the parent, unless an element inside the
-    // email can scroll that way itself.
+    // email. Only then hand vertical turns to the parent; any other email
+    // keeps native scrolling and its overscroll bounce. An element inside
+    // the email, or the document itself when the email is taller than the
+    // frame's 50 000 px height clamp, keeps the turn while it can still
+    // scroll that way.
     window.addEventListener('wheel', function(e){
       if (e.ctrlKey || e.defaultPrevented) return;
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
-      for (var n = e.target; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement; n = n.parentNode){
-        var oy = getComputedStyle(n).overflowY;
-        if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight){
-          var atEnd = e.deltaY > 0 ? n.scrollTop + n.clientHeight >= n.scrollHeight - 1 : n.scrollTop <= 0;
-          if (!atEnd) return;
-        }
+      var root = document.documentElement;
+      if (root.scrollWidth <= root.clientWidth) return;
+      function canScroll(n){
+        if (n.scrollHeight <= n.clientHeight) return false;
+        return e.deltaY > 0 ? n.scrollTop + n.clientHeight < n.scrollHeight - 1 : n.scrollTop > 0;
       }
+      for (var n = e.target; n && n.nodeType === 1 && n !== document.body && n !== root; n = n.parentNode){
+        var oy = getComputedStyle(n).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && canScroll(n)) return;
+      }
+      if (canScroll(root)) return;
       e.preventDefault();
       var unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
       send({ type: 'wheel', deltaY: e.deltaY * unit });
