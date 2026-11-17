@@ -606,7 +606,7 @@ async function afterWizard() {
   });
   await claim('priv-where-data-8', 'copia completa diaria a las 03:00, una copia, fuera de Time Machine', {
     covers: ['by default one a day at 03:00, keeping only the newest one', 'Time Machine skips this folder.', 'Settings → Privacy & Security → Backups'],
-    how: 'En una instalación nueva abre Ajustes → Privacy & Security y lee en «Backups» la hora, la frecuencia de la copia completa y cuántas copias están marcadas, y las compara con la doc; espera a la primera copia en backups/ y pregunta a tmutil si Time Machine excluye la carpeta.',
+    how: 'En una instalación nueva abre Ajustes → Privacy & Security y lee en «Backups» la hora, la frecuencia de la copia completa y cuántas copias están marcadas, y las compara con la doc; espera a la primera copia en backups/ y lee en la carpeta la marca de exclusión de Time Machine que pone tmutil addexclusion.',
     proof: 'behaviour',
   }, async ({ doc }) => {
     doc.match(/Settings → Privacy & Security → Backups/);
@@ -619,7 +619,12 @@ async function afterWizard() {
     }));
     const dir = path.join(DATA_DIR, 'backups');
     const copies = await filesIn(dir, /^emailops-.*\.db$/);
-    const excluded = /\[Excluded\]/.test(execFileSync('/usr/bin/tmutil', ['isexcluded', dir], { encoding: 'utf8' }));
+    // The folder's own mark, not `tmutil isexcluded`: the run's data dir sits in a temp
+    // path Time Machine skips as a whole, which would pass without the mark.
+    let excluded = false;
+    try {
+      excluded = /com\.apple\.backupd/.test(execFileSync('/usr/bin/xattr', ['-p', 'com.apple.metadata:com_apple_backup_excludeItem', dir], { encoding: 'latin1' }));
+    } catch { excluded = false; }
     const good = /Backups/.test(priv) && Number(marked.hour) === hour && marked.daily === 'true'
       && Number(marked.keep) === keep && copies.length === keep && excluded;
     return ok(good, `«Backups» a las ${marked.hour}:00 con Daily y ${marked.keep} copia; ${copies.length} copia en backups/, excluida de Time Machine`,
