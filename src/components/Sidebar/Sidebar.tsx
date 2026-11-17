@@ -312,7 +312,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={`theme-chrome ${width === undefined ? 'w-64' : ''} flex-shrink-0 bg-white text-gray-900 border-r border-gray-200 flex flex-col`}
+      className={`theme-chrome ${width === undefined ? 'w-64' : ''} bg-white text-gray-900 border-r border-gray-200 flex flex-col`}
       style={width === undefined ? undefined : { width }}
     >
       <div className="p-4 border-b border-gray-200">

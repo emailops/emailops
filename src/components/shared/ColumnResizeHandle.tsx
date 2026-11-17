@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type ColumnSpec, dragWidth, keyWidth } from '@/lib/columnResize';
+import { type ColumnSpec, clampWidth, dragWidth, keyWidth, maxWidthFor } from '@/lib/columnResize';
 import { useOverlay } from '@/stores/overlayStore';
 
 interface ColumnResizeHandleProps {
   spec: ColumnSpec;
   /** Saved width of the column on the handle's left. */
   width: number;
+  /** Pixels the reading area can still give up before it reaches its minimum
+   *  width (`readingAreaRoom`); read when a drag or a key press starts. */
+  roomToGrow: () => number;
   /** Saves a width: once when a drag ends, at once for a key press or a double-click. */
   onCommit: (width: number) => void;
   /** Accessible name, e.g. "Resize folder list". */
@@ -35,9 +38,9 @@ const DRAG_THRESHOLD = 3;
  * movement because a layer shown on press would take the release, and the
  * click and double-click would never reach the handle.
  */
-export function ColumnResizeHandle({ spec, width, onCommit, label, title }: ColumnResizeHandleProps) {
+export function ColumnResizeHandle({ spec, width, roomToGrow, onCommit, label, title }: ColumnResizeHandleProps) {
   const handleRef = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ startX: number; startWidth: number; width: number; moved: boolean } | null>(null);
+  const drag = useRef<{ startX: number; startWidth: number; max: number; width: number; moved: boolean } | null>(null);
   const [pressed, setPressed] = useState(false);
   // The column's width while a drag moves it (for aria-valuenow); null otherwise.
   const [liveWidth, setLiveWidth] = useState<number | null>(null);
@@ -55,7 +58,7 @@ export function ColumnResizeHandle({ spec, width, onCommit, label, title }: Colu
       if (!d.moved && Math.abs(deltaX) < DRAG_THRESHOLD) return;
       d.moved = true;
       e.preventDefault();
-      d.width = dragWidth(d.startWidth, deltaX, spec);
+      d.width = dragWidth(d.startWidth, deltaX, spec, d.max);
       if (column instanceof HTMLElement) column.style.width = `${d.width}px`;
       setLiveWidth(d.width);
     };
@@ -92,14 +95,20 @@ export function ColumnResizeHandle({ spec, width, onCommit, label, title }: Colu
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
-        drag.current = { startX: e.clientX, startWidth: width, width, moved: false };
+        drag.current = {
+          startX: e.clientX,
+          startWidth: width,
+          max: maxWidthFor(width, roomToGrow(), spec),
+          width,
+          moved: false,
+        };
         // Keep the drag from selecting half the window's text.
         document.body.style.userSelect = 'none';
         setPressed(true);
       }}
-      onDoubleClick={() => onCommit(spec.defaultWidth)}
+      onDoubleClick={() => onCommit(clampWidth(spec.defaultWidth, spec, maxWidthFor(width, roomToGrow(), spec)))}
       onKeyDown={(e) => {
-        const next = keyWidth(width, e.key, e.shiftKey, spec);
+        const next = keyWidth(width, e.key, e.shiftKey, spec, maxWidthFor(width, roomToGrow(), spec));
         if (next === null) return;
         e.preventDefault();
         onCommit(next);

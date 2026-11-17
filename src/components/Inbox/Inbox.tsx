@@ -242,7 +242,8 @@ export function Inbox({
   // than narrowing when something else — e.g. the docked chat panel — takes
   // horizontal space.
   // Split layout: a fixed column, resizable when the parent passes `width`.
-  const widthClass = fullWidth ? 'flex-1 min-w-0' : width === undefined ? 'w-96 flex-shrink-0' : 'flex-shrink-0';
+  // Like the old `w-96`, it may still shrink when the window is too narrow.
+  const widthClass = fullWidth ? 'flex-1 min-w-0' : width === undefined ? 'w-96' : '';
   const widthStyle = !fullWidth && width !== undefined ? { width } : undefined;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 

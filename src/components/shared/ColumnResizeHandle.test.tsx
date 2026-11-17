@@ -12,13 +12,21 @@ let container: HTMLDivElement;
 let root: Root;
 let onCommit: ReturnType<typeof vi.fn<(width: number) => void>>;
 
-// As in App, the handle sits right after the column it resizes.
-function render(width = 400) {
+// As in App, the handle sits right after the column it resizes. `room` is how
+// far the reading area can shrink before it reaches its minimum width.
+function render(width = 400, room = 10_000) {
   act(() => {
     root.render(
       <>
         <div data-testid="column" style={{ width }} />
-        <ColumnResizeHandle spec={LIST_COLUMN} width={width} onCommit={onCommit} label="Resize list" title="hint" />
+        <ColumnResizeHandle
+          spec={LIST_COLUMN}
+          width={width}
+          roomToGrow={() => room}
+          onCommit={onCommit}
+          label="Resize list"
+          title="hint"
+        />
       </>,
     );
   });
@@ -139,5 +147,42 @@ describe('ColumnResizeHandle', () => {
       handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     });
     expect(onCommit).toHaveBeenLastCalledWith(LIST_COLUMN.defaultWidth);
+  });
+});
+
+// The columns may not squeeze the reading area below its minimum: each path
+// stops where the reading area runs out of room (here 50 px).
+describe('ColumnResizeHandle beside a narrow reading area', () => {
+  it('stops a drag where the reading area reaches its minimum', () => {
+    const handle = render(400, 50);
+    pointer(handle, 'pointerdown', 100);
+    pointer(window, 'pointermove', 400);
+    expect(column().style.width).toBe('450px');
+    pointer(window, 'pointerup', 400);
+    expect(onCommit).toHaveBeenLastCalledWith(450);
+  });
+
+  it('stops End where the reading area reaches its minimum', () => {
+    const handle = render(400, 50);
+    act(() => {
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    });
+    expect(onCommit).toHaveBeenLastCalledWith(450);
+  });
+
+  it('restores the default width only as far as the reading area allows', () => {
+    const handle = render(320, 20);
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(onCommit).toHaveBeenLastCalledWith(340);
+  });
+
+  it('still lets the column shrink when the reading area has no room', () => {
+    const handle = render(400, -100);
+    act(() => {
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    });
+    expect(onCommit).toHaveBeenLastCalledWith(400 - KEY_STEP);
   });
 });

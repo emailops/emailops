@@ -61,7 +61,7 @@ import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appU
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
-import { LIST_COLUMN, parseWidth, SIDEBAR_COLUMN } from '@/lib/columnResize';
+import { LIST_COLUMN, parseWidth, readingAreaRoom, SIDEBAR_COLUMN } from '@/lib/columnResize';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
@@ -220,6 +220,10 @@ function AppInner() {
     parse: (raw) => parseWidth(raw, LIST_COLUMN),
     serialize: String,
   });
+  // Neither column may squeeze the reading area below its minimum width: the
+  // handles measure how much room it has left when a drag or key press starts.
+  const mainRef = useRef<HTMLElement>(null);
+  const columnRoomToGrow = useCallback(() => readingAreaRoom(mainRef.current), []);
   // Tag board "group by" dimension. Persisted in SQLite (never localStorage)
   // so the board opens on the dimension the user left it on.
   const [tagBoardType, setTagBoardType] = usePersistedPref<TagBoardType>('tagboard_tag_type', 'company', {
@@ -1637,6 +1641,7 @@ function AppInner() {
         <ColumnResizeHandle
           spec={SIDEBAR_COLUMN}
           width={sidebarWidth}
+          roomToGrow={columnRoomToGrow}
           onCommit={setSidebarWidth}
           label={t('common:layout.resizeSidebar')}
           title={t('common:layout.resizeHint')}
@@ -1647,7 +1652,7 @@ function AppInner() {
             the chat panel docked alongside, that made this column overflow and
             clip its own right edge (hiding the inbox toolbar buttons) instead
             of narrowing. */}
-        <main className="flex flex-1 min-w-0 overflow-hidden">
+        <main ref={mainRef} className="flex flex-1 min-w-0 overflow-hidden">
           {viewMode === 'contacts' ? (
             // Per-account views wrap in a column with the unified-mode scope
             // chip on top (self-gating — renders nothing outside All accounts).
@@ -1928,6 +1933,7 @@ function AppInner() {
                       <ColumnResizeHandle
                         spec={LIST_COLUMN}
                         width={listWidth}
+                        roomToGrow={columnRoomToGrow}
                         onCommit={setListWidth}
                         label={t('common:layout.resizeList')}
                         title={t('common:layout.resizeHint')}
