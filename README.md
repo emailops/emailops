@@ -4,7 +4,7 @@
 
 Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linux.
 
-[Documentation](https://getemailops.com/en/docs/)
+[Documentation](https://getemailops.com/en/docs/) · [Subscribe to the newsletter](https://getemailops.com/en/#updates)
 
 ## Screenshots
 
