@@ -28,6 +28,7 @@ beforeEach(() => {
   act(() => {
     root.render(
       <SmartFilters
+        density="comfortable"
         filters={[urgent]}
         activeFilter={null}
         isLoading={false}
@@ -105,6 +106,7 @@ describe('SmartFilters long tag groups', () => {
     act(() => {
       root.render(
         <SmartFilters
+          density="comfortable"
           filters={topics}
           activeFilter={null}
           isLoading={false}
