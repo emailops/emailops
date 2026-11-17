@@ -30,9 +30,13 @@ Inside it:
 - **A SQLite database** — messages, threads, contacts, calendar events, classification tags,
   search embeddings and AI memory. <!-- claim:priv-where-data-3 -->
 - **A `models/` folder** — the AI models you downloaded. <!-- claim:priv-where-data-4 -->
-- **A `backups/` folder** — copies of the database that EmailOps makes shortly after launch: by
-  default one a day, keeping the newest three. Turn them off, make them weekly, keep fewer or
-  delete them in **Settings → Privacy & Security → Database backup**. <!-- claim:priv-where-data-8 -->
+- **A `backups/` folder** — full copies of the database that EmailOps makes while it is open: by
+  default one a day at 03:00, keeping only the newest one. Time Machine skips this folder. Turn
+  them off, make them weekly, keep up to three or delete them in
+  **Settings → Privacy & Security → Backups**. <!-- claim:priv-where-data-8 -->
+- **A `local-backups/` folder** — small copies of what exists only on this computer: settings,
+  accounts without their passwords, rules, memory, tasks, lenses and chats. Mail is not in them.
+  By default one a day, keeping the newest seven; restore one from the same section. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 To keep it somewhere else — an external disk, or an encrypted volume — use **Settings →

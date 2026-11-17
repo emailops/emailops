@@ -11,21 +11,19 @@ import {
 } from './contract';
 
 describe('api.ts ↔ Rust: preference and security commands', () => {
-  itMatchesRustArguments(['preferences.rs', 'security.rs', 'data_location.rs', 'db_backup.rs']);
+  itMatchesRustArguments(['preferences.rs', 'security.rs', 'data_location.rs', 'backup.rs']);
 
   it.each(['DataLocationInfo', 'PickedDataFolder', 'DataMoveProgress'])('%s has the fields Rust sends', (name) => {
     expect(rustStructFields('commands/data_location.rs', name)).toEqual(tsInterfaceFields(name, 'src/lib/api.ts'));
   });
 
-  it('BackupStatus has the fields Rust sends', () => {
-    expect(rustStructFields('services/db_backup.rs', 'BackupStatus')).toEqual(
-      tsInterfaceFields('BackupStatus', 'src/lib/api.ts'),
-    );
+  it.each(['BackupStatus', 'BackupCopy'])('%s has the fields Rust sends', (name) => {
+    expect(rustStructFields('services/backup/mod.rs', name)).toEqual(tsInterfaceFields(name, 'src/lib/api.ts'));
   });
 
   it('BackupFrequency has the values Rust accepts', () => {
     expect(tsStringUnion('BackupFrequency', 'src/lib/api.ts')).toEqual(
-      rustEnumVariants('services/db_backup.rs', 'BackupFrequency'),
+      rustEnumVariants('services/backup/mod.rs', 'BackupFrequency'),
     );
   });
 });

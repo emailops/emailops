@@ -47,9 +47,14 @@ pre-commit:
     docs-claims:
       glob: "{docs/site/**/*.md,docs/site/claims.toml,.claude/skills/verify-emailops/scripts/doc_claims*.mjs,scripts/docs_cli_claims.py}"
       run: uv run --no-project scripts/check-docs-claims.py
+    # Every table the migrations leave must be classified for the local data
+    # backup; on failure, run the backup-tables agent.
+    backup-tables:
+      glob: "{src-tauri/migrations/*.sql,src-tauri/src/services/backup/tables.rs}"
+      run: bash scripts/gates.sh backup-tables
     scripts-tests:
       glob:
-        - "scripts/{docs_*,check_docs*,check-docs*,disk_clean,privacy_scan}.py"
+        - "scripts/{docs_*,check_docs*,check-docs*,check_backup_tables,disk_clean,privacy_scan}.py"
         - "scripts/{build_target,ensure_demo_db}.sh"
         - "scripts/tests/*.py"
         - ".github/workflows/release.yml"

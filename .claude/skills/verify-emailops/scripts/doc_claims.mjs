@@ -604,19 +604,43 @@ async function afterWizard() {
     doc.match(/Settings → Privacy & Security/);
     return ok(/Use a main password/.test(priv), '«Use a main password» en Privacy & Security', 'no está');
   });
-  await claim('priv-where-data-8', 'copia diaria, tres copias', {
-    covers: ['by default one a day, keeping the newest three', 'Settings → Privacy & Security → Database backup'],
-    how: 'En una instalación nueva abre Ajustes → Privacy & Security y lee en la sección «Database backup» qué frecuencia y cuántas copias están marcadas; las compara con las que dice la doc.',
+  await claim('priv-where-data-8', 'copia completa diaria a las 03:00, una copia, fuera de Time Machine', {
+    covers: ['by default one a day at 03:00, keeping only the newest one', 'Time Machine skips this folder.', 'Settings → Privacy & Security → Backups'],
+    how: 'En una instalación nueva abre Ajustes → Privacy & Security y lee en «Backups» la hora, la frecuencia de la copia completa y cuántas copias están marcadas, y las compara con la doc; espera a la primera copia en backups/ y pregunta a tmutil si Time Machine excluye la carpeta.',
+    proof: 'behaviour',
   }, async ({ doc }) => {
-    doc.match(/Settings → Privacy & Security → Database backup/);
-    doc.match(/by default one a (day)/);
-    const keep = doc.number(/keeping the newest (\w+)/);
+    doc.match(/Settings → Privacy & Security → Backups/);
+    const hour = Number(doc.match(/one a day at (\d\d):00/)[1]);
+    const keep = doc.number(/keeping only the newest (\w+)/);
     const marked = await js(() => ({
-      daily: document.querySelector('[data-testid="db-backup-frequency-daily"]')?.getAttribute('aria-checked'),
-      keep: document.querySelector('[data-testid^="db-backup-keep-"][aria-checked="true"]')?.textContent.trim(),
+      hour: document.querySelector('[data-testid="backup-hour"]')?.value,
+      daily: document.querySelector('[data-testid="backup-full-daily"]')?.getAttribute('aria-checked'),
+      keep: document.querySelector('[data-testid^="backup-keep-"][aria-checked="true"]')?.textContent.trim(),
     }));
-    const good = /Database backup/.test(priv) && marked.daily === 'true' && Number(marked.keep) === keep;
-    return ok(good, `«Database backup» con Daily y ${marked.keep} copias marcadas`, `marcado: ${JSON.stringify(marked)}`);
+    const dir = path.join(DATA_DIR, 'backups');
+    const copies = await filesIn(dir, /^emailops-.*\.db$/);
+    const excluded = /\[Excluded\]/.test(execFileSync('/usr/bin/tmutil', ['isexcluded', dir], { encoding: 'utf8' }));
+    const good = /Backups/.test(priv) && Number(marked.hour) === hour && marked.daily === 'true'
+      && Number(marked.keep) === keep && copies.length === keep && excluded;
+    return ok(good, `«Backups» a las ${marked.hour}:00 con Daily y ${marked.keep} copia; ${copies.length} copia en backups/, excluida de Time Machine`,
+      `marcado: ${JSON.stringify(marked)}; copias en backups/: ${copies.length}; excluida: ${excluded}`);
+  });
+  await claim('priv-where-data-9', 'copia local diaria, siete copias, se puede restaurar', {
+    covers: ['By default one a day, keeping the newest seven', 'restore one from the same section'],
+    how: 'Espera a la primera copia en local-backups/, vuelve a abrir Ajustes → Privacy & Security y comprueba que «Local data» está en Daily, que la ayuda dice que guarda las copias que dice la doc y que la sección ofrece «Restore…».',
+    proof: 'behaviour',
+  }, async ({ doc }) => {
+    const keep = doc.number(/keeping the newest (\w+); restore/);
+    const copies = await filesIn(path.join(DATA_DIR, 'local-backups'), /^local-.*\.db$/);
+    // The section lists the copies when it opens: reopen it to see the new one.
+    const shown = await tab('Privacy & Security');
+    const state = await js(() => ({
+      daily: document.querySelector('[data-testid="backup-local-daily"]')?.getAttribute('aria-checked'),
+      restore: !!document.querySelector('[data-testid="backup-restore"]'),
+    }));
+    const good = state.daily === 'true' && new RegExp(`newest ${keep} copies`).test(shown) && copies.length === 1 && state.restore;
+    return ok(good, `«Local data» en Daily, guarda ${keep}, ${copies.length} copia en local-backups/ y «Restore…» a mano`,
+      `estado: ${JSON.stringify(state)}; copias en local-backups/: ${copies.length}`);
   });
 
   // ── what landed in the data dir ────────────────────────────────────────────
@@ -1170,6 +1194,17 @@ async function catalogMatchesDoc() {
   for (const r of rows) if (!table.find((t) => t.name === r.name)) problems.push(`${r.name} está en la app pero no en la tabla`);
   return ok(!problems.length && table.length, `${table.length} filas coinciden con el selector`, problems.join('; '));
 }
+// The files matching `pattern` in `dir`, once there is at least one or a
+// minute and a half has passed: the first backup check runs 30 s after launch.
+async function filesIn(dir, pattern) {
+  const deadline = Date.now() + 90_000;
+  for (;;) {
+    const found = fs.existsSync(dir) ? fs.readdirSync(dir).filter((n) => pattern.test(n)) : [];
+    if (found.length || Date.now() > deadline) return found;
+    await sleep(1000);
+  }
+}
+
 function sqliteTables() {
   const db = path.join(DATA_DIR, 'emailops.db');
   return execFileSync('/usr/bin/sqlite3', ['-readonly', db, "select name from sqlite_master where type in ('table','view')"], { encoding: 'utf8' }).split('\n').filter(Boolean);

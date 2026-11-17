@@ -10,11 +10,13 @@
 # cargo-outdated must warn rather than block).
 #
 # Usage: scripts/gates.sh <set|gate> [out_dir]      (make gates SET=... OUT=...)
-#   sets:  commit   clippy clippy-desktop fmt biome tsc   (pre-commit checks)
+#   sets:  commit   clippy clippy-desktop fmt biome tsc backup-tables   (pre-commit checks)
 #          push     rust-test clippy clippy-desktop outdated vitest  (pre-push checks)
 #          rust     rust-test clippy clippy-desktop fmt
 #          frontend biome tsc vitest
 #          all      every gate
+#   backup-tables: every table the migrations leave is classified for the
+#   local data backup (scripts/check_backup_tables.py)
 #   or a single gate id from the lists above.
 #        scripts/gates.sh node-bin   prints the .nvmrc Node's bin dir (exit 1
 #                                    when none is installed) and runs no gate
@@ -46,12 +48,12 @@ node_bin_for_nvmrc() {
 
 case "${1:-}" in
   node-bin) node_bin_for_nvmrc; exit ;;
-  commit)   GATES=(clippy clippy-desktop fmt biome tsc) ;;
+  commit)   GATES=(clippy clippy-desktop fmt biome tsc backup-tables) ;;
   push)     GATES=(rust-test clippy clippy-desktop outdated vitest) ;;
   rust)     GATES=(rust-test clippy clippy-desktop fmt) ;;
   frontend) GATES=(biome tsc vitest) ;;
-  all)      GATES=(rust-test clippy clippy-desktop fmt outdated biome tsc vitest) ;;
-  rust-test|clippy|clippy-desktop|fmt|outdated|biome|tsc|vitest) GATES=("$1") ;;
+  all)      GATES=(rust-test clippy clippy-desktop fmt outdated biome tsc vitest backup-tables) ;;
+  rust-test|clippy|clippy-desktop|fmt|outdated|biome|tsc|vitest|backup-tables) GATES=("$1") ;;
   *) echo "usage: $0 <commit|push|rust|frontend|all|<gate>> [out_dir]" >&2; exit 2 ;;
 esac
 
@@ -106,6 +108,7 @@ run_gate() {
     biome)          PATH="$NODE_BIN:$PATH" ./node_modules/.bin/biome check src/ ;;
     tsc)            PATH="$NODE_BIN:$PATH" ./node_modules/.bin/tsc --noEmit ;;
     vitest)         PATH="$NODE_BIN:$PATH" ./node_modules/.bin/vitest run ;;
+    backup-tables)  uv run --no-project scripts/check_backup_tables.py ;;
   esac > "$file" 2>&1
 }
 
@@ -129,11 +132,12 @@ summary() {
       fi ;;
     biome)     awk '/Checked /' "$f" ;;
     vitest)    awk '/Tests /' "$f" ;;
+    backup-tables) awk '/^backup-tables:/' "$f" ;;
   esac
 }
 
 excerpt() {
-  awk '/^---- |panicked at|^error|^warning: unused|Diff in|error TS|FAIL |✖|×/' "$1" | head -n 20
+  awk '/^---- |panicked at|^error|^warning: unused|Diff in|error TS|FAIL |✖|×|^  - |backup-tables agent/' "$1" | head -n 20
 }
 
 failed=0
@@ -150,6 +154,8 @@ for gate in "${GATES[@]}"; do
       fi ;;
     outdated)
       command -v cargo-outdated >/dev/null || reason="cargo-outdated not installed" ;;
+    backup-tables)
+      command -v uv >/dev/null || reason="uv not installed" ;;
   esac
   if [[ -n "$reason" ]]; then
     if [[ " ${GATES_OPTIONAL:-} " == *" $gate "* ]]; then

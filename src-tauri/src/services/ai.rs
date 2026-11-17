@@ -41,7 +41,7 @@ fn ensure_embedded_runtime_supported() -> Result<()> {
 
 const KEYRING_SERVICE: &str = "emailops";
 const OPENROUTER_KEY_ID: &str = "openrouter_api_key";
-const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
+pub(crate) const OPENROUTER_DEV_KEY_PREF: &str = "openrouter_api_key_dev";
 const OPENROUTER_ZDR_PREF: &str = "openrouter_zdr";
 /// The OpenRouter embedding model that passed the dimension probe, and how it
 /// is asked for vectors (`requested` / `native`). `ai_embedding_model` is

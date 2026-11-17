@@ -30,10 +30,14 @@ Tout réside dans le répertoire de données applicatives de votre système :
 - **Une base SQLite** — messages, fils, contacts, événements d'agenda, étiquettes de
   classification, embeddings de recherche et mémoire de l'IA. <!-- claim:priv-where-data-3 -->
 - **Un dossier `models/`** — les modèles d'IA que vous avez téléchargés. <!-- claim:priv-where-data-4 -->
-- **Un dossier `backups/`** — des copies de la base qu'EmailOps fait peu après le lancement : par
-  défaut une par jour, en gardant les trois plus récentes. Désactivez-les, passez à une par
-  semaine, gardez-en moins ou supprimez-les dans **Paramètres → Confidentialité et sécurité →
-  Sauvegarde de la base de données**. <!-- claim:priv-where-data-8 -->
+- **Un dossier `backups/`** — des copies complètes de la base qu'EmailOps fait pendant qu'il est
+  ouvert : par défaut une par jour à 03:00, en ne gardant que la plus récente. Time Machine ignore
+  ce dossier. Désactivez-les, passez à une par semaine, gardez-en jusqu'à trois ou supprimez-les
+  dans **Paramètres → Confidentialité et sécurité → Sauvegardes**. <!-- claim:priv-where-data-8 -->
+- **Un dossier `local-backups/`** — de petites copies de ce qui n'existe que sur cet ordinateur :
+  réglages, comptes sans leurs mots de passe, règles, mémoire, tâches, filtres dynamiques et
+  discussions. Les e-mails n'y sont pas. Par défaut une par jour, en gardant les sept plus
+  récentes ; restaurez-en une depuis la même section. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 Pour le conserver ailleurs — un disque externe ou un volume chiffré — utilisez **Paramètres →

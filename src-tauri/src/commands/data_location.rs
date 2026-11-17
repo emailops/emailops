@@ -162,6 +162,7 @@ pub async fn move_data_location(
     // A write landing after the snapshot would stay behind in the old copy, and
     // every commit during it restarts the SQLite backup from the first page.
     // The app restarts once the move is done, which starts all of it again.
+    crate::services::backup::pause();
     state.scheduler.stop();
     let moved = if state.stop_background_work(BACKGROUND_STOP_TIMEOUT).await {
         let db = state.db.clone();

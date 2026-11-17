@@ -8,7 +8,7 @@ import { errorText } from '@/lib/errors';
 import { privacyPolicyUrl } from '@/lib/privacyPolicy';
 import { useLogStore } from '@/stores/logStore';
 import { useOverlay } from '@/stores/overlayStore';
-import { DatabaseBackupSection } from './DatabaseBackupSection';
+import { BackupsSection } from './BackupsSection';
 import { TrustedSendersSection } from './TrustedSendersSection';
 
 const MIN_MAIN_PASSWORD_CHARS = 6;
@@ -357,7 +357,7 @@ export function PrivacySettings() {
 
         <DataLocationSection />
 
-        <DatabaseBackupSection />
+        <BackupsSection />
 
         {dialog && <PasswordDialog mode={dialog} onClose={() => setDialog(null)} onSuccess={handlePasswordSuccess} />}
       </div>

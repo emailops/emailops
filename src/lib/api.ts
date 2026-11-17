@@ -2228,33 +2228,56 @@ export async function moveDataLocation(toDefault: boolean): Promise<void> {
   return invoke('move_data_location', { toDefault });
 }
 
-// ── Database backup ──────────────────────────────────────────────────────────
+// ── Backups ──────────────────────────────────────────────────────────────────
 
-/** How often the database is copied to `backups/` after launch. */
+/** How often a backup is made, at the chosen hour. */
 export type BackupFrequency = 'off' | 'daily' | 'weekly';
 
-/** The automatic database backup's settings and the copies on disk (`services/db_backup.rs`). */
+/** One backup file on disk. */
+export interface BackupCopy {
+  name: string;
+  /** When the copy was taken, in unix seconds. */
+  takenAt: number;
+  bytes: number;
+}
+
+/** The backup settings and the copies on disk, newest first (`services/backup/mod.rs`). */
 export interface BackupStatus {
-  frequency: BackupFrequency;
-  /** Copies kept, 1 to 3. */
+  /** Local hour, 0 to 23, from which a due copy is made. */
+  hour: number;
+  /** The local data copy: settings, rules, memory, chats and the rest that exists only here. */
+  local: BackupFrequency;
+  /** The full database copy. */
+  full: BackupFrequency;
+  /** Full copies kept, 1 to 3. */
   keep: number;
-  count: number;
-  totalBytes: number;
-  /** When the newest copy was taken, in unix seconds. */
-  newestAt: number | null;
+  localCopies: BackupCopy[];
+  fullCopies: BackupCopy[];
 }
 
-export async function getDbBackups(): Promise<BackupStatus> {
-  return invoke('get_db_backups');
+export interface BackupSettings {
+  hour: number;
+  local: BackupFrequency;
+  full: BackupFrequency;
+  keep: number;
 }
 
-/** Store the settings; copies beyond `keep` are deleted right away. */
-export async function setDbBackupSettings(frequency: BackupFrequency, keep: number): Promise<BackupStatus> {
-  return invoke('set_db_backup_settings', { frequency, keep });
+export async function getBackups(): Promise<BackupStatus> {
+  return invoke('get_backups');
 }
 
-export async function deleteDbBackups(): Promise<BackupStatus> {
-  return invoke('delete_db_backups');
+/** Store the settings; full copies beyond `keep` are deleted right away. */
+export async function setBackupSettings({ hour, local, full, keep }: BackupSettings): Promise<BackupStatus> {
+  return invoke('set_backup_settings', { hour, local, full, keep });
+}
+
+export async function deleteFullBackups(): Promise<BackupStatus> {
+  return invoke('delete_full_backups');
+}
+
+/** Restore the local data copy `name` (one of `localCopies`); the app restarts when it is done. */
+export async function restoreLocalBackup(name: string): Promise<void> {
+  return invoke('restore_local_backup', { name });
 }
 
 // ── Lenses ───────────────────────────────────────────────────────────────────

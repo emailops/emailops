@@ -30,10 +30,14 @@ Dentro:
 - **Una base de datos SQLite** — mensajes, hilos, contactos, eventos de calendario, etiquetas
   de clasificación, embeddings de búsqueda y la memoria de la IA. <!-- claim:priv-where-data-3 -->
 - **Una carpeta `models/`** — los modelos de IA que hayas descargado. <!-- claim:priv-where-data-4 -->
-- **Una carpeta `backups/`** — copias de la base de datos que EmailOps hace poco después de
-  abrirse: por defecto una al día, conservando las tres más recientes. Desactívalas, hazlas
-  semanales, conserva menos o bórralas en **Ajustes → Privacidad y seguridad → Copia de seguridad
-  de la base de datos**. <!-- claim:priv-where-data-8 -->
+- **Una carpeta `backups/`** — copias completas de la base de datos que EmailOps hace mientras está
+  abierta: por defecto una al día a las 03:00, conservando solo la más reciente. Time Machine se
+  salta esta carpeta. Desactívalas, hazlas semanales, conserva hasta tres o bórralas en **Ajustes →
+  Privacidad y seguridad → Copias de seguridad**. <!-- claim:priv-where-data-8 -->
+- **Una carpeta `local-backups/`** — copias pequeñas de lo que solo existe en este ordenador:
+  ajustes, cuentas sin sus contraseñas, reglas, memoria, tareas, lentes y chats. El correo no va en
+  ellas. Por defecto una al día, conservando las siete más recientes; restaura una desde la misma
+  sección. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa **Ajustes →

@@ -30,10 +30,14 @@ Darin:
 - **Eine SQLite-Datenbank** — Nachrichten, Threads, Kontakte, Kalendertermine,
   Klassifizierungs-Kennzeichnungen, Such-Embeddings und das KI-Gedächtnis. <!-- claim:priv-where-data-3 -->
 - **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben. <!-- claim:priv-where-data-4 -->
-- **Ein Ordner `backups/`** — Kopien der Datenbank, die EmailOps kurz nach dem Start anlegt:
-  standardmäßig eine pro Tag, die neuesten drei werden aufbewahrt. Unter **Einstellungen →
-  Datenschutz & Sicherheit → Datenbank-Sicherung** schalten Sie sie aus, stellen auf wöchentlich
-  um, behalten weniger oder löschen sie. <!-- claim:priv-where-data-8 -->
+- **Ein Ordner `backups/`** — vollständige Kopien der Datenbank, die EmailOps anlegt, solange es
+  geöffnet ist: standardmäßig eine pro Tag um 03:00, nur die neueste wird aufbewahrt. Time Machine
+  überspringt diesen Ordner. Unter **Einstellungen → Datenschutz & Sicherheit → Sicherungen**
+  schalten Sie sie aus, stellen auf wöchentlich um, behalten bis zu drei oder löschen sie. <!-- claim:priv-where-data-8 -->
+- **Ein Ordner `local-backups/`** — kleine Kopien dessen, was es nur auf diesem Computer gibt:
+  Einstellungen, Konten ohne ihre Passwörter, Regeln, Gedächtnis, Aufgaben, Linsen und Chats.
+  E-Mails sind nicht enthalten. Standardmäßig eine pro Tag, die neuesten sieben werden
+  aufbewahrt; im selben Abschnitt stellen Sie eine wieder her. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 Um ihn woanders aufzubewahren — auf einem externen Laufwerk oder einem verschlüsselten Volume —

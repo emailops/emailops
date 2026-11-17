@@ -4856,19 +4856,34 @@ that reason.
 - *A `rust-toolchain.toml` for the whole repo*: it would also pin local development and CI,
   which do not build the dynamic-backends path that breaks.
 
-## 2026-11-16 — The startup backup can be turned off, made weekly and kept to fewer copies
+## 2026-11-17 — Backups run on a schedule while the app is open, in two kinds
 
-**Decision:** Settings → Privacy → Database backup lets the user choose how often the startup
-backup runs (Off, Daily or Weekly) and how many copies it keeps (1 to 3), and shows the copies'
-count, total size and newest date with a "Delete backups" button. Daily with three copies stays
-the default, and the 2 GiB free-space check is unchanged. Lowering the number of copies deletes
-the oldest at once; turning backups off keeps the existing copies until the user deletes them.
-**Context:** On a mailbox of tens of GB three daily copies take three times its size, and the
-copy is a long disk write after the first launch of the day. Users whose mail is on the server or
-whose disk is already backed up asked to turn it off or limit it. This supersedes the 2026-10-30
-entry's rejection of showing the backup in Settings.
+**Decision:** The app backs up while it is open, from an hour the user picks (default 03:00):
+a check 30 s after launch and every 5 minutes makes a copy that is due, and catches up a slot
+missed while the app was closed or the computer asleep. There are two copies, each Off, Daily or
+Weekly (default Daily) in Settings → Privacy & Security → Backups:
+- *Local data*: a SQLite file with only the tables that exist nowhere else — accounts without
+  secrets, settings, rules, memory, tasks, lenses, chats, shared documents — the newest seven in
+  `local-backups/`, unencrypted, left to Time Machine. Settings restores one by writing its rows
+  over the live ones by key, without deleting anything else, then restarts the app. A copy from a
+  newer schema is refused, and so is one whose account was added again under a new id.
+- *Full database copy*: the whole database, 1 to 3 copies (default 1) in `backups/`, a folder
+  marked so Time Machine skips it, with the 2 GiB free-space check and "Delete copies".
+Every table of the schema is listed in `services/backup/tables.rs` as backed up or left out with
+a reason; the `backup-tables` gate and Rust tests fail when a migration leaves a table unlisted,
+and the `backup-tables` agent classifies it.
+**Context:** A full copy per day, three deep, took three times a mailbox of tens of GB and a long
+disk write after each launch, yet the mail is on the server and many disks already go to Time
+Machine (which then copied each 12 GB file again). What only this computer holds is small. Users
+who never quit the app got no copy at all, since it ran only at launch. Lowering the default to
+one full copy deletes the two older ones at the next copy. This supersedes the 2026-10-30
+entry's three copies and its rejection of showing the backup in Settings (emailops/emailops#281
+and #302).
 **Rejected:**
-- *A separate destination folder for the copies*: it would need its own free-space check, a
-  plan for an unmounted disk, and a rule for what a data-folder move does with it; moving the
-  whole data folder already puts the copies on another disk.
-- *More than three copies*: the reason the 2026-10-30 entry settled on three still holds.
+- *Encrypting the local data copy*: it sits beside the unencrypted database it comes from; worth
+  it once a copy can go to another folder.
+- *A separate destination folder*: it needs its own free-space check, a plan for an unmounted
+  disk and a rule for data-folder moves; moving the data folder already moves the copies.
+- *Restoring by replacing the tables*: it would drop rows added after the copy; merging by key
+  keeps them, and the account-id check covers the one case where merging would point nowhere.
+- *More than three full copies*: each is the size of the whole database.
