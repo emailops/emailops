@@ -73,7 +73,7 @@ import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
 import { createThrottle } from '@/lib/refreshScheduling';
 import { parseRightDockContent, type RightDockContent, railButtons, rightDockMode } from '@/lib/rightDockLayout';
-import { isSidebarDensity, type SidebarDensity } from '@/lib/sidebarDensity';
+import { DEFAULT_SIDEBAR_DENSITY, isSidebarDensity, type SidebarDensity } from '@/lib/sidebarDensity';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import {
   baseViewToken,
@@ -243,10 +243,14 @@ function AppInner() {
   // Sidebar row spacing (Settings → Appearance); plain-string pref like
   // tagboard_density. This is its only owner: the sidebar and the setting
   // both read it from here, so a change shows without a restart.
-  const [sidebarDensity, setSidebarDensity] = usePersistedPref<SidebarDensity>('sidebar_density', 'comfortable', {
-    parse: (raw) => (isSidebarDensity(raw) ? raw : null),
-    serialize: (v) => v,
-  });
+  const [sidebarDensity, setSidebarDensity] = usePersistedPref<SidebarDensity>(
+    'sidebar_density',
+    DEFAULT_SIDEBAR_DENSITY,
+    {
+      parse: (raw) => (isSidebarDensity(raw) ? raw : null),
+      serialize: (v) => v,
+    },
+  );
   // The Memory and Tasks experimental flags ARE the master switches for the
   // backend extraction pipelines — they share the same `memory_enabled` /
   // `task_enabled` SQLite preference rows that `MemoryConfig.enabled` and

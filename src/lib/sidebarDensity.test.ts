@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { isSidebarDensity, type SidebarDensityClasses, sidebarDensityClasses } from './sidebarDensity';
+import {
+  DEFAULT_SIDEBAR_DENSITY,
+  isSidebarDensity,
+  type SidebarDensityClasses,
+  sidebarDensityClasses,
+} from './sidebarDensity';
+
+// Every installation without a saved choice gets the compact sidebar; one that
+// saved Comfortable keeps it (the default is never written to the database).
+describe('DEFAULT_SIDEBAR_DENSITY', () => {
+  it('is compact', () => {
+    expect(DEFAULT_SIDEBAR_DENSITY).toBe('compact');
+  });
+});
 
 describe('isSidebarDensity', () => {
   it.each(['comfortable', 'compact'])('accepts %s', (value) => {

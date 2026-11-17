@@ -449,10 +449,11 @@ Die Werkzeugleiste beim Verfassen hat eine Auswahl für **Schriftart** und eine 
 gerade schreiben.
 
 <!-- claim:feat-interface-5 -->
-**Einstellungen → Erscheinungsbild → Dichte der Seitenleiste** bietet **Komfortabel**, die
-Voreinstellung, und **Kompakt**, das die Zeilen der Seitenleistenliste niedriger macht, damit mehr
-davon ohne Scrollen hineinpassen. Text, Symbole sowie der obere und untere Bereich der Seitenleiste
-bleiben gleich, und die Wahl bleibt über Neustarts erhalten.
+**Einstellungen → Erscheinungsbild → Dichte der Seitenleiste** bietet **Kompakt**, die
+Voreinstellung, das die Zeilen der Seitenleistenliste niedriger macht, damit mehr davon ohne Scrollen
+hineinpassen, und **Komfortabel**, mit mehr Abstand zwischen den Zeilen. Text, Symbole sowie der obere
+und untere Bereich der Seitenleiste sind in beiden gleich, und die Wahl bleibt über Neustarts
+erhalten.
 
 <!-- claim:feat-interface-6 -->
 Die Ordnerleiste und, in der geteilten Ansicht, die E-Mail-Liste lassen sich breiter oder schmaler

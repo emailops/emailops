@@ -4534,8 +4534,9 @@ invited to also lands on their own calendar, so it keeps exactly one reminder.
 ## 2026-11-17 — Sidebar density is a two-level preference that only changes vertical spacing
 
 **Decision:** The sidebar gets a remembered `sidebar_density` preference for the whole
-installation (not per account): `comfortable`, the default and the sidebar as it was, or
-`compact`, chosen in Settings → Appearance. Compact only reduces the vertical padding and gaps
+installation (not per account): `compact`, the default, or `comfortable`, the sidebar as it was,
+chosen in Settings → Appearance. The default is never written to the database, so an installation
+that saved Comfortable keeps it. Compact only reduces the vertical padding and gaps
 of the sidebar's scrolling list; it never changes text size, icon size, horizontal padding, or
 the fixed header and footer, and every row it changes stays at least 24 px tall (WCAG 2.5.8).
 The stored values are plain strings and are not renamed without a migration.

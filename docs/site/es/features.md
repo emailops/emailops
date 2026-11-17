@@ -437,10 +437,10 @@ La barra de herramientas de redacción tiene un selector de **Fuente** y otro de
 fuente**. Los dos siguen al cursor, así que muestran la fuente y el tamaño del texto en el que estás.
 
 <!-- claim:feat-interface-5 -->
-**Ajustes → Apariencia → Densidad de la barra lateral** ofrece **Cómoda**, la predeterminada, y
-**Compacta**, que hace más bajas las filas de la lista de la barra lateral para que quepan más sin
-desplazarse. El texto, los iconos y las partes superior e inferior de la barra no cambian, y la
-elección se conserva entre reinicios.
+**Ajustes → Apariencia → Densidad de la barra lateral** ofrece **Compacta**, la predeterminada,
+que hace más bajas las filas de la lista de la barra lateral para que quepan más sin desplazarse, y
+**Cómoda**, con más espacio entre ellas. El texto, los iconos y las partes superior e inferior de la
+barra son iguales en las dos, y la elección se conserva entre reinicios.
 
 <!-- claim:feat-interface-6 -->
 La barra lateral de carpetas y, en la vista dividida, la lista de correos se pueden ensanchar o

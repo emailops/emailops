@@ -1,7 +1,8 @@
 // Sidebar density: the vertical spacing of the sidebar's scrolling list
-// (accounts, views, folders, AI features, lenses, smart filters). Comfortable
-// is today's spacing; Compact tightens padding and gaps only, never text size,
-// icons, horizontal padding, or the fixed header and footer.
+// (accounts, views, folders, AI features, lenses, smart filters). Compact, the
+// default, tightens padding and gaps only, never text size, icons, horizontal
+// padding, or the fixed header and footer; Comfortable is the spacing the
+// sidebar had before.
 //
 // Stored in the `sidebar_density` SQLite preference as the plain string
 // `comfortable` or `compact`. That is a persisted format: do not rename the
@@ -13,6 +14,10 @@
 export const SIDEBAR_DENSITIES = ['comfortable', 'compact'] as const;
 
 export type SidebarDensity = (typeof SIDEBAR_DENSITIES)[number];
+
+/** What an installation without a saved choice gets. The default is never
+ *  written to the database, so a saved Comfortable stays. */
+export const DEFAULT_SIDEBAR_DENSITY: SidebarDensity = 'compact';
 
 export function isSidebarDensity(value: unknown): value is SidebarDensity {
   return typeof value === 'string' && (SIDEBAR_DENSITIES as readonly string[]).includes(value);
