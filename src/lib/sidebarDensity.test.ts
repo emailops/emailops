@@ -38,7 +38,10 @@ describe('sidebarDensityClasses', () => {
       sectionHeader: 'mb-1.5',
       list: 'space-y-0.5',
       viewRow: 'py-1',
-      accountRow: 'py-1',
+      // WebKit lays the account row's truncated text-xs label out 1 px short
+      // (15 px for a 16 px line height), so py-1 alone gives 23 px; the floor
+      // keeps the row at the 24 px target size.
+      accountRow: 'py-1 min-h-6',
       filterRow: 'py-0.5',
       tagGroup: 'mt-1.5',
     };

@@ -38,7 +38,9 @@ export interface SidebarDensityClasses {
 }
 
 // Compact keeps every row it changes at 24 px or taller (WCAG 2.5.8):
-// view rows 28 px, account and filter rows 24 px.
+// view rows 28 px, account and filter rows 24 px. Account rows need the
+// min-h-6 floor: WebKit lays their truncated text-xs label out at 15 px, so
+// py-1 alone leaves them at 23 px.
 const CLASSES: Record<SidebarDensity, SidebarDensityClasses> = {
   comfortable: {
     nav: 'p-4 space-y-6',
@@ -54,7 +56,7 @@ const CLASSES: Record<SidebarDensity, SidebarDensityClasses> = {
     sectionHeader: 'mb-1.5',
     list: 'space-y-0.5',
     viewRow: 'py-1',
-    accountRow: 'py-1',
+    accountRow: 'py-1 min-h-6',
     filterRow: 'py-0.5',
     tagGroup: 'mt-1.5',
   },
