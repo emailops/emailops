@@ -427,7 +427,10 @@ choice is kept across restarts.
 The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the
 line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps),
 Home and End. Double-click the line to go back to the default width. A column stops growing
-before the reading pane gets narrower than 320 px, and the widths are kept across restarts.
+before the reading pane gets narrower than 320 px, and the widths are kept across restarts. When
+the panel on the right (chat or calendar) opens or the window gets narrower, a widened column gives
+that width back, the list first, down to its default width, and gets it back when there is room
+again.
 
 ## Keyboard shortcuts {#keyboard-shortcuts}
 

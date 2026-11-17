@@ -462,7 +462,9 @@ La barre latérale des dossiers et, en vue divisée, la liste des e-mails peuven
 rétrécies : faites glisser la ligne de leur bord droit, ou atteignez-la avec Tab et utilisez les
 flèches (Maj pour des pas plus grands), Début et Fin. Double-cliquez sur la ligne pour revenir à la
 largeur par défaut. Une colonne cesse de s'élargir avant que le volet de lecture ne descende
-sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre.
+sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre. Si le panneau de droite
+(chat ou calendrier) s'ouvre ou si la fenêtre rétrécit, une colonne élargie rend cette largeur, la
+liste d'abord, jusqu'à sa largeur par défaut, et la retrouve quand la place revient.
 
 ## Raccourcis clavier {#keyboard-shortcuts}
 

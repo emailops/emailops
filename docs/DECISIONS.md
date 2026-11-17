@@ -4555,24 +4555,31 @@ the least.
   where the active and hover backgrounds of neighbouring rows touch.
 - *Smaller icons*: the row height comes from the text's line height, so they save no space.
 
-## 2026-11-17 — Resizable columns keep a 320 px reading-area floor, enforced by the handles
+## 2026-11-17 — Resizable columns keep a 320 px reading-area floor
 
 **Decision:** The folder sidebar (180–420 px, default 256) and the split-view email list
 (300–800 px, default 384) resize from a handle on their right edge. A handle never lets its
 column grow past the point where the reading pane, or the main area in a view without one,
 would be narrower than 320 px, the floor the tag board already gives its reading pane. The
-limit is read from the layout when a drag or key press starts. A drag saves the width once, on
-release. The email frame hands the wheel to the reading pane only when the email is wider than
-the frame.
+limit is read from the layout when a drag or key press starts. When the space shrinks
+afterwards (the right dock opens, the window narrows), a column widened past its default is
+drawn narrower, the list first and then the sidebar, until the reading area has 320 px again or
+both are back at their defaults; the saved widths stay and come back with the space. A drag
+saves the width once, on release. The email frame hands the wheel to the reading pane only when
+the email is wider than the frame.
 **Context:** Contributor PR #134 added the columns. Its review asked for one preference write per
 drag, a reading pane the columns cannot squeeze, one clamp for every key, and native scrolling
-for emails that do not need the wheel handoff. The floor applies to the handles only: opening
-the right dock or narrowing the window after widening the columns can still leave the reading
-pane under 320 px, as the fixed widths already did (180 px at 1200 px with the dock open).
+for emails that do not need the wheel handoff. The developer chose to fit the drawn widths in
+the same change: without it, reopening the dock after widening both columns left the reading
+pane at 0 px and clipped the list. The fitted widths stop at the defaults, so a tight window
+looks as it did with fixed columns (a 180 px reading pane at 1200 px with the 380 px dock
+open).
 **Rejected:**
-- *Clamping the rendered widths to the space available, on every layout change*: it needs a
-  layout solver across two flex containers (the sidebar and main, then the list and the reading
-  pane) and a rule for which column gives way first. That is a separate decision.
+- *Fitting the columns with CSS alone (`flex-shrink` plus `min-width`)*: the browser shrinks
+  every shrinkable item in proportion, so it cannot say "the list first, then the sidebar, and
+  not below the default"; a pure function (`fitColumns`) can, and is unit-tested.
+- *Letting a fitted column shrink to its minimum*: it would change the layout of a window with
+  the dock open for users who never resized a column.
 - *Pointer capture for the drag (the PR's version)*: the app already keeps a drag alive over an
   email iframe with a window-wide capture layer (`RightDock`). The layer appears only after the
   pointer moves 3 px, so a double-click still reaches the handle.

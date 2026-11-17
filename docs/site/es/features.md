@@ -447,7 +447,9 @@ La barra lateral de carpetas y, en la vista dividida, la lista de correos se pue
 estrechar: arrastra la línea de su borde derecho, o llega a ella con Tab y usa las flechas
 (Mayúsculas para pasos más grandes), Inicio y Fin. Haz doble clic en la línea para volver al ancho
 predeterminado. Una columna deja de crecer antes de que el panel de lectura quede por debajo de
-320 px, y los anchos se conservan entre reinicios.
+320 px, y los anchos se conservan entre reinicios. Si se abre el panel de la derecha (chat o
+calendario) o la ventana se estrecha, una columna ensanchada devuelve ese ancho, primero la lista,
+hasta su ancho predeterminado, y lo recupera cuando vuelve a haber sitio.
 
 ## Atajos de teclado {#keyboard-shortcuts}
 

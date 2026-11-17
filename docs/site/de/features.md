@@ -460,7 +460,10 @@ Die Ordnerleiste und, in der geteilten Ansicht, die E-Mail-Liste lassen sich bre
 machen: Ziehen Sie die Linie an ihrem rechten Rand, oder springen Sie mit Tab dorthin und verwenden
 Sie die Pfeiltasten (Umschalt für größere Schritte), Pos1 und Ende. Ein Doppelklick auf die Linie
 stellt die Standardbreite wieder her. Eine Spalte wächst nur so weit, dass der Lesebereich
-mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten.
+mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten. Öffnet sich das
+Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verbreiterte Spalte
+diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
+Platz frei wird.
 
 ## Tastenkombinationen {#keyboard-shortcuts}
 

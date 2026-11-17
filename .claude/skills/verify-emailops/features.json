@@ -288,6 +288,7 @@
         "src/components/shared/EmailHtmlFrame",
         "src/lib/columnResize",
         "src/components/shared/ColumnResizeHandle",
+        "src/hooks/useColumnSpace",
         "src/lib/emailFormatting",
         "src/lib/threadSearch",
         "src/lib/threadCollapse",
