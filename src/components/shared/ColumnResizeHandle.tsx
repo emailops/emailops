@@ -1,17 +1,23 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { type ColumnSpec, dragWidth, keyWidth } from '@/lib/columnResize';
+import { useOverlay } from '@/stores/overlayStore';
 
 interface ColumnResizeHandleProps {
   spec: ColumnSpec;
-  /** Current width of the column on the handle's left. */
+  /** Saved width of the column on the handle's left. */
   width: number;
-  /** Live updates while dragging or pressing keys. */
-  onResize: (width: number) => void;
+  /** Saves a width: once when a drag ends, at once for a key press or a double-click. */
+  onCommit: (width: number) => void;
   /** Accessible name, e.g. "Resize folder list". */
   label: string;
   /** Hint shown on hover (drag / double-click to reset). */
   title: string;
 }
+
+/** Pixels the pointer travels before a press becomes a drag. A shorter press
+ *  is a click, so both clicks of a double-click reach the handle. */
+const DRAG_THRESHOLD = 3;
 
 /**
  * A thin vertical splitter between two columns, placed right after the column
@@ -19,28 +25,66 @@ interface ColumnResizeHandleProps {
  * Home/End when it has focus, and double-click it to restore the default
  * width. Follows the WAI-ARIA "window splitter" pattern (role="separator").
  *
- * Pointer capture keeps the drag going even when the pointer leaves the thin
- * handle (or crosses an email iframe), and text selection is suppressed for
- * the duration so dragging does not highlight half the window.
+ * A drag sets the width on the column element itself (the handle's previous
+ * sibling) and saves it once, on release: saving on every move wrote the
+ * preference and re-rendered the whole app for each pixel.
+ *
+ * Once the pointer moves, a layer over the whole window keeps the pointer in
+ * this document, as in `RightDock`: over an email iframe the window gets no
+ * pointer events and the drag froze. The layer waits for the first pixels of
+ * movement because a layer shown on press would take the release, and the
+ * click and double-click would never reach the handle.
  */
-export function ColumnResizeHandle({ spec, width, onResize, label, title }: ColumnResizeHandleProps) {
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
-  const [active, setActive] = useState(false);
+export function ColumnResizeHandle({ spec, width, onCommit, label, title }: ColumnResizeHandleProps) {
+  const handleRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ startX: number; startWidth: number; width: number; moved: boolean } | null>(null);
+  const [pressed, setPressed] = useState(false);
+  // The column's width while a drag moves it (for aria-valuenow); null otherwise.
+  const [liveWidth, setLiveWidth] = useState<number | null>(null);
+  const dragging = liveWidth !== null;
+  // The capture layer covers the whole window: no shortcut may act behind it.
+  useOverlay(dragging);
 
-  const end = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
-    drag.current = null;
-    setActive(false);
-    document.body.style.userSelect = '';
-    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-  };
+  useEffect(() => {
+    if (!pressed) return;
+    const column = handleRef.current?.previousElementSibling;
+    const onMove = (e: PointerEvent) => {
+      const d = drag.current;
+      if (!d) return;
+      const deltaX = e.clientX - d.startX;
+      if (!d.moved && Math.abs(deltaX) < DRAG_THRESHOLD) return;
+      d.moved = true;
+      e.preventDefault();
+      d.width = dragWidth(d.startWidth, deltaX, spec);
+      if (column instanceof HTMLElement) column.style.width = `${d.width}px`;
+      setLiveWidth(d.width);
+    };
+    const stop = () => {
+      const d = drag.current;
+      drag.current = null;
+      setPressed(false);
+      setLiveWidth(null);
+      document.body.style.userSelect = '';
+      if (d?.moved) onCommit(d.width);
+    };
+    // Listen on window, not the handle: the pointer soon leaves a 6px target.
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+    };
+  }, [pressed, spec, onCommit]);
 
   return (
     <div
+      ref={handleRef}
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
-      aria-valuenow={width}
+      aria-valuenow={liveWidth ?? width}
       aria-valuemin={spec.min}
       aria-valuemax={spec.max}
       tabIndex={0}
@@ -48,36 +92,35 @@ export function ColumnResizeHandle({ spec, width, onResize, label, title }: Colu
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         e.preventDefault();
-        drag.current = { startX: e.clientX, startWidth: width };
-        setActive(true);
+        drag.current = { startX: e.clientX, startWidth: width, width, moved: false };
+        // Keep the drag from selecting half the window's text.
         document.body.style.userSelect = 'none';
-        e.currentTarget.setPointerCapture?.(e.pointerId);
+        setPressed(true);
       }}
-      onPointerMove={(e) => {
-        if (!drag.current) return;
-        onResize(dragWidth(drag.current.startWidth, e.clientX - drag.current.startX, spec));
-      }}
-      onPointerUp={end}
-      onPointerCancel={end}
-      onDoubleClick={() => onResize(spec.defaultWidth)}
+      onDoubleClick={() => onCommit(spec.defaultWidth)}
       onKeyDown={(e) => {
         const next = keyWidth(width, e.key, e.shiftKey, spec);
         if (next === null) return;
         e.preventDefault();
-        onResize(next);
+        onCommit(next);
       }}
       // 6px hit area over the 1px border line; the line turns blue on hover,
       // while dragging, and when focused from the keyboard.
       className={`group relative z-20 -mx-[3px] w-[6px] flex-shrink-0 cursor-col-resize touch-none outline-none focus-visible:bg-primary-500/40 ${
-        active ? 'bg-primary-500/40' : ''
+        dragging ? 'bg-primary-500/40' : ''
       }`}
     >
       <span
         aria-hidden="true"
         className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
-          active ? 'bg-primary-500' : 'bg-transparent group-hover:bg-primary-400'
+          dragging ? 'bg-primary-500' : 'bg-transparent group-hover:bg-primary-400'
         }`}
       />
+      {dragging &&
+        createPortal(
+          <div data-testid="column-resize-drag-capture" className="fixed inset-0 z-[9999] cursor-col-resize" />,
+          document.body,
+        )}
     </div>
   );
 }

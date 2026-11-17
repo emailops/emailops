@@ -1637,7 +1637,7 @@ function AppInner() {
         <ColumnResizeHandle
           spec={SIDEBAR_COLUMN}
           width={sidebarWidth}
-          onResize={setSidebarWidth}
+          onCommit={setSidebarWidth}
           label={t('common:layout.resizeSidebar')}
           title={t('common:layout.resizeHint')}
         />
@@ -1928,7 +1928,7 @@ function AppInner() {
                       <ColumnResizeHandle
                         spec={LIST_COLUMN}
                         width={listWidth}
-                        onResize={setListWidth}
+                        onCommit={setListWidth}
                         label={t('common:layout.resizeList')}
                         title={t('common:layout.resizeHint')}
                       />
