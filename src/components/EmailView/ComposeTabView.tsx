@@ -219,7 +219,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
     recipientFields[field].setList((prev) => prev.filter((r) => r !== email));
   };
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = (files: FileList | File[] | null) => {
     draftFiles.addFiles(files);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -620,6 +620,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
           onChange={setBodyHtml}
           placeholder={t('compose:bodyPlaceholder')}
           contentClassName="min-h-[300px]"
+          onAttachFiles={handleFiles}
         />
 
         <InlineError message={draftFiles.error} className="mt-2" />

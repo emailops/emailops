@@ -1,8 +1,37 @@
 {
-  "rust": {
-    "src-tauri/src/db/accounts.rs::sent_counts_count_each_accounts_stored_sent_mail_and_skip_deleted_rows": "Cuenta el correo enviado guardado de cada cuenta (is_sent), sin las filas borradas ni el correo recibido; una cuenta sin enviados no aparece."
-  },
   "vitest": {
+    "src/lib/pastedColors.test.ts::drops a text colour that does not read on a white page and keeps the other styles": "Un color de texto pegado sin contraste sobre la página blanca se descarta y el resto de estilos del elemento se conserva.",
+    "src/lib/pastedColors.test.ts::removes the style attribute when the colour was all it had": "Si el color era el único estilo del elemento pegado, el atributo style desaparece.",
+    "src/lib/pastedColors.test.ts::keeps black text on a white page": "El texto negro pegado se conserva: se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::keeps dark grey text on a white page": "El texto gris oscuro pegado se conserva: se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::keeps red text on a white page": "El texto rojo pegado se conserva: es un color elegido que se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::keeps blue text on a white page": "El texto azul pegado se conserva: es un color elegido que se lee sobre blanco.",
+    "src/lib/pastedColors.test.ts::judges the colour against the background the element itself declares": "Texto claro con fondo oscuro propio se conserva: el contraste se mide contra ese fondo.",
+    "src/lib/pastedColors.test.ts::judges the colour against the background of an enclosing pasted element": "Texto claro dentro de un bloque pegado con fondo oscuro se conserva: el contraste se mide contra el fondo del bloque.",
+    "src/lib/pastedColors.test.ts::takes a bgcolor attribute as the background": "Un bgcolor de celda cuenta como fondo al medir el contraste del texto pegado.",
+    "src/lib/pastedColors.test.ts::drops a pale colour on a pale background": "Un color pálido sobre un fondo pálido se descarta y el fondo se conserva.",
+    "src/lib/pastedColors.test.ts::drops the colour of a <font> tag that does not read and keeps its face": "El atributo color ilegible de un <font> pegado se descarta y la fuente se conserva.",
+    "src/lib/pastedColors.test.ts::leaves a colour it cannot measure as it is": "Un color que no se puede medir (var(--…)) se deja tal cual.",
+    "src/lib/composeEditorExtensions.test.ts::drops the white text colour a dark-themed app puts on a copied list": "Al pegar una lista copiada de una app en modo oscuro, el blanco del tema se descarta y la lista conserva sus otros estilos (regresión T-0065).",
+    "src/lib/composeEditorExtensions.test.ts::keeps a colour that reads on the page": "Al pegar, un color legible (rojo) se conserva.",
+    "src/lib/composeEditorExtensions.test.ts::sets the colour of the selected text and keeps its font": "El selector de color colorea la selección y conserva su fuente.",
+    "src/lib/composeEditorExtensions.test.ts::replaces the colour a webmail draft carried": "Elegir un color sustituye el que traía un borrador del webmail, sin duplicar la propiedad, y conserva el tamaño.",
+    "src/lib/composeEditorExtensions.test.ts::goes back to the default colour": "«Color predeterminado» quita el color del texto.",
+    "src/components/shared/RichTextEditor.font.test.tsx::offers the default colour and a palette": "La barra del compositor ofrece el color predeterminado y una paleta de colores.",
+    "src/components/shared/RichTextEditor.font.test.tsx::names the colour of the text at the cursor": "El selector de color muestra el color del texto bajo el cursor y lo sigue al moverse.",
+    "src/components/shared/RichTextEditor.font.test.tsx::colours the selected text with the chosen colour": "Elegir un color en la barra colorea el texto seleccionado.",
+    "src/lib/composeEditorExtensions.test.ts::removes the bold, italic, underline, strikethrough, font, size and colour of the selected text": "«Borrar formato» quita negrita, cursiva, subrayado, tachado, fuente, tamaño y color del texto seleccionado.",
+    "src/lib/composeEditorExtensions.test.ts::leaves the text outside the selection as it is": "«Borrar formato» no toca el texto fuera de la selección.",
+    "src/lib/composeEditorExtensions.test.ts::keeps links": "«Borrar formato» conserva los enlaces.",
+    "src/lib/composeEditorExtensions.test.ts::turns a heading into a paragraph without its style or alignment": "«Borrar formato» convierte un título en un párrafo normal, sin su estilo ni su alineación.",
+    "src/lib/composeEditorExtensions.test.ts::drops the style of the list the selection sits in and keeps the list": "«Borrar formato» quita el estilo de la lista que contiene la selección y conserva la lista.",
+    "src/lib/composeEditorExtensions.test.ts::keeps the background and style of a table cell": "«Borrar formato» conserva el fondo y el estilo de las celdas de una tabla.",
+    "src/lib/composeEditorExtensions.test.ts::with nothing selected, makes the text typed next plain": "Sin selección, «Borrar formato» hace que lo siguiente que se escriba salga sin formato.",
+    "src/components/shared/RichTextEditor.font.test.tsx::clears the formatting of the selected text": "El botón «Borrar formato» de la barra deja sin formato el texto seleccionado.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Bullet list as an icon named by its tooltip": "El botón de lista con viñetas de la barra es un icono, sin texto, y su tooltip le da nombre.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Numbered list as an icon named by its tooltip": "El botón de lista numerada de la barra es un icono, sin texto, y su tooltip le da nombre.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Insert link as an icon named by its tooltip": "El botón de enlace de la barra es un icono, sin texto, y su tooltip le da nombre.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Clear formatting as an icon named by its tooltip": "El botón de borrar formato de la barra es un icono, sin texto, y su tooltip le da nombre.",
     "src/lib/composeSender.test.ts::reads a stored account id": "La preferencia de remitente por defecto guardada se lee como el id de la cuenta.",
     "src/lib/composeSender.test.ts::reads no value or an empty one as following the selected view": "Sin preferencia, o con una vacía, un mensaje nuevo sigue la cuenta de la vista seleccionada.",
     "src/lib/composeSender.test.ts::starts a new message from the chosen default, whatever account the view shows": "Con una cuenta por defecto elegida, un mensaje nuevo empieza desde ella aunque la barra lateral muestre otra cuenta.",
@@ -23,5 +52,16 @@
     "src/hooks/useSenderOptions.test.tsx::lists the enabled accounts with the most used sender first": "Las opciones De de un compositor son las cuentas habilitadas, con la más usada para enviar primero.",
     "src/hooks/useSenderOptions.test.tsx::keeps the account order and logs when the counts cannot be read": "Si no se pueden leer los conteos de enviados, la lista De mantiene el orden de cuentas y el fallo se registra.",
     "src/components/ComposeModal.senders.test.tsx::puts the most used sender first and keeps the sender it opened with": "En el modal de Compose la lista De se reordena por uso sin cambiar el remitente con el que se abrió."
+  },
+  "rust": {
+    "src-tauri/src/util/html.rs::decodes_spanish_accents_and_inverted_marks": "Las entidades de vocales acentuadas, ¡ y ¿ se decodifican.",
+    "src-tauri/src/util/html.rs::decodes_apos_and_the_zero_width_non_joiner": "&apos; y &zwnj; se decodifican.",
+    "src-tauri/src/util/html.rs::decodes_text_escaped_twice_only_once": "Un texto escapado dos veces (&amp;lt;) se decodifica una sola vez: queda el literal &lt;, no <.",
+    "src-tauri/src/util/html.rs::leaves_an_unknown_named_entity_and_a_bare_ampersand_untouched": "Una entidad desconocida y un & suelto se dejan tal cual.",
+    "src-tauri/src/sync/gmail.rs::parse_message_decodes_the_html_escaped_snippet": "El snippet que Gmail manda escapado (I&#39;m) se guarda decodificado (regresión: la lista mostraba &#39;).",
+    "src-tauri/src/sync/imap.rs::the_snippet_of_an_html_only_message_is_its_decoded_text": "El snippet de un mensaje IMAP solo HTML es su texto: sin la hoja de estilos y con las entidades decodificadas.",
+    "src-tauri/src/db/emails/snippets.rs::decodes_the_entities_of_stored_snippets": "La reparación de arranque decodifica las entidades de los snippets ya guardados.",
+    "src-tauri/src/db/emails/snippets.rs::decodes_only_once": "La reparación corre una sola vez: un segundo arranque no vuelve a decodificar el texto ya decodificado.",
+    "src-tauri/src/db/accounts.rs::sent_counts_count_each_accounts_stored_sent_mail_and_skip_deleted_rows": "Cuenta el correo enviado guardado de cada cuenta (is_sent), sin las filas borradas ni el correo recibido; una cuenta sin enviados no aparece."
   }
 }

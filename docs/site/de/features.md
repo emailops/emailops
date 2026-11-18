@@ -223,7 +223,10 @@ Synchronisiert werden alle Kalender eines Kontos, nicht nur der primäre — ein
 eine Kollegin mit Ihnen geteilt hat, erscheint hier also genauso wie in Google oder Outlook.
 Jeder erhält die Farbe, die sein Anbieter vergibt, und die Legende über dem Raster blendet
 einzelne Kalender aus oder ein; dieselben Schalter finden sich unter
-**Einstellungen → Kalender**.
+**Einstellungen → Kalender**. Erinnerungen an Besprechungen kommen nur aus Ihren eigenen
+Kalendern: Ein Kalender, den jemand mit Ihnen geteilt hat, zeigt seine Besprechungen, ohne Sie
+daran zu erinnern. Zu einer Besprechung, zu der Sie eingeladen sind, erhalten Sie weiterhin
+genau eine Erinnerung.
 
 <!-- claim:feat-calendar-4 -->
 IMAP-Konten erhalten einen Kalender, indem sie einen veröffentlichten Kalender-Link (ICS)
@@ -449,9 +452,31 @@ bleibt, wie es ist.
 GitHub und zu **Projekt unterstützen ♥**, das die GitHub-Sponsors-Seite des Projekts öffnet.
 
 <!-- claim:feat-interface-4 -->
-Die Werkzeugleiste beim Verfassen hat eine Auswahl für **Schriftart** und eine für
-**Schriftgröße**. Beide folgen dem Cursor und zeigen Schriftart und Größe des Textes, in dem Sie
-gerade schreiben.
+Die Werkzeugleiste beim Verfassen hat je eine Auswahl für **Schriftart**, **Schriftgröße** und
+**Textfarbe**. Alle drei folgen dem Cursor und zeigen Schriftart, Größe und Farbe des Textes, in dem
+Sie gerade schreiben. Aus einer anderen App eingefügter Text behält seine Farben nur dort, wo sie
+lesbar sind: Eine Farbe, die sich zu schwach von ihrem Hintergrund abhebt, etwa der weiße Text einer
+App im Dunkelmodus, wird entfernt, damit die Nachricht nicht mit unsichtbarem Text ankommt. Die
+Schaltfläche **Formatierung entfernen** daneben macht den markierten Text wieder zu normalem Text:
+Sie entfernt Fett, Kursiv, Schriftarten, Größen und Farben und macht aus einer Überschrift einen
+normalen Absatz, behält aber Links, Listen und Tabellen.
+
+<!-- claim:feat-interface-5 -->
+**Einstellungen → Erscheinungsbild → Dichte der Seitenleiste** bietet **Kompakt**, die
+Voreinstellung, das die Zeilen der Seitenleistenliste niedriger macht, damit mehr davon ohne Scrollen
+hineinpassen, und **Komfortabel**, mit mehr Abstand zwischen den Zeilen. Text, Symbole sowie der obere
+und untere Bereich der Seitenleiste sind in beiden gleich, und die Wahl bleibt über Neustarts
+erhalten.
+
+<!-- claim:feat-interface-6 -->
+Die Ordnerleiste und, in der geteilten Ansicht, die E-Mail-Liste lassen sich breiter oder schmaler
+machen: Ziehen Sie die Linie an ihrem rechten Rand, oder springen Sie mit Tab dorthin und verwenden
+Sie die Pfeiltasten (Umschalt für größere Schritte), Pos1 und Ende. Ein Doppelklick auf die Linie
+stellt die Standardbreite wieder her. Eine Spalte wächst nur so weit, dass der Lesebereich
+mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten. Öffnet sich das
+Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verbreiterte Spalte
+diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
+Platz frei wird.
 
 ## Tastenkombinationen {#keyboard-shortcuts}
 

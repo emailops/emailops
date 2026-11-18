@@ -4,7 +4,7 @@
 
 Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linux.
 
-[Documentation](https://getemailops.com/en/docs/)
+[Documentation](https://getemailops.com/en/docs/) · [Subscribe to the newsletter](https://getemailops.com/en/#updates)
 
 ## Screenshots
 
@@ -17,6 +17,8 @@ Privacy-first, Local AI-native desktop email client for macOS, Windows, and Linu
 - **Linux**: [EmailOps-linux.AppImage](https://github.com/emailops/emailops/releases/latest/download/EmailOps-linux.AppImage) (no install needed) or [EmailOps-linux.deb](https://github.com/emailops/emailops/releases/latest/download/EmailOps-linux.deb) for Debian/Ubuntu.
 
 All installers, checksums, and older versions are on the [Releases page](https://github.com/emailops/emailops/releases/latest).
+
+💬 Questions, ideas or feedback? Join us in [Discussions](https://github.com/emailops/emailops/discussions). And if EmailOps is useful to you, a ⭐ helps a lot.
 
 ## Features
 

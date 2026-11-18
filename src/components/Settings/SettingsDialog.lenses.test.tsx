@@ -48,6 +48,8 @@ function tabButton(id: string): HTMLButtonElement {
         activeAccountId={null}
         currentLayout="split"
         onChangeLayout={() => {}}
+        sidebarDensity="comfortable"
+        onChangeSidebarDensity={() => {}}
         tasksEnabled={true}
         onChangeTasksEnabled={() => {}}
         memoriesEnabled={true}

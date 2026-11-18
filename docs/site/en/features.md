@@ -202,7 +202,10 @@ switched off per account, along with the notification lead time, in **Settings �
 Every calendar on an account is synced, not just the primary one — so a calendar a
 colleague shared with you shows up here the same way it does in Google or Outlook. Each
 one is tinted with the colour its provider gives it, and the legend above the grid hides
-or shows individual calendars; the same switches live in **Settings → Calendar**.
+or shows individual calendars; the same switches live in **Settings → Calendar**. Meeting
+reminders come only from your own calendars: a calendar someone shared with you shows its
+meetings without reminding you of them. A meeting you are invited to still gets exactly one
+reminder.
 
 <!-- claim:feat-calendar-4 -->
 IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example
@@ -418,8 +421,28 @@ design that is already dark is left as it is.
 on GitHub and **Sponsor the project ♥**, which opens the project's GitHub Sponsors page.
 
 <!-- claim:feat-interface-4 -->
-The compose toolbar has a **Font** and a **Font size** picker. Both follow the cursor, so they show
-the font and size of the text you are in.
+The compose toolbar has a **Font**, a **Font size** and a **Text colour** picker. All three follow
+the cursor, so they show the font, size and colour of the text you are in. Text pasted from another
+app keeps its colours only where they can be read: a colour too faint against its background, such
+as the white text of an app in dark mode, is dropped, so the message does not arrive with invisible
+text. **Clear formatting**, the button after them, turns the selected text back into normal text: it
+removes bold, italics, fonts, sizes and colours and turns a heading into a normal paragraph, but
+keeps links, lists and tables.
+
+<!-- claim:feat-interface-5 -->
+**Settings → Appearance → Sidebar density** offers **Compact**, the default, which makes the rows
+of the sidebar list shorter so more of them fit without scrolling, and **Comfortable**, with more
+room between them. Text, icons, and the top and bottom of the sidebar are the same in both, and the
+choice is kept across restarts.
+
+<!-- claim:feat-interface-6 -->
+The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the
+line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps),
+Home and End. Double-click the line to go back to the default width. A column stops growing
+before the reading pane gets narrower than 320 px, and the widths are kept across restarts. When
+the panel on the right (chat or calendar) opens or the window gets narrower, a widened column gives
+that width back, the list first, down to its default width, and gets it back when there is room
+again.
 
 ## Keyboard shortcuts {#keyboard-shortcuts}
 

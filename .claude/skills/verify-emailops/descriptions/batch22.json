@@ -12,6 +12,17 @@
     "src/components/Documents/DocEditor.test.tsx::asks before leaving through a link while editing too": "En un documento editable, pulsar un enlace también pide confirmación antes de salir de la app.",
     "src/components/Documents/DocEditor.test.tsx::gives a link no target the shell plugin would open on its own (read-only)": "Un enlace de un documento de solo lectura se pinta sin target, porque el plugin de shell abriría el navegador por su cuenta.",
     "src/components/Documents/DocEditor.test.tsx::gives a link no target the shell plugin would open on its own (editable)": "Un enlace de un documento editable se pinta sin target, porque el plugin de shell abriría el navegador por su cuenta.",
-    "src/components/Inbox/EmailRow.junkVerdict.test.tsx::keeps the warning out of the tag strip that narrow rows hide": "En una fila compacta estrecha, el aviso de correo marcado sigue a la vista: va fuera de la franja de etiquetas que se oculta por debajo de 48rem y aparece una sola vez."
+    "src/components/Inbox/EmailRow.junkVerdict.test.tsx::keeps the warning out of the tag strip that narrow rows hide": "En una fila compacta estrecha, el aviso de correo marcado sigue a la vista: va fuera de la franja de etiquetas que se oculta por debajo de 48rem y aparece una sola vez.",
+    "src/components/shared/RichTextEditor.files.test.tsx::attaches pasted files that are not images, without typing their names into the body": "Pegar en el cuerpo archivos que no son imágenes (una copia del Finder) los entrega al compositor como adjuntos y no escribe sus nombres en el texto.",
+    "src/components/shared/RichTextEditor.files.test.tsx::inlines every pasted image and attaches the other files": "Un pegado con imágenes y otros archivos inserta en línea todas las imágenes y adjunta el resto.",
+    "src/components/shared/RichTextEditor.files.test.tsx::inlines pasted images and attaches nothing when the paste holds only images": "Pegar solo imágenes las inserta en línea, como antes, sin adjuntar nada.",
+    "src/components/shared/RichTextEditor.files.test.tsx::pastes text as text": "Pegar texto lo inserta como texto, sin pasar por los adjuntos.",
+    "src/components/shared/RichTextEditor.files.test.tsx::leaves a pasted non-image file alone where the editor has no attachments (signatures)": "En el editor de firmas, que no tiene adjuntos, pegar un archivo que no es imagen no inserta nada.",
+    "src/components/shared/RichTextEditor.files.test.tsx::inlines the images of a mixed drop and attaches the other files": "Soltar imágenes y otros archivos a la vez inserta las imágenes en línea y adjunta el resto, que antes se perdía.",
+    "src/components/shared/RichTextEditor.files.test.tsx::leaves a drop with no images to the composer": "El editor deja al compositor un soltado sin imágenes, y el compositor lo adjunta.",
+    "src/components/EmailView/composerPastedFiles.test.tsx::is attached in Compose": "Un archivo pegado en el cuerpo de Compose se guarda con el borrador como adjunto.",
+    "src/components/EmailView/composerPastedFiles.test.tsx::is attached in a compose tab": "Un archivo pegado en el cuerpo de una pestaña de redacción se guarda con el borrador como adjunto.",
+    "src/components/EmailView/composerPastedFiles.test.tsx::is attached in reply": "Un archivo pegado en el cuerpo de una respuesta se guarda con el borrador como adjunto.",
+    "src/components/EmailView/composerPastedFiles.test.tsx::is attached in forward": "Un archivo pegado en el cuerpo de un reenvío se guarda con el borrador como adjunto."
   }
 }

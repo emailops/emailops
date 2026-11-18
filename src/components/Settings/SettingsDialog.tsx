@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { LanguageSelect } from '@/components/shared/LanguageSelect';
 import { Select } from '@/components/shared/Select';
 import { useUiLanguage } from '@/i18n';
+import type { SidebarDensity } from '@/lib/sidebarDensity';
 import { useAiStore } from '@/stores/aiStore';
 import { useOverlay } from '@/stores/overlayStore';
 import type { Account, InboxLayout } from '@/types';
@@ -23,6 +24,7 @@ import { LensesSettings } from './LensesSettings';
 import { MemorySettings } from './MemorySettings';
 import { NotificationsSettings } from './NotificationsSettings';
 import { PrivacySettings } from './PrivacySettings';
+import { SidebarDensitySetting } from './SidebarDensitySetting';
 import { SignaturesSettings } from './SignaturesSettings';
 import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
@@ -54,6 +56,8 @@ interface SettingsDialogProps {
   accounts?: Account[];
   currentLayout: InboxLayout;
   onChangeLayout: (layout: InboxLayout) => void;
+  sidebarDensity: SidebarDensity;
+  onChangeSidebarDensity: (density: SidebarDensity) => void;
   classificationPrefill?: ClassificationRulePrefill | null;
   tasksEnabled: boolean;
   onChangeTasksEnabled: (enabled: boolean) => void;
@@ -99,6 +103,8 @@ export function SettingsDialog({
   accounts = [],
   currentLayout,
   onChangeLayout,
+  sidebarDensity,
+  onChangeSidebarDensity,
   classificationPrefill,
   tasksEnabled,
   onChangeTasksEnabled,
@@ -232,7 +238,14 @@ export function SettingsDialog({
             </button>
           </div>
 
-          {tab === 'appearance' && <AppearancePanel currentLayout={currentLayout} onChangeLayout={onChangeLayout} />}
+          {tab === 'appearance' && (
+            <AppearancePanel
+              currentLayout={currentLayout}
+              onChangeLayout={onChangeLayout}
+              sidebarDensity={sidebarDensity}
+              onChangeSidebarDensity={onChangeSidebarDensity}
+            />
+          )}
           {tab === 'signatures' && <SignaturesSettings accounts={accounts} />}
           {tab === 'notifications' && <NotificationsSettings accounts={accounts} />}
           {tab === 'calendar' && <CalendarSettings />}
@@ -298,9 +311,13 @@ export function SettingsDialog({
 function AppearancePanel({
   currentLayout,
   onChangeLayout,
+  sidebarDensity,
+  onChangeSidebarDensity,
 }: {
   currentLayout: InboxLayout;
   onChangeLayout: (layout: InboxLayout) => void;
+  sidebarDensity: SidebarDensity;
+  onChangeSidebarDensity: (density: SidebarDensity) => void;
 }) {
   const { t } = useTranslation(['common', 'settings']);
   const { language, setLanguage, isLoading: isLanguageLoading } = useUiLanguage();
@@ -339,6 +356,7 @@ function AppearancePanel({
           />
         </div>
       </section>
+      <SidebarDensitySetting value={sidebarDensity} onChange={onChangeSidebarDensity} />
       <DefaultSenderSetting />
       <UndoSendSetting />
       <AutoAdvanceSetting />
