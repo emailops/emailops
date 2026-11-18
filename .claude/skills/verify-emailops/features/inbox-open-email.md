@@ -7,7 +7,7 @@ the list.
 
 ## Sub-features
 
-- `inbox.list` rows render sender + subject for the selected account.
+- `inbox.list` rows render sender + subject for the selected account; the body preview after the subject is plain text, with no HTML entities (`&#39;`, `&iacute;`): the Gmail and IMAP syncs decode them, and a one-time startup repair decodes the snippets stored before.
 - `inbox.categories` the Primary/Social/Updates/Forums/Promotions tabs filter the list.
 - `inbox.open` clicking a row shows the thread with its subject as the page H1.
 - `inbox.close` Back hides the thread and shows the list again.
@@ -64,6 +64,7 @@ Live run 11/09/2026: open and close proven on the *Nadia Brunner* and *Marisol V
 |---|---|
 | list queries, thread order, soft delete, mailbox state, redownload | unit (`db::emails::*`, `services::emails::*`) |
 | HTML sanitising, remote content blocking (images, background images, media) | unit + vitest (`util::html`, `emailFormatting`, `EmailHtmlFrame.*`, `EmailPreviewById.*`) |
+| list preview without HTML entities: decoder, Gmail and IMAP snippets, one-time repair of stored ones | unit (`util::html::decodes_*`, `sync::gmail::*snippet*`, `sync::imap::*snippet*`, `db::emails::snippets`) |
 | stale responses, auto-select, navigation | vitest (`emailStore.*`, `Inbox.*`) |
 | unread filter: list + count + filters SQL, thread-level read dot, toggle, refetch | unit (`db::emails::crud` / `search` / `mailbox_state` `*unread*`, `services::emails::list_tests`) + vitest (`emailStore.unreadOnly`, `useEmails`, `Inbox.unreadToggle`) |
 | lists, threads, read state, deletes against the in-memory DB | integration (`*email*`, `*thread*`, `*mailbox*`, `mark_as_read_*`) |

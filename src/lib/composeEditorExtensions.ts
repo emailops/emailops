@@ -18,6 +18,7 @@ import { Table, TableCell, TableHeader, TableRow, TableView } from '@tiptap/exte
 import { TextStyle } from '@tiptap/extension-text-style';
 import Underline from '@tiptap/extension-underline';
 import { DOMSerializer, type Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { Plugin, PluginKey } from '@tiptap/pm/state';
 import {
   type Attributes,
   type CommandProps,
@@ -28,6 +29,7 @@ import {
   Node,
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import { dropUnreadableColors } from './pastedColors';
 
 /** Attributes carried verbatim: parsed from and rendered to the same HTML attribute. */
 function verbatim(...names: string[]): Attributes {
@@ -322,15 +324,69 @@ function setStyleProperty(property: string, value: string | null) {
   };
 }
 
-/** The toolbar's font and size pickers. */
+/**
+ * Pasted HTML passes through `dropUnreadableColors` before it is parsed: the
+ * schema keeps inline styles (for webmail drafts), so a colour the source app's
+ * theme put on copied text would otherwise be sent as it is.
+ */
+const ReadablePaste = Extension.create({
+  name: 'readablePaste',
+  addProseMirrorPlugins() {
+    return [new Plugin({ key: new PluginKey('readablePaste'), props: { transformPastedHTML: dropUnreadableColors } })];
+  },
+});
+
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    clearFormatting: {
+      /** Clear the formatting of the selection: see `clearFormatting`. */
+      clearFormatting: () => ReturnType;
+    };
+  }
+}
+
+/** Blocks around other blocks whose inline style clearing drops, keeping the block. */
+const STYLED_WRAPPERS = new Set(['blockquote', 'bulletList', 'orderedList', 'listItem']);
+
+/**
+ * The selected text loses every mark but its link, the text blocks it touches
+ * become plain paragraphs (a pasted heading too: the toolbar has no other way
+ * back to body text), and the lists and quotes around it lose their inline
+ * style but stay. Tables keep their layout. With nothing selected, the text
+ * typed next is plain.
+ */
+function clearFormatting() {
+  return ({ tr, state, dispatch }: CommandProps) => {
+    const { schema } = state;
+    const { from, to, empty } = tr.selection;
+    for (const type of Object.values(schema.marks)) {
+      if (type !== schema.marks.link) tr.removeMark(from, to, type);
+    }
+    tr.setBlockType(from, to, schema.nodes.paragraph);
+    tr.doc.nodesBetween(from, to, (node, pos) => {
+      if (STYLED_WRAPPERS.has(node.type.name) && node.attrs.style) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, style: null });
+      }
+    });
+    // Last: every step above resets the stored marks.
+    if (empty) tr.setStoredMarks([]);
+    if (dispatch) dispatch(tr);
+    return true;
+  };
+}
+
+/** The toolbar's font, size and colour pickers and its Clear formatting button. */
 const FontControls = Extension.create({
   name: 'fontControls',
   addCommands() {
     return {
+      clearFormatting,
       setFontFamily: (font: string) => setStyleProperty('font-family', font),
       unsetFontFamily: () => setStyleProperty('font-family', null),
       setFontSize: (size: string) => setStyleProperty('font-size', size),
       unsetFontSize: () => setStyleProperty('font-size', null),
+      setColor: (color: string) => setStyleProperty('color', color),
+      unsetColor: () => setStyleProperty('color', null),
     };
   },
 });
@@ -422,6 +478,7 @@ export const composeEditorExtensions: Extensions = [
     },
   }),
   FontControls,
+  ReadablePaste,
   inlineTagMark('subscript', 'sub'),
   inlineTagMark('superscript', 'sup'),
   inlineTagMark('small', 'small'),
