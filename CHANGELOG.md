@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **The chat panel reads the email you are writing.** With a compose tab or a
+  reply open, a chip above the chat input offers the draft as context: ask
+  whether it answers every question, or for a better version to copy. Switch
+  the chip off to leave the draft out. The chat never writes into the draft.
 
 ## [0.6.19] — 2026-11-12
 

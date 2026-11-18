@@ -34,6 +34,7 @@ import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
+import { useDraftContextSource } from '@/stores/draftContextStore';
 import type { ComposeTab } from '@/stores/emailStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
@@ -51,6 +52,9 @@ interface ComposeTabViewProps {
   accounts: Account[];
   onClose: () => void;
   ref?: Ref<ComposeTabHandle>;
+  /** The tab on screen. Inactive tabs stay mounted behind it, so only the
+   *  active one is offered to the chat as the draft being written. */
+  isActive?: boolean;
 }
 
 function getDomain(email: string): string {
@@ -63,7 +67,7 @@ function extractEmail(raw: string): string {
 }
 
 type RecipientField = 'to' | 'cc' | 'bcc';
-export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewProps) {
+export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }: ComposeTabViewProps) {
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
@@ -89,6 +93,16 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const [isDiscarding, setIsDiscarding] = useState(false);
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
+  // The chat panel reads this tab's draft while it is the tab on screen.
+  useDraftContextSource(isActive && !sent, {
+    kind: tab.replyToEmailId ? 'reply' : 'new',
+    accountId: fromAccountId,
+    subject,
+    to: toRecipients,
+    cc: ccRecipients,
+    bodyHtml,
+    replyToEmailId: tab.replyToEmailId ?? null,
+  });
   const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
   const [bccRecipients, setBccRecipients] = useState<string[]>(tab.bccAddresses ?? []);
   const [showBcc, setShowBcc] = useState((tab.bccAddresses ?? []).length > 0);

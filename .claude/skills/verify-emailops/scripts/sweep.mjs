@@ -1134,6 +1134,31 @@ await step('Chat', 'cerrar y reabrir', 'Close chat panel oculta el panel y "Open
   return ok(closed && await exists('button=Send'), 'cerrado y reabierto desde la cabecera', closed ? 'no se reabrió' : 'no se cerró');
 });
 
+await step('Chat', 'borrador como contexto', 'una pestaña de redacción con texto muestra el chip «asunto · new email»; desactivado sigue a la vista con su asunto (el texto de restaurar no lo aplasta) y vuelve a activarse; descartar la pestaña lo quita', async () => {
+  // The chip lives in the docked panel, beside the inbox's compose tabs: an earlier step can
+  // leave the full-screen Chat view instead, where no compose tab is shown.
+  if (!(await exists('aria/Close chat panel'))) { await click('button=Inbox'); await sleep(1000); }
+  if (!(await exists('aria/Close chat panel')) && (await exists('aria/Open chat panel'))) { await click('aria/Open chat panel'); await sleep(1200); }
+  if (!(await exists('aria/Close chat panel'))) return 'FAIL: no hay panel de chat acoplado en el que mirar el chip';
+  const subject = 'Verifier draft context';
+  // The chip of the draft on screen: its state and how wide its subject is drawn.
+  const chip = () => js((s) => { const c = [...document.querySelectorAll('button[aria-pressed]')].find((x) => x.innerText.includes('new email') && x.innerText.includes(s)); const t = c?.querySelector('span.font-medium'); return c ? { pressed: c.getAttribute('aria-pressed'), subjectWidth: Math.round(t.getBoundingClientRect().width) } : null; }, subject);
+  const toggle = () => js((s) => { [...document.querySelectorAll('button[aria-pressed]')].find((x) => x.innerText.includes('new email') && x.innerText.includes(s))?.click(); }, subject);
+  await click('button=Compose'); await sleep(1500);
+  await type('input[placeholder^="Email subject"]', subject);
+  await click('button[title="Open in tab"]'); await sleep(2000);
+  // The tab's editor: the one not hidden behind another tab. execCommand is what tiptap hears as typing.
+  await js(() => { const ed = [...document.querySelectorAll('.ProseMirror')].find((e) => e.getBoundingClientRect().width > 0 && getComputedStyle(e.closest('.absolute') || e).visibility !== 'hidden' && !e.innerText.trim()); ed.focus(); document.execCommand('insertText', false, 'Synthetic text for the verifier.'); }); await sleep(1500);
+  const on = await chip();
+  await toggle(); await sleep(800); const off = await chip();
+  await toggle(); await sleep(800); const back = await chip();
+  await js(() => [...document.querySelectorAll('button')].filter((x) => x.offsetParent && x.textContent.trim() === 'Discard').pop()?.click()); await sleep(1000);
+  await js(() => [...document.querySelectorAll('[role=dialog] button, .fixed button')].filter((x) => x.offsetParent && x.textContent.trim() === 'Discard').pop()?.click()); await sleep(1500);
+  const gone = (await chip()) === null;
+  const v = { on, off, back, gone };
+  return ok(on?.pressed === 'true' && off?.pressed === 'false' && off.subjectWidth >= 40 && back?.pressed === 'true' && gone, JSON.stringify(v), JSON.stringify(v));
+});
+
 // ---------- Chat → formularios (después del chat: reusa el modelo ya cargado) ----------
 // Cubre las tres piezas nuevas de una sola pasada por la UI real: el veredicto `form` del
 // query planner, el efecto FillForm que abre "Crear Lens" ya relleno, y el contrato de que

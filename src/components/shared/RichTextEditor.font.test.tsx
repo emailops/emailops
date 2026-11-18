@@ -1,7 +1,8 @@
 // The compose toolbar offers font, size and colour pickers and a Clear
 // formatting button, and every control names the formatting of the text at
-// the cursor, following it as the cursor moves. What applying a font, size or
-// colour, or clearing the formatting, does to the document is covered on the
+// the cursor or in the selection, following it as it moves. Choosing a font in
+// the picker applies it to the selection; what the other font, size and colour
+// commands, and clearing the formatting, do to the document is covered on the
 // schema side (`composeEditorExtensions.test.ts`).
 
 import type { Editor } from '@tiptap/react';
@@ -68,6 +69,27 @@ function moveCursorInto(text: string) {
   });
 }
 
+/** Select the first occurrence of `text`. */
+function selectText(text: string) {
+  let from = -1;
+  editor().state.doc.descendants((node, pos) => {
+    if (from === -1 && node.isText && node.text?.includes(text)) from = pos + node.text.indexOf(text);
+  });
+  act(() => {
+    editor().commands.setTextSelection({ from, to: from + text.length });
+  });
+}
+
+/** Pick the option labelled `label`, as the user does from the dropdown. */
+function choose(select: HTMLSelectElement, label: string) {
+  const option = Array.from(select.options).find((o) => o.textContent === label);
+  if (!option) throw new Error(`option ${label} not found`);
+  act(() => {
+    select.value = option.value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 function boldButton(): HTMLButtonElement {
   const button = container.querySelector<HTMLButtonElement>('button[title^="Bold"]');
   if (!button) throw new Error('bold button not found');
@@ -124,6 +146,29 @@ describe('RichTextEditor font picker', () => {
     expect(shownLabel(fontPicker())).toBe('Georgia');
     expect(shownLabel(sizePicker())).toBe('24');
     expect(boldButton().className).toContain('bg-primary-100');
+  });
+
+  it('names the font of the selected text', () => {
+    render('<p>plain <span style="font-family: Georgia, serif">Hello world</span></p>');
+    moveCursorInto('plain');
+    expect(shownLabel(fontPicker())).toBe('Font');
+
+    selectText('world');
+
+    expect(shownLabel(fontPicker())).toBe('Georgia');
+  });
+
+  it('applies the chosen font to the selected text only', () => {
+    render('<p>Hello world</p>');
+    selectText('world');
+
+    choose(fontPicker(), 'Georgia');
+
+    const html = document.createElement('div');
+    html.innerHTML = editor().getHTML();
+    expect(html.textContent).toBe('Hello world');
+    const styled = Array.from(html.querySelectorAll('span'), (span) => [span.textContent, span.style.fontFamily]);
+    expect(styled).toEqual([['world', 'Georgia, serif']]);
   });
 });
 

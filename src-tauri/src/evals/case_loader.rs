@@ -71,6 +71,24 @@ impl MetricKind {
     }
 }
 
+/// A case's `ambient_draft`: `ChatDraftContext` with the email a reply
+/// answers named by its thread's subject, since the demo generator redraws ids.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DraftCase {
+    pub kind: crate::models::DraftKind,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    pub body: String,
+    /// The subject of the thread a reply answers; the draft answers its newest
+    /// email.
+    #[serde(default)]
+    pub reply_to_subject: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct EvalCase {
     pub id: String,
@@ -149,6 +167,12 @@ pub struct EvalCase {
     /// the demo generator redraws ids.
     #[serde(default)]
     pub ambient_attachment_filename: Option<String>,
+
+    /// The draft the user is writing, sent as `TurnContext.draft` the way the
+    /// chat panel's draft chip sends it (with a composer open, so
+    /// `generate_email_draft` is refused).
+    #[serde(default)]
+    pub ambient_draft: Option<DraftCase>,
 
     /// Expected router mode. Absence skips the route check.
     #[serde(default)]
@@ -334,6 +358,37 @@ mod tests {
     fn parse_case(yaml: &str) -> EvalCase {
         let cases: Vec<EvalCase> = serde_yaml::from_str(yaml).expect("parse yaml");
         cases.into_iter().next().expect("at least one case")
+    }
+
+    #[test]
+    fn a_case_carries_no_draft_unless_it_names_one() {
+        assert!(parse_case("- id: t\n  question: q\n").ambient_draft.is_none());
+        let c = parse_case(
+            r#"
+- id: t
+  question: "is it complete?"
+  ambient_draft:
+    kind: reply
+    subject: "Re: Q3 report"
+    to: ["ana@example.com"]
+    body: "The report is attached."
+    reply_to_subject: "Q3 report"
+"#,
+        );
+        let draft = c.ambient_draft.expect("draft");
+        assert_eq!(draft.kind, crate::models::DraftKind::Reply);
+        assert_eq!(draft.reply_to_subject.as_deref(), Some("Q3 report"));
+        assert!(draft.cc.is_empty());
+    }
+
+    #[test]
+    fn a_draft_without_a_kind_or_a_body_does_not_load() {
+        for yaml in [
+            "- id: t\n  question: q\n  ambient_draft:\n    body: x\n",
+            "- id: t\n  question: q\n  ambient_draft:\n    kind: new\n",
+        ] {
+            assert!(serde_yaml::from_str::<Vec<EvalCase>>(yaml).is_err(), "{yaml}");
+        }
     }
 
     #[test]

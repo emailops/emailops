@@ -267,6 +267,45 @@ pub fn resolve_thread_ref(db: &Database, account_id: &str, thread: ThreadRef<'_>
     }
 }
 
+/// A case's `ambient_draft` as the chat panel would send it. A reply answers
+/// the newest email of the thread its `reply_to_subject` names. Checked like
+/// the app's draft, so a case cannot exercise a draft the app would refuse.
+pub fn resolve_case_draft(
+    db: &Database,
+    account_id: &str,
+    draft: &crate::evals::case_loader::DraftCase,
+) -> EvalResult<crate::models::ChatDraftContext> {
+    let reply_to_email_id = match draft.reply_to_subject.as_deref() {
+        Some(subject) => {
+            let thread = resolve_thread_ref(db, account_id, ThreadRef::Subject(subject))?
+                .ok_or_else(|| EvalError::Config(format!("ambient_draft: no thread '{subject}'")))?;
+            let newest: String = db
+                .reader()
+                .query_row(
+                    "SELECT id FROM emails WHERE account_id = ?1 AND thread_id = ?2 AND is_deleted = 0
+                     ORDER BY timestamp DESC LIMIT 1",
+                    rusqlite::params![account_id, thread],
+                    |row| row.get(0),
+                )
+                .map_err(|e| EvalError::Config(format!("ambient_draft: newest email of '{subject}': {e}")))?;
+            Some(newest)
+        }
+        None => None,
+    };
+    let context = crate::models::ChatDraftContext {
+        kind: draft.kind,
+        subject: draft.subject.clone(),
+        to: draft.to.clone(),
+        cc: draft.cc.clone(),
+        body: draft.body.clone(),
+        reply_to_email_id,
+    };
+    context
+        .validate()
+        .map_err(|e| EvalError::Config(format!("ambient_draft: {e}")))?;
+    Ok(context)
+}
+
 /// Run a single case against `services::chat::run_chat_turn`.
 ///
 /// Returns `Err` only on infrastructure-level failures (DB unavailable,
@@ -338,6 +377,12 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
         None => None,
     };
 
+    let ambient_draft = case
+        .ambient_draft
+        .as_ref()
+        .map(|d| resolve_case_draft(&db, ambient_owner.as_deref().unwrap_or(account_id), d))
+        .transpose()?;
+
     let conv: ChatConversation = match bound_thread.as_deref() {
         Some(thread_id) => crate::services::chat::create_conversation_with_thread(&db, account_id, thread_id)?,
         None => db.create_chat_conversation(account_id, "New chat")?,
@@ -387,6 +432,8 @@ pub async fn run_case(db: Arc<Database>, account_id: &str, model: &str, case: &E
                 ambient_account_id: ambient_owner.clone(),
                 ambient_attachment_id: ambient_attachment_id.clone(),
                 research: case.research,
+                draft: ambient_draft.clone(),
+                composer_open: ambient_draft.is_some(),
                 ..Default::default()
             },
         )
@@ -558,6 +605,53 @@ mod tests {
     }
 
     // ── memory_block ──────────────────────────────────────────────────────────
+
+    // ── ambient_draft ─────────────────────────────────────────────────────────
+
+    fn case_draft(reply_to_subject: Option<&str>, body: &str) -> crate::evals::case_loader::DraftCase {
+        crate::evals::case_loader::DraftCase {
+            kind: if reply_to_subject.is_some() {
+                crate::models::DraftKind::Reply
+            } else {
+                crate::models::DraftKind::New
+            },
+            subject: "Re: Q3 report".to_string(),
+            to: vec!["ana@example.com".to_string()],
+            cc: Vec::new(),
+            body: body.to_string(),
+            reply_to_subject: reply_to_subject.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_reply_draft_answers_the_newest_email_of_the_thread_its_subject_names() {
+        let db = Database::new_for_testing().expect("test db");
+        seed_account(&db, "acct");
+        seed_email_subject(&db, "acct", "e1", "th-1", "Q3 report");
+        seed_email_subject(&db, "acct", "e2", "th-1", "Re: Q3 report");
+        db.connection()
+            .execute("UPDATE emails SET timestamp = 2000 WHERE id = 'e2'", [])
+            .expect("newer reply");
+
+        let draft =
+            resolve_case_draft(&db, "acct", &case_draft(Some("Q3 report"), "The report is attached.")).expect("draft");
+        assert_eq!(draft.reply_to_email_id.as_deref(), Some("e2"));
+        assert_eq!(draft.body, "The report is attached.");
+    }
+
+    #[test]
+    fn a_new_email_draft_answers_no_email() {
+        let db = Database::new_for_testing().expect("test db");
+        let draft = resolve_case_draft(&db, "acct", &case_draft(None, "Hi Ana")).expect("draft");
+        assert!(draft.reply_to_email_id.is_none());
+    }
+
+    #[test]
+    fn a_case_draft_the_app_would_refuse_is_a_config_error() {
+        let db = Database::new_for_testing().expect("test db");
+        let err = resolve_case_draft(&db, "acct", &case_draft(None, "   ")).expect_err("blank body");
+        assert!(matches!(err, EvalError::Config(_)), "{err:?}");
+    }
 
     #[test]
     fn memory_block_is_cut_out_of_the_prompted_user_message() {

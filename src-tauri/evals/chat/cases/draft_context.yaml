@@ -1,0 +1,65 @@
+# Draft context: with a draft open in a compose tab or an inline reply, the
+# chat answers from it, searches the mailbox only for mailbox questions, and
+# never writes or replaces a draft (`generate_email_draft` is refused while a
+# composer is open, so a refused call is traced as
+# "generate_email_draft (refused: draft open)" and `expected_tools_not_called`
+# only fails when the tool actually ran).
+#
+# The reply cases answer the demo's "Looking for a Rust consultant" thread,
+# which asks for availability and a rate. Cases name the replied thread by
+# subject: the demo generator redraws ids.
+#
+# A draft too long for the window is answered with a fixed reply without
+# calling the model; that is pinned by the turn's integration tests, not here.
+
+- id: draft_review_reply_es
+  question: "¿He contestado a todo lo que me pregunta?"
+  account: "ulises@emailopslabs.dev"
+  category: draft_review
+  tier: smoke
+  n_ctx: 8192
+  ambient_draft:
+    kind: reply
+    subject: "Re: Looking for a Rust consultant"
+    to: ["helena@graystack.io"]
+    body: "Hola Helena, gracias por escribir. Estoy disponible a partir de marzo para un proyecto de dos meses. Un saludo, Ulises"
+    reply_to_subject: "Looking for a Rust consultant"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["tarifa", "precio", "honorarios", "presupuesto", "rate"]
+  expected_output: "No del todo: Helena pregunta por la disponibilidad y por la tarifa; el borrador responde a la disponibilidad (desde marzo, dos meses) pero no dice la tarifa."
+  metrics:
+    - answer_relevancy
+
+- id: draft_mailbox_question_en
+  question: "Search my inbox: what did Tomás from Lumen Health say about the API latency on the /search endpoint?"
+  account: "ulises@emailopslabs.dev"
+  category: draft_review
+  tier: smoke
+  n_ctx: 8192
+  ambient_draft:
+    kind: new
+    subject: "Q2 plan"
+    to: ["team@emailopslabs.dev"]
+    body: "Hi all, here is the plan for next quarter: finish the sync engine, then the docs."
+  expected_tools_called: ["search_emails"]
+  expected_tools_not_called: ["generate_email_draft"]
+  metrics:
+    - answer_relevancy
+
+- id: draft_explicit_request_es
+  question: "Escríbeme la respuesta a Helena diciéndole que mi tarifa es de 650 € al día."
+  account: "ulises@emailopslabs.dev"
+  category: draft_review
+  tier: full
+  n_ctx: 8192
+  ambient_draft:
+    kind: reply
+    subject: "Re: Looking for a Rust consultant"
+    to: ["helena@graystack.io"]
+    body: "Hola Helena, gracias por escribir."
+    reply_to_subject: "Looking for a Rust consultant"
+  expected_tools_not_called: ["generate_email_draft"]
+  expected_answer_contains_any: ["650"]
+  expected_output: "Una versión de la respuesta a Helena, como texto en la respuesta del chat, que dice que la tarifa es de 650 € al día; no crea ni modifica ningún borrador."
+  metrics:
+    - answer_relevancy

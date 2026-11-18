@@ -304,6 +304,14 @@
       "hintDocument": "Answers use the text of this document. Remove it to ask about your inbox instead.",
       "restoreDocument": "Use the open document as context"
     },
+    "draft": {
+      "threadAndReply": "thread + your reply",
+      "reply": "your reply",
+      "newEmail": "new email",
+      "hint": "Answers use the draft you are writing. The chat never changes it: copy what you want into it.",
+      "restore": "Use the draft as context",
+      "research": "Research mode reads your mailbox: the chat does not see this draft."
+    },
     "newChat": "New chat"
   },
   "conversations": {

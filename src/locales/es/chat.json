@@ -304,6 +304,14 @@
       "hintDocument": "Las respuestas usan el texto de este documento. Quítalo para preguntar por tu bandeja.",
       "restoreDocument": "Usar el documento abierto como contexto"
     },
+    "draft": {
+      "threadAndReply": "hilo + tu respuesta",
+      "reply": "tu respuesta",
+      "newEmail": "correo nuevo",
+      "hint": "Las respuestas usan el borrador que estás escribiendo. El chat nunca lo cambia: copia en él lo que quieras.",
+      "restore": "Usar el borrador como contexto",
+      "research": "El modo investigación lee tu buzón: el chat no ve este borrador."
+    },
     "newChat": "Chat nuevo"
   },
   "conversations": {

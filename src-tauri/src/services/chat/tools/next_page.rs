@@ -134,6 +134,7 @@ mod tests {
             search_page: None,
             budget: None,
             answer_truncated: false,
+            draft: None,
         });
         message
     }
