@@ -648,7 +648,14 @@ mod tests {
             None,
             "failed fetch must not advance last_check_at"
         );
-        assert_eq!(logger.count_by_level("debug"), 1, "failure is logged at debug level");
+        // The logger is process-wide: tests running alongside this one log
+        // into it too, so only this check's own line is counted.
+        let failures = logger
+            .events()
+            .into_iter()
+            .filter(|e| e.level == "debug" && e.message.starts_with("update check failed"))
+            .count();
+        assert_eq!(failures, 1, "failure is logged at debug level");
 
         // The gate still sees "never checked", so the next tick retries.
         let _ = run_tick(&db, "0.6.2", &fetch);
