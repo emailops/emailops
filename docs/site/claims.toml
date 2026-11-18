@@ -1108,6 +1108,14 @@ checks = [
   { manual = 'Covered by src/components/Chat/ChatStarters.test.tsx (mailbox starters, then "something else"); which starters appear depends on the mailbox, and the docs app check does not read them yet.' },
 ]
 
+[ai-chat-mailbox-18]
+checks = [
+  { tests = ['services::chat::open_draft::tests::block_says_to_answer_from_the_draft_and_write_improvements_as_text', 'services::chat::turn::tests::a_new_email_draft_is_answered_from_the_screen_in_one_model_call'], covers = ['Ask "did I answer everything?" or "make it shorter" and chat answers from the draft; an improved version comes back as text in the answer, for you to copy into the draft.'] },
+  { tests = ['services::chat::turn::tests::an_open_composer_refuses_generate_email_draft_even_when_the_user_asks_for_one', 'services::chat::turn::tests::a_draft_call_refused_for_an_open_composer_leaves_no_draft_text_in_logs_or_trace'], covers = ["Chat never changes the draft, and while it is open it does not write another one."] },
+  { tests = ['services::chat::turn::tests::a_draft_too_long_for_the_window_gets_the_fixed_reply_without_a_model_call', 'services::chat::turn::tests::only_a_draft_that_is_what_overflows_gets_the_too_long_reply'], covers = ["A draft too long for the model's context window gets a note saying so, not a review of its start."] },
+  { manual = 'The draft chip is covered by src/components/Chat/ChatPanel.draftContext.test.tsx, src/components/EmailView/ComposeTabView.draftContext.test.tsx, src/components/EmailView/ReplyCompose.draftContext.test.tsx and src/lib/chatDraft.test.ts; the docs app check does not open a composer yet.', covers = ["While you write an email in a compose tab, or a reply or reply-all under the open email, the chip offers that draft instead: its subject, recipients and your own text, without the signature.", "Switch the chip off to ask about the thread alone."] },
+]
+
 [ai-chat-mailbox-3]
 checks = [
   { app = true },

@@ -4658,3 +4658,41 @@ loses fonts, colours, columns, headers and page layout, which the developer want
 Extracting the chat text in the frontend and sending it with the turn — the eval harness
 and the CLI read documents through the backend, and the backend would have to trust text
 the webview sends.
+
+## 2026-11-12 — The chat reads the draft being written; it never writes into it
+
+**Decision:** While a compose tab or an inline reply (reply or reply-all; not forwards, not
+the compose modal) is on screen, each chat turn carries that draft as read-only context: its
+subject, To and Cc, and the text the user wrote without the EmailOps signature. It travels
+as its own field of the turn (`TurnContext.draft`), sent by the frontend with every turn,
+and rides in the final user message after the open thread and before the question. A reply's
+thread travels as part of the draft, through `reply_to_email_id`, also when the reply is in
+a compose tab, and is read with the answered message first. The draft is never cut to fit:
+when it is what does not fit the window, the turn answers with a fixed "too long" reply
+instead of reviewing its start. It is never saved with the user message (a note replaces
+it), and logs and traces keep its size only. While a composer is open, even with its chip
+switched off, `generate_email_draft` is refused and the thread block stops suggesting it.
+The draft chip is a toggle like the thread chip. An active compose tab no longer offers
+the selected email as context. On a research turn the draft does not travel, like the
+thread and the PDF.
+The chat never writes into the draft: an improved version arrives as answer text and the
+user pastes it.
+**Context:** Asking the chat to review a draft meant pasting it into the chat; asking about
+"my draft" made the model search the Drafts folder. Two earlier entries are amended. "Chat
+docks on the right; ambient context is the open thread only" (2026-08-04): ambient context
+is now the open thread, the open PDF and the draft. "The chat reads an open PDF through local
+text extraction, without OCR" (2026-10-28) rejected sending content from the frontend
+because the CLI and evals could not drive that path; here the CLI (`--draft`) and the evals
+(`ambient_draft`) build the same `ChatDraftContext`, and an unsaved draft is not in the
+database at all.
+**Rejected:**
+- *An "Apply to draft" button and a "Copy" button*: dropped by the developer on 12/11/2026
+  for the complexity they add (a per-turn rewrite route, a proposal card, undo, version
+  checks).
+- *Loading the draft by id from the database*: the autosave lags the editor by up to a
+  second and skips some bodies, so the turn would review an older text than the one on
+  screen.
+- *A new `Ambient::Draft` variant*: `Ambient` holds one value, so a reply would lose its
+  thread or need combined variants.
+- *Sending the draft only when a classifier says the question is about it*: that
+  classifier was rejected before; the chip lets the user control the cost, as with the PDF.

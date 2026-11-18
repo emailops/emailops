@@ -177,6 +177,16 @@ Unterhaltung schlägt dann **Dieses Dokument zusammenfassen**, **Kernpunkte, Dat
 und **Frage zu diesem Dokument** vor. Ein Dokument, das zu lang für das Kontextfenster des Modells ist, wird in Teilen
 gelesen, und die Antwort stützt sich auf Notizen zu jedem Teil.
 
+<!-- claim:ai-chat-mailbox-18 -->
+Während Sie eine E-Mail in einem Verfassen-Tab schreiben oder eine Antwort bzw. Antwort an
+alle unter der geöffneten E-Mail, bietet der Chip diesen Entwurf an: Betreff, Empfänger und
+Ihren eigenen Text, ohne Signatur. Fragen Sie *„Habe ich alles beantwortet?“* oder *„Mach es
+kürzer“*, und der Chat antwortet aus dem Entwurf; eine verbesserte Fassung kommt als Text in
+der Antwort zurück, zum Kopieren in den Entwurf. Der Chat ändert den Entwurf nie und schreibt,
+solange er geöffnet ist, keinen weiteren. Schalten Sie den Chip aus, um nur nach dem Thread zu
+fragen. Ein Entwurf, der zu lang für das Kontextfenster des Modells ist, erhält einen Hinweis
+darauf statt einer Prüfung seines Anfangs.
+
 <!-- claim:ai-chat-mailbox-17 -->
 Eine leere Unterhaltung zeigt **Vorgeschlagene Anfragen** aus Ihrem Postfach, etwa die
 Zusammenfassung von heute oder einen Thread, der noch auf Ihre Antwort wartet, und

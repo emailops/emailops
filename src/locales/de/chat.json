@@ -304,6 +304,14 @@
       "hintDocument": "Antworten stützen sich auf den Text dieses Dokuments. Entferne es, um zu deinem Posteingang zu fragen.",
       "restoreDocument": "Geöffnetes Dokument als Kontext verwenden"
     },
+    "draft": {
+      "threadAndReply": "Thread + deine Antwort",
+      "reply": "deine Antwort",
+      "newEmail": "neue E-Mail",
+      "hint": "Antworten nutzen den Entwurf, den du gerade schreibst. Der Chat ändert ihn nie: Kopiere hinein, was du übernehmen willst.",
+      "restore": "Entwurf als Kontext verwenden",
+      "research": "Der Recherchemodus liest dein Postfach: Der Chat sieht diesen Entwurf nicht."
+    },
     "newChat": "Neuer Chat"
   },
   "conversations": {

@@ -745,6 +745,23 @@ impl Database {
         }
     }
 
+    /// The account and thread of an email that is not deleted, or `None`.
+    /// `get_email` returns deleted rows too; the chat must not read the
+    /// thread of an email the user deleted.
+    pub fn get_live_email_thread(&self, email_id: &str) -> Result<Option<(String, String)>> {
+        let conn = self.reader();
+        let found = conn.query_row(
+            "SELECT account_id, thread_id FROM emails WHERE id = ?1 AND is_deleted = 0",
+            params![email_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        );
+        match found {
+            Ok(pair) => Ok(Some(pair)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// Count total visible threads in the inbox for the given scope.
     ///
     /// MUST mirror the WHERE clause used by `get_emails` for the default ("inbox")

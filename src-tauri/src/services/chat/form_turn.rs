@@ -139,6 +139,7 @@ pub fn form_fill_trace(
         search_page: None,
         budget: None,
         answer_truncated: false,
+        draft: None,
     })
 }
 
