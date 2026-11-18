@@ -688,6 +688,14 @@ pub fn run() {
                 Err(e) => eprintln!("[startup] Warning: lens unique-key migration failed: {e}"),
             }
 
+            // Snippets synced before the sync decoded them show `&#39;` and
+            // the like in the email list. Runs once per database.
+            match db.decode_stored_snippets_once() {
+                Ok(0) => {}
+                Ok(n) => eprintln!("[startup] decoded HTML entities in {n} stored snippet(s)"),
+                Err(e) => eprintln!("[startup] Warning: failed to decode stored snippets: {e}"),
+            }
+
             let db = Arc::new(db);
 
             // Back up in the background, once the window can show the result

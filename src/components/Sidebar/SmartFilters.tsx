@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { type SidebarDensity, sidebarDensityClasses } from '@/lib/sidebarDensity';
 import { useOverlay } from '@/stores/overlayStore';
 import type { ActiveFilter, SmartFilter } from '@/types';
 
@@ -20,6 +21,8 @@ function CollapseChevron({ open }: { open: boolean }) {
 }
 
 interface SmartFiltersProps {
+  /** The sidebar's density; this section sits inside its scrolling list. */
+  density: SidebarDensity;
   filters: SmartFilter[];
   activeFilter: ActiveFilter | null;
   isLoading: boolean;
@@ -36,6 +39,7 @@ interface SmartFiltersProps {
 }
 
 export function SmartFilters({
+  density,
   filters,
   activeFilter,
   isLoading,
@@ -49,6 +53,7 @@ export function SmartFilters({
   isPinned,
 }: SmartFiltersProps) {
   const { t } = useTranslation(['common', 'sidebar']);
+  const d = sidebarDensityClasses(density);
   const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(true);
   const [menu, setMenu] = useState<{ filter: ActiveFilter; x: number; y: number } | null>(null);
@@ -63,7 +68,7 @@ export function SmartFilters({
     });
 
   const header = (
-    <div className="flex items-center justify-between mb-2">
+    <div className={`flex items-center justify-between ${d.sectionHeader}`}>
       <button
         onClick={() => setIsOpen((v) => !v)}
         className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider hover:text-gray-700"
@@ -160,7 +165,7 @@ export function SmartFilters({
             e.preventDefault();
             setMenu({ filter: { type: filter.type, value: filter.value }, x: e.clientX, y: e.clientY });
           }}
-          className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+          className={`w-full text-left px-3 ${d.filterRow} rounded-lg text-sm transition-colors flex items-center gap-2 ${
             isActive ? 'bg-primary-600 text-white' : 'text-gray-700 hover:bg-gray-100'
           }`}
         >
@@ -217,7 +222,7 @@ export function SmartFilters({
           {contactFilters.length > 0 && <ul className="space-y-0.5">{contactFilters.map(renderFilter)}</ul>}
 
           {orderedTagTypes.map((type) => (
-            <div key={type} className="mt-3">
+            <div key={type} className={d.tagGroup}>
               <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider px-3 mb-1">
                 {labelForType(type)}
               </h3>
