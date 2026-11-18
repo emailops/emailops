@@ -1091,7 +1091,8 @@ impl GmailClient {
             recipients,
             cc,
             body,
-            snippet: msg.snippet,
+            // Gmail sends the snippet HTML-escaped (`I&#39;m`).
+            snippet: crate::util::html::decode_html_entities(&msg.snippet),
             timestamp: timestamp / 1000, // Convert from millis to seconds
             is_read,
             triage_status: None,
@@ -4595,6 +4596,19 @@ mod tests {
         let (email, _, _) = client.parse_message(msg).await.expect("parse");
 
         assert_eq!(email.sender_email, "news@example.com");
+    }
+
+    /// Gmail sends `snippet` HTML-escaped; stored as it came, the email list
+    /// showed `I&#39;m` instead of `I'm`.
+    #[tokio::test]
+    async fn parse_message_decodes_the_html_escaped_snippet() {
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let mut msg = test_message(&["INBOX"]);
+        msg.snippet = "I&#39;m &quot;in&quot; &lt;3 &amp; more".to_string();
+
+        let (email, _, _) = client.parse_message(msg).await.expect("parse");
+
+        assert_eq!(email.snippet, "I'm \"in\" <3 & more");
     }
 
     #[tokio::test]

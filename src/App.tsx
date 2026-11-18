@@ -43,12 +43,14 @@ import { AddAccountModal } from '@/components/Sidebar/AddAccountModal';
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
 import { Sidebar } from '@/components/Sidebar/Sidebar';
 import { SkillsView } from '@/components/Skills/SkillsView';
+import { ColumnResizeHandle } from '@/components/shared/ColumnResizeHandle';
 import { SenderDialogs } from '@/components/shared/SenderDialogs';
 import { UnifiedScopeBar } from '@/components/shared/UnifiedScopeBar';
 import { TagBoardView } from '@/components/TagBoard/TagBoardView';
 import { TasksPanel } from '@/components/Tasks/TasksPanel';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useAttachments } from '@/hooks/useAttachments';
+import { useColumnSpace } from '@/hooks/useColumnSpace';
 import { useEmails } from '@/hooks/useEmails';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 import { usePersistedPref } from '@/hooks/usePersistedPref';
@@ -60,6 +62,7 @@ import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appU
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
+import { fitColumns, LIST_COLUMN, parseWidth, readingAreaRoom, SIDEBAR_COLUMN } from '@/lib/columnResize';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
@@ -70,6 +73,7 @@ import { mailboxTitle } from '@/lib/mailboxTitle';
 import { restoredBodyHtml } from '@/lib/outbox';
 import { createThrottle } from '@/lib/refreshScheduling';
 import { parseRightDockContent, type RightDockContent, railButtons, rightDockMode } from '@/lib/rightDockLayout';
+import { DEFAULT_SIDEBAR_DENSITY, isSidebarDensity, type SidebarDensity } from '@/lib/sidebarDensity';
 import { isTagBoardDensity, isTagBoardType, type TagBoardDensity, type TagBoardType } from '@/lib/tagBoard';
 import {
   baseViewToken,
@@ -207,6 +211,23 @@ function AppInner() {
     parse: (raw) => (raw === 'split' || raw === 'full-width' ? raw : null),
     serialize: (v) => v,
   });
+  // Resizable columns: folder sidebar and (split layout) email list widths.
+  const [sidebarWidth, setSidebarWidth] = usePersistedPref<number>(
+    SIDEBAR_COLUMN.prefKey,
+    SIDEBAR_COLUMN.defaultWidth,
+    { parse: (raw) => parseWidth(raw, SIDEBAR_COLUMN), serialize: String },
+  );
+  const [listWidth, setListWidth] = usePersistedPref<number>(LIST_COLUMN.prefKey, LIST_COLUMN.defaultWidth, {
+    parse: (raw) => parseWidth(raw, LIST_COLUMN),
+    serialize: String,
+  });
+  // Neither column may squeeze the reading area below its minimum width: the
+  // handles measure how much room it has left when a drag or key press starts.
+  const mainRef = useRef<HTMLElement>(null);
+  const columnRoomToGrow = useCallback(() => readingAreaRoom(mainRef.current), []);
+  // ...and when the space shrinks afterwards (the right dock opens, the window
+  // narrows), the columns are drawn narrower: see `fitColumns` below.
+  const columnSpace = useColumnSpace(mainRef);
   // Tag board "group by" dimension. Persisted in SQLite (never localStorage)
   // so the board opens on the dimension the user left it on.
   const [tagBoardType, setTagBoardType] = usePersistedPref<TagBoardType>('tagboard_tag_type', 'company', {
@@ -219,6 +240,17 @@ function AppInner() {
     parse: (raw) => (isTagBoardDensity(raw) ? raw : null),
     serialize: (v) => v,
   });
+  // Sidebar row spacing (Settings → Appearance); plain-string pref like
+  // tagboard_density. This is its only owner: the sidebar and the setting
+  // both read it from here, so a change shows without a restart.
+  const [sidebarDensity, setSidebarDensity] = usePersistedPref<SidebarDensity>(
+    'sidebar_density',
+    DEFAULT_SIDEBAR_DENSITY,
+    {
+      parse: (raw) => (isSidebarDensity(raw) ? raw : null),
+      serialize: (v) => v,
+    },
+  );
   // The Memory and Tasks experimental flags ARE the master switches for the
   // backend extraction pipelines — they share the same `memory_enabled` /
   // `task_enabled` SQLite preference rows that `MemoryConfig.enabled` and
@@ -1538,6 +1570,14 @@ function AppInner() {
   const rightDock = rightDockMode(rightDockState);
   const isChatPanelOpen = rightDock.kind === 'panel' && rightDock.content === 'chat';
   const isCalendarPanelOpen = rightDock.kind === 'panel' && rightDock.content === 'calendar';
+  // The widths the columns are drawn at; the saved ones come back with the space.
+  const columns = fitColumns(
+    {
+      sidebar: sidebarWidth,
+      list: isEmailListView(viewMode) && inboxLayout === 'split' && !isInboxCollapsed ? listWidth : null,
+    },
+    columnSpace,
+  );
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
@@ -1559,6 +1599,7 @@ function AppInner() {
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
+          sidebarDensity={sidebarDensity}
           accounts={accounts}
           activeAccount={activeAccount}
           isUnifiedActive={isUnified}
@@ -1611,6 +1652,15 @@ function AppInner() {
             void useLensStore.getState().selectLens(lensId);
             setViewMode('lenses');
           }}
+          width={columns.sidebar}
+        />
+        <ColumnResizeHandle
+          spec={SIDEBAR_COLUMN}
+          width={columns.sidebar}
+          roomToGrow={columnRoomToGrow}
+          onCommit={setSidebarWidth}
+          label={t('common:layout.resizeSidebar')}
+          title={t('common:layout.resizeHint')}
         />
 
         {/* `min-w-0` is load-bearing: a flex item defaults to min-width:auto,
@@ -1618,7 +1668,7 @@ function AppInner() {
             the chat panel docked alongside, that made this column overflow and
             clip its own right edge (hiding the inbox toolbar buttons) instead
             of narrowing. */}
-        <main className="flex flex-1 min-w-0 overflow-hidden">
+        <main ref={mainRef} className="flex flex-1 min-w-0 overflow-hidden">
           {viewMode === 'contacts' ? (
             // Per-account views wrap in a column with the unified-mode scope
             // chip on top (self-gating — renders nothing outside All accounts).
@@ -1828,6 +1878,7 @@ function AppInner() {
                     selectedEmailId={inboxLayout === 'split' ? (selectedEmail?.id ?? null) : null}
                     disableAutoSelect={inboxLayout === 'full-width'}
                     fullWidth={inboxLayout === 'full-width'}
+                    width={columns.list ?? listWidth}
                     onSelectEmail={handleInboxSelect}
                     onLoadMore={loadMore}
                     onRetry={retryEmails}
@@ -1889,10 +1940,21 @@ function AppInner() {
                   );
                 }
 
-                // Split layout: inbox list + email pane side by side
+                // Split layout: inbox list + email pane side by side, with a
+                // handle to resize the list (not while it is collapsed).
                 return (
                   <>
                     {inboxList}
+                    {!isInboxCollapsed && (
+                      <ColumnResizeHandle
+                        spec={LIST_COLUMN}
+                        width={columns.list ?? listWidth}
+                        roomToGrow={columnRoomToGrow}
+                        onCommit={setListWidth}
+                        label={t('common:layout.resizeList')}
+                        title={t('common:layout.resizeHint')}
+                      />
+                    )}
                     {emailPane}
                   </>
                 );
@@ -2153,6 +2215,8 @@ function AppInner() {
           accounts={accounts}
           currentLayout={inboxLayout}
           onChangeLayout={handleChangeLayout}
+          sidebarDensity={sidebarDensity}
+          onChangeSidebarDensity={setSidebarDensity}
           classificationPrefill={classificationRulePrefill}
           tasksEnabled={tasksEnabled}
           onChangeTasksEnabled={setTasksEnabled}

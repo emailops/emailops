@@ -89,5 +89,10 @@
   },
   "unifiedScope": {
     "hint": "In der Alle-Konten-Ansicht zeigt dieser Bereich nur {{email}}"
+  },
+  "layout": {
+    "resizeSidebar": "Ordnerliste anpassen",
+    "resizeList": "E-Mail-Liste anpassen",
+    "resizeHint": "Ziehen zum Anpassen · Doppelklick zum Zurücksetzen"
   }
 }

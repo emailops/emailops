@@ -97,72 +97,81 @@ fn angle_bracket_address(rest: &str) -> Option<&str> {
     looks_like_address.then_some(inner)
 }
 
-/// Decode the most common HTML entities. Covers a handful of named entities
-/// plus all decimal (`&#NNN;`) and hex (`&#xHH;`) numeric character references.
-/// Numeric refs matter because newsletters encode emoji and invisible spacer
-/// characters that way; left undecoded they show up as literal `&#…;` text.
-pub fn decode_html_entities(s: &str) -> String {
-    let named = s
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&nbsp;", " ");
-    decode_numeric_entities(&named)
-}
+/// Named references decoded besides the numeric ones: the five of HTML
+/// escaping, the non-breaking space (as a plain space), the zero-width
+/// non-joiner newsletters pad previews with, and the accented letters and
+/// marks of Spanish text.
+const NAMED_ENTITIES: &[(&str, char)] = &[
+    ("amp", '&'),
+    ("lt", '<'),
+    ("gt", '>'),
+    ("quot", '"'),
+    ("apos", '\''),
+    ("nbsp", ' '),
+    ("zwnj", '\u{200C}'),
+    ("aacute", 'á'),
+    ("eacute", 'é'),
+    ("iacute", 'í'),
+    ("oacute", 'ó'),
+    ("uacute", 'ú'),
+    ("Aacute", 'Á'),
+    ("Eacute", 'É'),
+    ("Iacute", 'Í'),
+    ("Oacute", 'Ó'),
+    ("Uacute", 'Ú'),
+    ("ntilde", 'ñ'),
+    ("Ntilde", 'Ñ'),
+    ("uuml", 'ü'),
+    ("Uuml", 'Ü'),
+    ("iexcl", '¡'),
+    ("iquest", '¿'),
+];
 
-/// Replace `&#NNN;` / `&#xHH;` numeric character references with the code
-/// point they name. Invalid or out-of-range references are left untouched.
-fn decode_numeric_entities(s: &str) -> String {
-    if !s.contains("&#") {
-        return s.to_string();
-    }
-    let bytes = s.as_bytes();
+/// The longest reference between `&` and `;`: `#x` and eight hex digits.
+/// Bounds the look-ahead, so a stray `&` never scans the rest of the text.
+const MAX_ENTITY_LEN: usize = 10;
+
+/// Decode HTML character references: decimal (`&#NNN;`) and hex (`&#xHH;`)
+/// ones — newsletters encode emoji and invisible spacers that way — and the
+/// named ones in `NAMED_ENTITIES`. One pass, so text escaped twice (Gmail
+/// sends a typed `&lt;` as `&amp;lt;`) comes out escaped once. Unknown or
+/// malformed references are left as they are.
+pub fn decode_html_entities(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'&' && i + 2 < bytes.len() && bytes[i + 1] == b'#' {
-            let mut j = i + 2;
-            let hex = bytes[j] == b'x' || bytes[j] == b'X';
-            if hex {
-                j += 1;
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after = &rest[amp + 1..];
+        let decoded = after
+            .bytes()
+            .take(MAX_ENTITY_LEN + 1)
+            .position(|b| b == b';')
+            .and_then(|end| entity_char(&after[..end]).map(|ch| (ch, end)));
+        match decoded {
+            Some((ch, end)) => {
+                out.push(ch);
+                rest = &after[end + 1..];
             }
-            let start = j;
-            // Bound the digit run so a stray `&#` can't scan unboundedly.
-            while j < bytes.len() && bytes[j] != b';' && j - start < 8 {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b';' && j > start {
-                let digits = &s[start..j];
-                let code = if hex {
-                    u32::from_str_radix(digits, 16).ok()
-                } else {
-                    digits.parse::<u32>().ok()
-                };
-                if let Some(ch) = code.and_then(char::from_u32) {
-                    out.push(ch);
-                    i = j + 1;
-                    continue;
-                }
+            None => {
+                out.push('&');
+                rest = after;
             }
         }
-        // Copy one UTF-8 char. Leading byte encodes length: 0xxxxxxx=1,
-        // 110xxxxx=2, 1110xxxx=3, 11110xxx=4.
-        let b = bytes[i];
-        let ch_len = if b < 0xC0 {
-            1
-        } else if b < 0xE0 {
-            2
-        } else if b < 0xF0 {
-            3
-        } else {
-            4
-        };
-        let end = (i + ch_len).min(bytes.len());
-        out.push_str(&s[i..end]);
-        i = end;
     }
+    out.push_str(rest);
     out
+}
+
+/// The character a reference names (`amp`, `#39`, `#x1F468`), if any.
+fn entity_char(name: &str) -> Option<char> {
+    let Some(number) = name.strip_prefix('#') else {
+        return NAMED_ENTITIES.iter().find(|(n, _)| *n == name).map(|&(_, ch)| ch);
+    };
+    let code = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => u32::from_str_radix(hex, 16).ok(),
+        None => number.parse::<u32>().ok(),
+    };
+    code.and_then(char::from_u32)
 }
 
 /// Strip HTML tags only — no style/script block handling, no entity decoding.
@@ -298,6 +307,33 @@ mod tests {
     fn decodes_decimal_entity_in_running_text() {
         // 8364 = € EURO SIGN
         assert_eq!(decode_html_entities("price: &#8364;10"), "price: €10");
+    }
+
+    #[test]
+    fn decodes_spanish_accents_and_inverted_marks() {
+        assert_eq!(
+            decode_html_entities("&iquest;S&iacute;? &iexcl;Canci&oacute;n de caf&eacute;!"),
+            "¿Sí? ¡Canción de café!"
+        );
+    }
+
+    #[test]
+    fn decodes_apos_and_the_zero_width_non_joiner() {
+        assert_eq!(decode_html_entities("it&apos;s&zwnj;"), "it's\u{200C}");
+    }
+
+    #[test]
+    fn decodes_text_escaped_twice_only_once() {
+        // Gmail sends a literal `&lt;` typed in a message as `&amp;lt;`.
+        assert_eq!(
+            decode_html_entities("write &amp;lt;b&amp;gt; for bold"),
+            "write &lt;b&gt; for bold"
+        );
+    }
+
+    #[test]
+    fn leaves_an_unknown_named_entity_and_a_bare_ampersand_untouched() {
+        assert_eq!(decode_html_entities("a &bogus; b & c"), "a &bogus; b & c");
     }
 
     #[test]
