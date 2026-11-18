@@ -1,27 +1,34 @@
 import type { ViewMode } from '@/components/Sidebar/Sidebar';
+import { isDocxAttachment } from '@/lib/mimeType';
 import { isEmailListView } from '@/lib/viewNavigation';
 import type { EmailTab } from '@/stores/emailStore';
 import type { Attachment, ChatMessage, Email } from '@/types';
 
 /**
  * What the chat panel offers as ambient context — i.e. what the user is
- * currently looking at in the main view: a thread, or a PDF attachment.
+ * currently looking at in the main view: a thread, or a PDF or Word attachment.
  */
 export interface ChatContext {
   threadId: string;
   accountId: string;
   /** Shown on the context chip: the thread's subject (may be empty), or the
-   *  PDF's file name. */
+   *  document's file name. */
   subject: string;
-  /** Set when the context is an open PDF tab: its attachment id. The backend
-   *  then grounds the turn in the PDF's text instead of the thread. */
+  /** Set when the context is an open document tab: its attachment id. The
+   *  backend then grounds the turn in the document's text instead of the thread. */
   attachmentId?: string;
 }
 
 /** A PDF by its mime type, or by its name when the sender declared a generic
- *  type. Mirrors the backend's `open_document::is_pdf`. */
+ *  type. Mirrors the PDF half of the backend's `open_document::DocumentKind::detect`. */
 export function isPdfAttachment(mimeType: string, filename: string): boolean {
   return mimeType.toLowerCase() === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
+}
+
+/** A document the chat can read: a PDF or a Word (.docx) file. Mirrors the
+ *  backend's `open_document::DocumentKind::detect`. */
+export function isReadableDocument(mimeType: string, filename: string): boolean {
+  return isPdfAttachment(mimeType, filename) || isDocxAttachment(mimeType, filename);
 }
 
 export interface ChatContextInput {
@@ -39,17 +46,17 @@ export interface ChatContextInput {
  *
  * Precedence mirrors what is actually on screen:
  *   1. An active *thread* tab is the foreground content — it wins.
- *   2. An active *PDF* tab: the chat reads the document (its thread id, when
+ *   2. An active *document* tab (PDF or Word): the chat reads it (its thread id, when
  *      an email is selected, is kept only so the chip key stays stable).
  *   3. An active *compose* tab hides the selected email: no thread is offered.
  *      The draft in it reaches the chat through `draftContextStore`, with its
  *      own thread when it is a reply.
  *   4. Otherwise the selected email in the split/full-width pane.
- * Non-PDF attachment tabs fall through to the selected email rather than
+ * Other attachment tabs fall through to the selected email rather than
  * blanking the context.
  *
  * Only mailbox-backed views (inbox/sent/spam/deleted/folders) produce thread
- * context. The Attachments view offers the PDF selected in its viewer. In
+ * context. The Attachments view offers the document selected in its viewer. In
  * calendar, contacts, tasks, memory, lenses or the dashboard there is nothing
  * on screen to read, even though `selectedEmail` may still be set underneath.
  */
@@ -60,7 +67,9 @@ export function deriveChatContext({
   selectedAttachment,
 }: ChatContextInput): ChatContext | null {
   if (viewMode === 'attachments') {
-    if (!selectedAttachment || !isPdfAttachment(selectedAttachment.mimeType, selectedAttachment.filename)) return null;
+    if (!selectedAttachment || !isReadableDocument(selectedAttachment.mimeType, selectedAttachment.filename)) {
+      return null;
+    }
     return {
       threadId: '',
       accountId: selectedAttachment.accountId,
@@ -80,7 +89,7 @@ export function deriveChatContext({
 
   if (activeTab?.type === 'compose') return null;
 
-  if (activeTab?.type === 'attachment' && isPdfAttachment(activeTab.mimeType, activeTab.filename)) {
+  if (activeTab?.type === 'attachment' && isReadableDocument(activeTab.mimeType, activeTab.filename)) {
     return {
       threadId: selectedEmail?.threadId ?? '',
       accountId: activeTab.accountId,
@@ -104,7 +113,7 @@ export function deriveChatContext({
 export interface ChatTurnContext {
   threadId: string;
   accountId: string;
-  /** The open PDF, when that is the context. */
+  /** The open document, when that is the context. */
   attachmentId?: string;
 }
 

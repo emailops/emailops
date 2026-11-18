@@ -20,7 +20,9 @@ WebDriver transport (DOM inside the real app), `$V snap/click/type` the cua-driv
   correction (Larkspur Freight, with a shortcut and a web-page attachment that holds a remote image), a renewal notice and a junk-marked
   lookalike (Tessellate Hosting), an email with a remote image (Harborlight Weekly) whose `email_headers` carry
   RFC 8058 one-click `List-Unsubscribe` on `.example` hosts, a draft with a table, the starred correction quote, one
-  archived message (*Studio key handover confirmed*), the Lens *Renewal quotes* with a row of each Larkspur quote, and a memory
+  archived message (*Studio key handover confirmed*), the Lens *Renewal quotes* with a row of each Larkspur quote, a long
+  contract PDF (*Larkspur Freight master services agreement*), Word kickoff minutes (*Kickoff minutes: dispatch portal*,
+  `larkspur-kickoff-minutes.docx` on disk: a due date in a table cell, a budget in a paragraph), and a memory
   fact on Quayside Studios that carries an order for the model.
 - The schema comes from this checkout's migrations (`init_db` example), not from the production DB; `ensure_demo_db.sh`
   rebuilds the demo DB when the content of a migration or the generator changed since it was built.

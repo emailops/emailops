@@ -292,7 +292,7 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
         rows = conn.execute(
             "SELECT filename, mime_type, provider_attachment_id, file_path, inline_data "
             "FROM email_attachment_meta WHERE mime_type NOT LIKE 'image/%' AND mime_type != 'application/pdf' "
-            "ORDER BY filename").fetchall()
+            "AND filename NOT LIKE '%.docx' ORDER BY filename").fetchall()
         shortcut, page = rows
         self.assertEqual(shortcut[:3], ("larkspur-client-portal.webloc", "application/octet-stream", ""))
         self.assertFalse(pathlib.PurePosixPath(shortcut[3]).is_absolute(), "stored paths are relative to the data dir")
@@ -311,6 +311,30 @@ class VerificationFixturesAreSeeded(unittest.TestCase):
         self.assertGreaterEqual(pdf.count(b"/Type /Page "), 8)
         fee = pdf.index(b"early termination fee of EUR 1,750")
         self.assertGreater(fee, len(pdf) * 3 // 4)
+
+    def test_a_word_minutes_document_is_stored_on_disk_with_its_facts_only_inside_it(self):
+        # The chat reads it like the PDFs: the due date sits in a table cell and
+        # the budget in a paragraph, and neither is in the email body.
+        import xml.etree.ElementTree as ET
+        import zipfile
+
+        conn, demo_dir = self._seeded()
+        email_id, mime, path = conn.execute(
+            "SELECT email_id, mime_type, file_path FROM email_attachment_meta WHERE filename = ?",
+            ("larkspur-kickoff-minutes.docx",)).fetchone()
+        self.assertEqual(mime, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        with zipfile.ZipFile(demo_dir / path) as docx:
+            names = set(docx.namelist())
+            self.assertTrue({"[Content_Types].xml", "_rels/.rels", "word/document.xml"} <= names)
+            root = ET.fromstring(docx.read("word/document.xml"))
+        w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        cells = ["".join(t.text or "" for t in tc.iter(f"{w}t")) for tc in root.iter(f"{w}tc")]
+        self.assertIn("17 March 2026", cells)
+        text = "".join(t.text or "" for t in root.iter(f"{w}t"))
+        self.assertIn("EUR 8,400", text)
+        (body,) = conn.execute("SELECT body FROM email_bodies WHERE email_id = ?", (email_id,)).fetchone()
+        self.assertNotIn("8,400", body)
+        self.assertNotIn("17 March", body)
 
     def test_one_image_attachment_opens_in_the_lightbox(self):
         # The sweep opens it to prove no conversation shortcut acts behind the

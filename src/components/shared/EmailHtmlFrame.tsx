@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { getSafeExternalUrl, type ParsedMailto, parseMailtoUrl } from '@/lib/emailFormatting';
 import { type EmailSchemePlan, LIGHT_EMAIL_PLAN, planEmailScheme } from '@/lib/emailScheme';
 import { computeMatchScrollTop, findScrollParent } from '@/lib/matchScroll';
+import type { Scheme } from '@/lib/theme';
 import { useThemeStore } from '@/stores/themeStore';
 import { ExternalLinkDialog } from './ExternalLinkDialog';
 
@@ -49,6 +50,9 @@ export interface EmailHtmlFrameProps {
    *  its own CSP limiting images to inline sources, which also covers what
    *  the sanitizer leaves alone (`url()` inside `<style>` blocks). */
   allowRemoteContent: boolean;
+  /** Render in this scheme whatever the app's theme: a document viewer keeps
+   *  its paper white on the dark theme, as the PDF viewer does. */
+  colorScheme?: Scheme;
 }
 
 // Defined as a string so we can stamp it into srcDoc. Lives in `<head>` so
@@ -387,6 +391,7 @@ export function EmailHtmlFrame({
   className,
   onMailtoLink,
   allowRemoteContent,
+  colorScheme,
 }: EmailHtmlFrameProps) {
   const { t } = useTranslation(['common', 'inbox']);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -395,7 +400,8 @@ export function EmailHtmlFrame({
 
   // On the dark theme the message is shown dark whenever it can be; the
   // planner reads the message's markup, so the frame never looks inside the DOM.
-  const scheme = useThemeStore((s) => s.scheme);
+  const appScheme = useThemeStore((s) => s.scheme);
+  const scheme = colorScheme ?? appScheme;
   const plan = useMemo(() => planEmailScheme(schemeSource, scheme), [schemeSource, scheme]);
   const srcDoc = useMemo(() => buildSrcDoc(html, allowRemoteContent, plan), [html, allowRemoteContent, plan]);
 

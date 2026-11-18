@@ -301,8 +301,8 @@
         "hint": "La discussion répond depuis un autre compte et ne peut donc pas lire cet e-mail. Changez de compte pour poser des questions dessus.",
         "action": "Changer"
       },
-      "hintDocument": "Les réponses s'appuient sur le texte de ce PDF. Retirez-le pour interroger votre boîte.",
-      "restoreDocument": "Utiliser le PDF ouvert comme contexte"
+      "hintDocument": "Les réponses s'appuient sur le texte de ce document. Retirez-le pour interroger votre boîte.",
+      "restoreDocument": "Utiliser le document ouvert comme contexte"
     },
     "draft": {
       "threadAndReply": "fil + votre réponse",

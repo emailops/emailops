@@ -56,6 +56,10 @@ chrono-tz = "0.10"
 rrule = "0.14"
 # Text of an open PDF attachment for the chat (services::pdf_text).
 pdf_oxide = { version = "0.3.78", default-features = false, features = ["legacy-crypto"] }
+# Text of an open Word (.docx) attachment for the chat (services::docx_text):
+# the zip and XML readers calamine already builds, at its versions and features.
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
 # Pinned to 0.12 until `oauth2` ships a release whose `AsyncHttpClient`
 # impl is wired against reqwest 0.13 (5.0.0 still requires 0.12).
 reqwest = { version = "0.12", features = ["json", "stream"] }

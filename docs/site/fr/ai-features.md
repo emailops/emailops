@@ -175,10 +175,10 @@ que pour une question et n'est jamais enregistré dans la conversation : vous po
 passer d'un e-mail à l'autre au sein d'un même chat.
 
 <!-- claim:ai-chat-mailbox-16 -->
-Avec un PDF ouvert dans un onglet, ou sélectionné dans **Pièces jointes**, la puce propose ce
-document, et le chat répond à partir de son texte. Une nouvelle conversation suggère alors
-**Résumer ce document**, **Points clés, dates et montants** et **Poser une question sur ce
-document**. Un PDF trop long pour la fenêtre de contexte du modèle est lu par parties, et la
+Avec un PDF ou un document Word (.docx) ouvert dans un onglet, ou sélectionné dans **Pièces
+jointes**, la puce propose ce document, et le chat répond à partir de son texte. Une nouvelle
+conversation suggère alors **Résumer ce document**, **Points clés, dates et montants** et **Poser
+une question sur ce document**. Un document trop long pour la fenêtre de contexte du modèle est lu par parties, et la
 réponse s'appuie sur des notes prises sur chaque partie.
 
 <!-- claim:ai-chat-mailbox-18 -->

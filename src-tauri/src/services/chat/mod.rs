@@ -22,7 +22,7 @@ pub mod cancel;
 pub mod tools;
 
 mod conversations;
-// The PDF attachment the user has open, as per-turn context.
+// The PDF or Word attachment the user has open, as per-turn context.
 pub(crate) mod open_document;
 // The draft the user is writing, as per-turn read-only context.
 mod open_draft;

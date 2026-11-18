@@ -163,10 +163,11 @@ today?"*) still searches it. That context applies to a single question and is ne
 onto the conversation, so you can move between emails inside one chat.
 
 <!-- claim:ai-chat-mailbox-16 -->
-With a PDF open in a tab, or selected in **Attachments**, the chip offers that document instead,
-and chat answers from its text. A new conversation then suggests **Summarise this document**,
-**Key points, dates and amounts** and **Ask about this document**. A PDF too long for the
-model's context window is read in parts, and the answer is built from notes on every part.
+With a PDF or a Word document (.docx) open in a tab, or selected in **Attachments**, the chip
+offers that document instead, and chat answers from its text. A new conversation then suggests
+**Summarise this document**, **Key points, dates and amounts** and **Ask about this document**. A
+document too long for the model's context window is read in parts, and the answer is built from
+notes on every part.
 
 <!-- claim:ai-chat-mailbox-18 -->
 While you write an email in a compose tab, or a reply or reply-all under the open email, the

@@ -1,7 +1,9 @@
 import { useTranslation } from 'react-i18next';
+import { DocxViewer } from '@/components/Attachments/DocxViewer';
 import { PdfViewer } from '@/components/Attachments/PdfViewer';
 import { EmailBody } from '@/components/EmailView/EmailBody';
 import { dataUrlToBase64, decodeDataUrlText, saveToDownloads } from '@/lib/download';
+import { isDocxAttachment } from '@/lib/mimeType';
 import type { AttachmentViewTab } from '@/stores/emailStore';
 
 interface AttachmentTabViewProps {
@@ -61,6 +63,14 @@ export function AttachmentTabView({ tab, onClose }: AttachmentTabViewProps) {
           </pre>
         ) : tab.mimeType === 'application/pdf' ? (
           <PdfViewer key={tab.id} dataUrl={tab.dataUrl} title={tab.filename} />
+        ) : isDocxAttachment(tab.mimeType, tab.filename) ? (
+          <DocxViewer
+            key={tab.id}
+            dataUrl={tab.dataUrl}
+            title={tab.filename}
+            accountId={tab.accountId}
+            senderEmail={tab.senderEmail}
+          />
         ) : tab.mimeType === 'text/html' ? (
           <div className="h-full overflow-auto p-4">
             <EmailBody html={decodeDataUrlText(tab.dataUrl)} accountId={tab.accountId} senderEmail={tab.senderEmail} />

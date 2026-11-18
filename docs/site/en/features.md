@@ -223,7 +223,8 @@ One place for the attachments you care about â€” invoices, contracts, receipts â
 download, instead of digging back through threads. Open it from **Attachments** in the sidebar.
 
 <!-- claim:feat-attachments-view-9 -->
-A PDF opens in its own tab, where **Zoom in** and **Zoom out** change its size.
+A PDF opens in its own tab, where **Zoom in** and **Zoom out** change its size. A Word document
+(.docx) opens read-only in its own tab too.
 
 <!-- claim:feat-attachments-view-2 -->
 The view collects attachments through **rules**, so it starts empty. Click **Manage Rules** (or

@@ -37,7 +37,9 @@ pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, PdfTextError> {
     Ok(text)
 }
 
-fn tidy_whitespace(raw: &str) -> String {
+/// `raw` with every line right-trimmed and runs of blank lines folded
+/// into one; shared with `docx_text`.
+pub(crate) fn tidy_whitespace(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut blank_run = 0;
     for line in raw.lines().map(str::trim_end) {

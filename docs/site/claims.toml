@@ -611,7 +611,7 @@ checks = [
 
 [feat-attachments-view-9]
 checks = [
-  { manual = 'Covered by src/components/Attachments/PdfViewer.test.tsx (zoom levels from the toolbar); the docs app check does not open a PDF tab yet.' },
+  { manual = 'Covered by src/components/Attachments/PdfViewer.test.tsx (zoom levels from the toolbar), and the Word tab by src/components/EmailView/AttachmentTabView.render.test.tsx and src/components/Attachments/DocxViewer.test.tsx; the docs app check does not open a document tab yet.' },
 ]
 
 [feat-attachments-view-2]
@@ -1093,8 +1093,8 @@ checks = [
 
 [ai-chat-mailbox-16]
 checks = [
-  { tests = ['services::chat::open_document::tests::a_document_that_fits_its_slot_is_read_whole', 'services::chat::open_document::tests::parts_cover_the_whole_text_in_order_within_the_limit', 'services::chat::open_document::tests::the_block_of_a_document_read_in_parts_says_the_notes_cover_all_of_it'], covers = ["A PDF too long for the model's context window is read in parts, and the answer is built from notes on every part."] },
-  { manual = 'The PDF chip and the three document starters are covered by src/components/Chat/ChatStarters.test.tsx ("offers requests about the open PDF while one is the context"); the docs app check does not open a PDF yet.', covers = ["With a PDF open in a tab, or selected in Attachments, the chip offers that document instead, and chat answers from its text.", "A new conversation then suggests Summarise this document, Key points, dates and amounts and Ask about this document."] },
+  { tests = ['services::chat::open_document::tests::a_document_that_fits_its_slot_is_read_whole', 'services::chat::open_document::tests::parts_cover_the_whole_text_in_order_within_the_limit', 'services::chat::open_document::tests::the_block_of_a_document_read_in_parts_says_the_notes_cover_all_of_it'], covers = ["A document too long for the model's context window is read in parts, and the answer is built from notes on every part."] },
+  { manual = 'The document chip and the three document starters are covered by src/components/Chat/ChatStarters.test.tsx ("offers requests about the open PDF while one is the context") and src/lib/chatContext.test.ts (a PDF or Word tab, or Attachments selection, is the context); reading a Word file by services::chat::open_document::tests::loads_the_text_of_an_inline_word_attachment and the demo_open_docx_* chat eval cases. The docs app check does not open a document yet.', covers = ["With a PDF or a Word document (.docx) open in a tab, or selected in Attachments, the chip offers that document instead, and chat answers from its text.", "A new conversation then suggests Summarise this document, Key points, dates and amounts and Ask about this document."] },
 ]
 
 [ai-chat-mailbox-17]
