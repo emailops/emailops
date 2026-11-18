@@ -17,18 +17,22 @@ vi.mock('@/lib/api', () => ({
 import { initI18n } from '@/i18n';
 import type { ThreadSnooze } from '@/lib/api';
 import * as api from '@/lib/api';
+import { DEFAULT_UNDO_WINDOW_SECS } from '@/lib/undoWindow';
 import {
   isBackFromSnooze,
   isSnoozed,
   snoozeLeavesList,
   snoozeMap,
   threadKey,
-  UNDO_WINDOW_MS,
   useEmailStore,
   withoutSnoozes,
   withSnoozes,
 } from './emailStore';
 import { useToastStore } from './toastStore';
+import { useUndoWindowStore } from './undoWindowStore';
+
+/** The default undo window (Settings → Appearance → Undo archive and delete). */
+const UNDO_WINDOW_MS = DEFAULT_UNDO_WINDOW_SECS * 1000;
 
 function email(id: string, threadId: string, extra: Partial<Email> = {}): Email {
   return {
@@ -101,6 +105,7 @@ describe('snooze store actions', () => {
   beforeEach(() => {
     useEmailStore.getState().reset();
     useToastStore.setState({ toasts: [] });
+    useUndoWindowStore.setState({ secs: DEFAULT_UNDO_WINDOW_SECS });
     vi.clearAllMocks();
     vi.mocked(api.snoozeThreads).mockResolvedValue({ failed: [] });
     vi.mocked(api.unsnoozeThreads).mockResolvedValue(undefined);
@@ -121,6 +126,31 @@ describe('snooze store actions', () => {
     expect(toast.message).toMatch(/^Snoozed until /);
     expect(toast.actionLabel).toBe('Undo');
     expect(toast.durationMs).toBe(UNDO_WINDOW_MS);
+  });
+
+  it('the Undo lasts as long as the undo window set in Settings', async () => {
+    useUndoWindowStore.setState({ secs: 20 });
+    useEmailStore.setState({ emails: [email('a', 't1')], totalCount: 1, listScope: 'inbox' });
+
+    await useEmailStore.getState().snoozeThreads([t1], 1_900_000_000);
+
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.actionLabel).toBe('Undo');
+    expect(toast.durationMs).toBe(20_000);
+  });
+
+  it('with the undo window off, the snooze notice offers no Undo', async () => {
+    useUndoWindowStore.setState({ secs: 0 });
+    useEmailStore.setState({ emails: [email('a', 't1')], totalCount: 1, listScope: 'inbox' });
+
+    await useEmailStore.getState().snoozeThreads([t1], 1_900_000_000);
+
+    expect(api.snoozeThreads).toHaveBeenCalledWith([t1], 1_900_000_000);
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.message).toMatch(/^Snoozed until /);
+    expect(toast.actionLabel).toBeUndefined();
+    expect(toast.onAction).toBeUndefined();
+    expect(toast.durationMs).toBeUndefined();
   });
 
   it('undo unsnoozes and puts the rows back', async () => {

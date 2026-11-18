@@ -30,6 +30,7 @@ import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
 import { ThemeSetting } from './ThemeSetting';
 import { UndoSendSetting } from './UndoSendSetting';
+import { UndoWindowSetting } from './UndoWindowSetting';
 
 export type SettingsTab =
   | 'appearance'
@@ -359,6 +360,7 @@ function AppearancePanel({
       <SidebarDensitySetting value={sidebarDensity} onChange={onChangeSidebarDensity} />
       <DefaultSenderSetting />
       <UndoSendSetting />
+      <UndoWindowSetting />
       <AutoAdvanceSetting />
       <KeyboardShortcutsSetting />
     </div>
