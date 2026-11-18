@@ -39,10 +39,13 @@ function directive(csp: string, name: string): string {
 }
 
 describe('EmailHtmlFrame bridge script CSP', () => {
+  // Compare whole source tokens, not a substring: a stray quote after the hash
+  // ('sha256-…'') still contains the hash, but the browser drops the malformed
+  // token and blocks the bridge script in release builds.
   it('the production CSP allows the inline bridge script via its sha256 hash', async () => {
     const csp = tauriConf.app.security.csp;
-    const scriptSrc = scriptSrcDirective(csp);
-    expect(scriptSrc).toContain(await expectedScriptHash());
+    const sources = scriptSrcDirective(csp).split(/\s+/);
+    expect(sources).toContain(await expectedScriptHash());
   });
 });
 

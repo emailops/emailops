@@ -4497,3 +4497,110 @@ not saved at all.
 - *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
   local and provider copies, keeping the original when the From account changes, an "open as
   independent copy" action): each is a change of its own; left out.
+
+## 2026-11-13 — Files pasted into the composer body are attached; images stay inline
+
+**Decision:** Pasting into the body of Compose, a compose tab, Reply or Forward attaches the
+clipboard's files that are not images (a Finder copy) through the composer's `addFiles`, with
+the same limits as a drop; images are still inlined. A paste or drop that mixes images and other
+files inlines the images and attaches the rest. Pasting into To/Cc/Bcc/Subject keeps the native
+behaviour.
+**Context:** Issue #260: only drag-and-drop and the attach button added files. The editor
+(`RichTextEditor`) owns the paste and hands non-image files to the composer (`onAttachFiles`);
+a drop with no images stays with the composer's `useFileDrop`.
+**Rejected:** Attaching a file pasted anywhere in the composer, like a drop: Office apps put text
+and a picture of it on the clipboard together, so pasting a cell into Subject would attach an
+image instead of the text.
+
+## 2026-11-13 — Meeting reminders come only from the account's own calendars
+
+**Decision:** A meeting reminds (OS notification and in-app banner) only when it is on one of
+the account's own calendars: its primary calendar, an ICS feed the user subscribed to, or a
+calendar whose provider-reported owner is the account (Google calendarList `dataOwner`, Graph
+`owner.address`, compared case-insensitively and stored as `calendars.owner_email`). A calendar
+another person shared with the account still shows its events but never reminds; that includes
+another person's Google primary calendar, which reports no owner. An event whose calendar has
+no registry row still reminds.
+**Context:** Multi-calendar sync made every visible calendar raise reminders, so a colleague's
+shared calendar reminded the user of meetings that were not theirs. A meeting the user is
+invited to also lands on their own calendar, so it keeps exactly one reminder.
+**Rejected:**
+- *Primary calendar only*: no migration, but it silences calendars the user created.
+- *A per-calendar "remind me" switch in Settings → Calendar*: more UI and state than the
+  request needs; hiding a calendar already silences it.
+- *Google `accessRole == owner` as the ownership test*: a calendar shared with "manage sharing"
+  rights reports `owner` too.
+
+## 2026-11-17 — Sidebar density is a two-level preference that only changes vertical spacing
+
+**Decision:** The sidebar gets a remembered `sidebar_density` preference for the whole
+installation (not per account): `compact`, the default, or `comfortable`, the sidebar as it was,
+chosen in Settings → Appearance. The default is never written to the database, so an installation
+that saved Comfortable keeps it. Compact only reduces the vertical padding and gaps
+of the sidebar's scrolling list; it never changes text size, icon size, horizontal padding, or
+the fixed header and footer, and every row it changes stays at least 24 px tall (WCAG 2.5.8).
+The stored values are plain strings and are not renamed without a migration.
+**Context:** Issue #279: with several accounts and groups open, the list makes users scroll or
+fold useful groups. On the demo mailbox the list's content height drops from 2106 to 1618 px
+(0.768), mostly from the view rows and the smart-filter rows; account rows already use
+`text-xs`, keep a `min-h-6` floor (WebKit lays their truncated label out 1 px short), and gain
+the least.
+**Rejected:**
+- *A `data-density` attribute with Tailwind `in-data-*` variants*: the precedence between a row's
+  class and its compact override cannot be checked in jsdom, only in a real browser.
+- *A React context for the density*: a provider and a hook for three components; a required prop
+  lets `tsc` catch a component that was not given it.
+- *Thumbnail cards in Settings*: two new drawings to maintain; the shared `Select` is enough.
+- *All text rows at 28 px*: 0.820 with 2 px gaps (misses the 0.8 target); 0.782 without gaps,
+  where the active and hover backgrounds of neighbouring rows touch.
+- *Smaller icons*: the row height comes from the text's line height, so they save no space.
+
+## 2026-11-17 — Resizable columns keep a 320 px reading-area floor
+
+**Decision:** The folder sidebar (180–420 px, default 256) and the split-view email list
+(300–800 px, default 384) resize from a handle on their right edge. A handle never lets its
+column grow past the point where the reading pane, or the main area in a view without one,
+would be narrower than 320 px, the floor the tag board already gives its reading pane. The
+limit is read from the layout when a drag or key press starts. When the space shrinks
+afterwards (the right dock opens, the window narrows), a column widened past its default is
+drawn narrower, the list first and then the sidebar, until the reading area has 320 px again or
+both are back at their defaults; the saved widths stay and come back with the space. A drag
+saves the width once, on release. The email frame hands the wheel to the reading pane only when
+the email is wider than the frame.
+**Context:** Contributor PR #134 added the columns. Its review asked for one preference write per
+drag, a reading pane the columns cannot squeeze, one clamp for every key, and native scrolling
+for emails that do not need the wheel handoff. The developer chose to fit the drawn widths in
+the same change: without it, reopening the dock after widening both columns left the reading
+pane at 0 px and clipped the list. The fitted widths stop at the defaults, so a tight window
+looks as it did with fixed columns (a 180 px reading pane at 1200 px with the 380 px dock
+open).
+**Rejected:**
+- *Fitting the columns with CSS alone (`flex-shrink` plus `min-width`)*: the browser shrinks
+  every shrinkable item in proportion, so it cannot say "the list first, then the sidebar, and
+  not below the default"; a pure function (`fitColumns`) can, and is unit-tested.
+- *Letting a fitted column shrink to its minimum*: it would change the layout of a window with
+  the dock open for users who never resized a column.
+- *Pointer capture for the drag (the PR's version)*: the app already keeps a drag alive over an
+  email iframe with a window-wide capture layer (`RightDock`). The layer appears only after the
+  pointer moves 3 px, so a double-click still reaches the handle.
+
+## 2026-11-17 — Pasted rich text keeps only colours that read; the composer gets a text colour picker
+
+**Decision:** When rich text is pasted into the composer, any text colour whose contrast with
+the background it will be shown on is below 3:1 (WCAG's floor for large text) is dropped. The
+background is the nearest one the pasted HTML declares, otherwise the white page a message
+renders on (`dropUnreadableColors`, run as the editor's `transformPastedHTML`). All other pasted
+styles stay, and drafts opened from a webmail client are not filtered. The toolbar offers a text
+colour picker: a fixed palette where every colour has 4.5:1 or more on white, plus the default.
+**Context:** A list copied from a note app in dark mode arrived with the theme's white text
+colour as an inline style. The composer keeps inline styles (so webmail drafts survive), and on
+its dark surface the white text looked like the rest. It was sent as white text, invisible on a
+recipient's white page and black under the dark reader's inversion. The developer asked for
+colour support in the editor rather than losing colours on paste.
+**Rejected:**
+- *Dropping every pasted colour and background*: a colour the sender chose (a red warning)
+  would be lost, and the editor could not put it back.
+- *Dropping only near-white or near-black colours*: a fixed list of theme colours misses the
+  mid greys of other themes. A contrast ratio against the actual background covers them all.
+- *Painting the composer with the reader's scheme (inverted on the dark theme)*: it shows the
+  problem but does not prevent it, and it is a larger change to the editor's CSS.

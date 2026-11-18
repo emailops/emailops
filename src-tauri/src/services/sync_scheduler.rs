@@ -747,9 +747,24 @@ async fn meeting_notification_loop(db: Arc<Database>, app: AppHandle, stop_flag:
                     continue;
                 }
             };
-            for event in
-                crate::services::calendar::notify::plan_meeting_notifications(&events, now, lead_secs, &account.email)
-            {
+            let calendars = match db.list_calendars(&account.id) {
+                Ok(calendars) => calendars,
+                Err(e) => {
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!("meeting notifier: calendar query failed for {}: {e}", account.email),
+                    );
+                    continue;
+                }
+            };
+            for event in crate::services::calendar::notify::plan_meeting_notifications(
+                &events,
+                &calendars,
+                now,
+                lead_secs,
+                &account.email,
+            ) {
                 let minutes_left = ((event.start_time - now) as f64 / 60.0).ceil() as i64;
                 let (title, body) =
                     crate::services::calendar::notify::notification_text(event, minutes_left, show_title);

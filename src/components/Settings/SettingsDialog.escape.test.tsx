@@ -56,6 +56,8 @@ describe('SettingsDialog', () => {
           activeAccountId={null}
           currentLayout="split"
           onChangeLayout={() => {}}
+          sidebarDensity="comfortable"
+          onChangeSidebarDensity={() => {}}
           tasksEnabled={false}
           onChangeTasksEnabled={() => {}}
           memoriesEnabled={false}
@@ -83,6 +85,8 @@ describe('SettingsDialog', () => {
             activeAccountId={null}
             currentLayout="split"
             onChangeLayout={() => {}}
+            sidebarDensity="comfortable"
+            onChangeSidebarDensity={() => {}}
             tasksEnabled={false}
             onChangeTasksEnabled={() => {}}
             memoriesEnabled={false}

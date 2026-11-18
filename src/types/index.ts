@@ -118,6 +118,10 @@ export interface Calendar {
   accessRole: string;
   isVisible: boolean;
   sortOrder: number;
+  /** The calendar's owner as the provider reports it (Google `dataOwner`,
+   *  Graph `owner.address`), or null for a Google primary calendar and ICS
+   *  feeds. Meeting reminders skip calendars someone else owns. */
+  ownerEmail: string | null;
   /** Host of the ICS feed behind this calendar (IMAP accounts), or null for a
    *  provider-API calendar. Never the URL: that is a credential. */
   feedHost: string | null;

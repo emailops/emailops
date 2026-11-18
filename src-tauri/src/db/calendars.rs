@@ -10,7 +10,7 @@ use rusqlite::params;
 
 /// `c.` is the `calendars` row; `f.host` comes from the optional feed behind it.
 const CALENDAR_COLUMNS: &str = "c.id, c.account_id, c.provider_calendar_id, c.name, c.color, c.is_primary, \
-     c.access_role, c.is_visible, c.sort_order, c.created_at, c.updated_at, f.host";
+     c.access_role, c.is_visible, c.sort_order, c.created_at, c.updated_at, c.owner_email, f.host";
 
 /// Stable row id for a calendar. Opaque — never parsed apart.
 pub fn calendar_row_id(account_id: &str, provider_calendar_id: &str) -> String {
@@ -28,7 +28,8 @@ fn row_to_calendar(row: &rusqlite::Row) -> rusqlite::Result<Calendar> {
         access_role: row.get(6)?,
         is_visible: row.get::<_, i32>(7)? != 0,
         sort_order: row.get(8)?,
-        feed_host: row.get::<_, Option<String>>(11)?.filter(|h| !h.is_empty()),
+        owner_email: row.get(11)?,
+        feed_host: row.get::<_, Option<String>>(12)?.filter(|h| !h.is_empty()),
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
     })
@@ -46,15 +47,16 @@ impl Database {
             let mut stmt = tx.prepare(
                 "INSERT INTO calendars (
                      id, account_id, provider_calendar_id, name, color, is_primary,
-                     access_role, is_visible, sort_order, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                     access_role, is_visible, sort_order, created_at, updated_at, owner_email
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT (account_id, provider_calendar_id) DO UPDATE SET
                      name = excluded.name,
                      color = excluded.color,
                      is_primary = excluded.is_primary,
                      access_role = excluded.access_role,
                      sort_order = excluded.sort_order,
-                     updated_at = excluded.updated_at",
+                     updated_at = excluded.updated_at,
+                     owner_email = excluded.owner_email",
             )?;
             for calendar in calendars {
                 stmt.execute(params![
@@ -69,6 +71,7 @@ impl Database {
                     calendar.sort_order,
                     calendar.created_at,
                     calendar.updated_at,
+                    calendar.owner_email,
                 ])?;
             }
         }
@@ -297,6 +300,7 @@ mod tests {
             access_role: "owner".to_string(),
             is_visible: true,
             sort_order: 0,
+            owner_email: None,
             feed_host: None,
             created_at: 1_000,
             updated_at: 1_000,
@@ -316,6 +320,7 @@ mod tests {
         let mut cal = calendar("acc1", "team@group.calendar.google.com", "Team", "#33b679");
         cal.access_role = "reader".to_string();
         cal.sort_order = 3;
+        cal.owner_email = Some("colleague@example.com".to_string());
 
         db.upsert_calendars(std::slice::from_ref(&cal)).expect("upsert");
         let listed = db.list_calendars("acc1").expect("list");
@@ -366,6 +371,22 @@ mod tests {
         assert_eq!(listed.len(), 1, "a resync updates in place, never duplicates");
         assert_eq!(listed[0].name, "New name");
         assert_eq!(listed[0].color, "#d50000");
+    }
+
+    #[test]
+    fn resync_refreshes_the_calendar_owner() {
+        // Meeting reminders key off the owner, so a calendar whose owner the
+        // provider starts (or stops) reporting must pick it up on resync.
+        let db = test_db();
+        db.upsert_calendars(&[calendar("acc1", "team@group.calendar.google.com", "Team", "#33b679")])
+            .expect("first sync");
+
+        let mut owned = calendar("acc1", "team@group.calendar.google.com", "Team", "#33b679");
+        owned.owner_email = Some("colleague@example.com".to_string());
+        db.upsert_calendars(&[owned]).expect("resync");
+
+        let listed = db.list_calendars("acc1").expect("list");
+        assert_eq!(listed[0].owner_email.as_deref(), Some("colleague@example.com"));
     }
 
     #[test]

@@ -49,6 +49,7 @@ describe('AccountItem', () => {
         <ul>
           <AccountItem
             account={account}
+            density="comfortable"
             isActive={false}
             isFirst
             isLast

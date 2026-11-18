@@ -21,6 +21,8 @@ Usage:
       Without --apply nothing is deleted. Only build output is ever touched.
 """
 
+from __future__ import annotations  # `float | None` on the system python3 (3.9) `make` runs
+
 import argparse
 import shutil
 import subprocess

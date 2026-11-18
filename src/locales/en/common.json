@@ -89,5 +89,10 @@
   },
   "unifiedScope": {
     "hint": "In All accounts view, this section shows {{email}} only"
+  },
+  "layout": {
+    "resizeSidebar": "Resize the folder list",
+    "resizeList": "Resize the email list",
+    "resizeHint": "Drag to resize · double-click to reset"
   }
 }
