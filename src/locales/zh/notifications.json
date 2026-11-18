@@ -1,0 +1,66 @@
+{
+  "system": {
+    "appStarted": "EmailOps 已启动",
+    "appUpdated": "应用已更新到 {{version}}",
+    "windowShown": "窗口已恢复"
+  },
+  "sync": {
+    "starting": "正在同步 {{email}}…",
+    "manualStarted": "已为 {{email}} 启动手动同步",
+    "downloading": "正在下载 {{count}} 封新邮件",
+    "downloadingOne": "正在下载 1 封新邮件",
+    "upToDate": "收件箱已是最新",
+    "complete": "{{email}} 同步完成",
+    "failed": "同步失败：{{message}}",
+    "skippedOffline": "已跳过同步——当前处于离线状态。",
+    "settingsSavedSyncing": "设置已保存。正在开始同步…"
+  },
+  "embeddings": {
+    "starting": "正在开始生成向量",
+    "clearing": "正在清除现有向量",
+    "generating": "正在生成向量 {{current}}/{{total}}",
+    "complete": "向量已就绪（{{count}}）",
+    "failed": "向量生成失败：{{message}}"
+  },
+  "ai": {
+    "operation": "{{provider}}/{{model}} → {{operation}}：{{tokens}} token{{cost}}",
+    "enableToChat": "启用 AI 后可就此会话进行对话",
+    "preparingChat": "正在为会话「{{subject}}」准备对话",
+    "threadChatFailed": "启动会话对话失败：{{message}}"
+  },
+  "account": {
+    "loaded": "已加载 {{count}} 个账户",
+    "loadedOne": "已加载 1 个账户",
+    "adding": "正在添加 {{provider}} 账户…",
+    "added": "账户已添加：{{email}}",
+    "addImapAdded": "IMAP 账户已添加：{{email}}",
+    "addFailed": "添加账户失败：{{message}}",
+    "deleting": "正在删除账户…",
+    "deleted": "账户已删除。",
+    "reauthenticating": "正在重新授权账户…",
+    "reauthSuccess": "重新授权成功",
+    "reauthFailed": "重新授权失败：{{message}}",
+    "updateImap": "请更新 IMAP 凭据以重新授权。"
+  },
+  "search": {
+    "filtering": "正在筛选收件箱：「{{query}}」",
+    "filteringReused": "正在筛选收件箱：「{{query}}」（复用 {{count}} 条结果）"
+  },
+  "banners": {
+    "offline": "你处于离线状态——同步已暂停。",
+    "reconnect": "已重新连接——同步将继续。"
+  },
+  "updates": {
+    "available": "EmailOps {{version}} 已发布",
+    "download": "下载"
+  },
+  "releaseNotes": {
+    "title": "EmailOps {{version}} 的新功能",
+    "version": "版本 {{version}}",
+    "close": "知道了"
+  },
+  "gpu": {
+    "cudaRuntimeNotFound": "EmailOps 找不到 NVIDIA CUDA Toolkit，因此本地 AI 正运行在 CPU 上，速度会慢很多。请安装 CUDA Toolkit（安装程序会设置 CUDA_PATH），或把 CUDA_PATH 环境变量指向其安装目录，然后重启 EmailOps。",
+    "downloadCuda": "下载 CUDA"
+  }
+}

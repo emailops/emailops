@@ -13,7 +13,7 @@ import { defineConfig } from 'i18next-cli';
 
 export default defineConfig({
   // Languages — keep in sync with src/i18n/resources.ts.
-  locales: ['en', 'es', 'fr', 'de'],
+  locales: ['en', 'es', 'fr', 'de', 'zh'],
   extract: {
     input: ['src/**/*.{ts,tsx}'],
     ignore: ['src/**/*.test.{ts,tsx}', 'src/types/**', 'src/locales/**'],

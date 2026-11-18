@@ -1,0 +1,73 @@
+{
+  "title": "概览",
+  "loading": "正在加载…",
+  "noAccounts": "尚未连接账户。",
+  "storage": {
+    "title": "磁盘占用",
+    "loading": "正在加载存储统计…",
+    "totalOnDisk": "磁盘总计"
+  },
+  "accounts": {
+    "title": "账户",
+    "syncedSince": "同步起始",
+    "lastSync": "上次同步",
+    "localServer": "本地 / 服务器",
+    "sent": "已发送",
+    "categories": "分类",
+    "openSettings": "打开账户设置",
+    "refreshTotal": "刷新总数",
+    "refreshing": "正在刷新…",
+    "fetchFromProvider": "从服务商获取",
+    "lastFetched": "上次获取 {{time}}",
+    "classified": "已分类",
+    "memoriesAnalyzed": "已分析记忆",
+    "tasksAnalyzed": "已分析任务",
+    "embeddings": "向量",
+    "junkScored": "已评估垃圾",
+    "junkPhishing": "{{count}} 封冒充",
+    "junkSpam": "{{count}} 封垃圾",
+    "junkGraymail": "{{count}} 封批量"
+  },
+  "queues": {
+    "title": "后台队列",
+    "loading": "正在加载队列状态…",
+    "idle": "空闲",
+    "empty": "空",
+    "noHistory": "暂无历史",
+    "aiInteractive": "AI（交互）",
+    "aiBackground": "AI（后台）",
+    "db": "数据库",
+    "sync": "同步"
+  },
+  "log": {
+    "title": "输出",
+    "allModules": "全部模块",
+    "filterByModule": "按模块筛选",
+    "aiBackend": "AI 后端",
+    "aiModel": "AI 模型",
+    "aiSettings": "AI 设置",
+    "clearLogs": "清空日志",
+    "minimizePanel": "最小化面板",
+    "expandPanel": "展开面板",
+    "levels": {
+      "error": "ERR",
+      "warn": "WRN",
+      "success": "OK",
+      "debug": "DBG",
+      "info": "INF"
+    }
+  },
+  "activity": {
+    "lensBackfill": "视图回填",
+    "lensRun": "运行视图",
+    "memoryBackfill": "记忆回填",
+    "memoryExtract": "记忆提取",
+    "tasksBackfill": "任务回填",
+    "tasksExtract": "任务提取",
+    "classification": "正在分类邮件",
+    "embeddings": "正在生成向量",
+    "junk": "垃圾邮件评估",
+    "modelDownload": "正在下载模型",
+    "remaining": "剩余 {{n}}"
+  }
+}

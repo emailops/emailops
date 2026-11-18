@@ -1,0 +1,317 @@
+{
+  "title": "视图",
+  "empty": "未选择视图",
+  "emptyRows": "还没有数据行",
+  "loadingRows": "正在加载数据行…",
+  "loadingTemplates": "正在加载模板…",
+  "noTemplates": "没有可用模板。",
+  "noneOption": "（无）",
+  "quarter": "季度",
+  "dashes": "— 无 —",
+  "groupBy": "分组方式",
+  "cancelRun": "取消运行",
+  "runBackfill": "运行回填",
+  "configTooltip": "编辑范围和提取提示词",
+  "historyTooltip": "查看历史运行",
+  "deleteConfirm": "点击确认删除",
+  "deleteConfirmTooltip": "再点一次确认——数据行和运行历史都会被移除",
+  "emptyDescription": "视图是对你邮箱的一种筛选加 AI 提取的呈现方式。从侧边栏选择一个，或新建一个。",
+  "createLens": "新建视图",
+  "scope": {
+    "title": "范围",
+    "account": "账户",
+    "allAccounts": "全部账户",
+    "direction": "方向",
+    "either": "双向",
+    "inboundOnly": "仅收件",
+    "outboundOnly": "仅发件",
+    "mailboxes": "邮箱位置",
+    "mailboxesEmptyHelp": "留空则匹配所有位置。",
+    "categories": "分类",
+    "lastNDays": "最近 N 天",
+    "lastNDaysPlaceholder": "留空表示不限",
+    "senderDomains": "发件人域名",
+    "senderDomainsCsv": "发件人域名（逗号分隔）",
+    "senderEmails": "发件人邮箱",
+    "keywordQuery": "关键词查询（FTS5）",
+    "keywordsBodyHint": "（未勾选时只搜索主题）",
+    "searchBody": "搜索邮件正文",
+    "folders": "文件夹",
+    "foldersPickAccount": "请选择账户以载入其文件夹。",
+    "folderMissing": "该账户中已不存在此文件夹——请从范围中移除。",
+    "foldersLoadError": "无法加载文件夹：{{error}}",
+    "help": "选择这个视图要分析哪些邮件。范围更改对之后的运行生效；已提取的行会保留，直到你重新运行回填。",
+    "mailboxNames": {
+      "inbox": "收件箱",
+      "sent": "已发送",
+      "archive": "归档",
+      "spam": "垃圾邮件",
+      "trash": "废纸篓"
+    },
+    "categoryNames": {
+      "Primary": "主要",
+      "Promotions": "促销",
+      "Social": "社交",
+      "Updates": "更新",
+      "Forums": "论坛"
+    },
+    "errors": {
+      "domainLooksLikeEmail": "「{{value}}」看起来是个邮箱地址——请填到「发件人邮箱」，或只写域名（例如「{{domain}}」）。",
+      "invalidDomain": "「{{value}}」不是有效域名（应形如「stripe.com」）。",
+      "invalidEmail": "「{{value}}」不是有效的邮箱地址。"
+    },
+    "keywordPlaceholder": "例如 quote OR estimate",
+    "foldersFilter": "筛选文件夹…",
+    "test": "测试",
+    "testing": "正在测试…",
+    "testHint": "统计当前筛选条件匹配的邮件数，并显示最近 3 封",
+    "testResult_one": "{{count}} 封邮件匹配",
+    "testResult_other": "{{count}} 封邮件匹配",
+    "testResultCapped": "匹配的邮件超过 {{count}} 封"
+  },
+  "prompt": {
+    "placeholder": "描述要从每封邮件中提取什么…"
+  },
+  "create": {
+    "title": "新建视图",
+    "namePlaceholder": "收到的发票",
+    "uniqueKey": "唯一键",
+    "uniqueKeyTooltip": "按此列去重——每个唯一值只保留一行",
+    "removeColumn": "移除列",
+    "descriptionPlaceholder": "说明这个字段的含义——会写进模型提示词。",
+    "promptHelp": "告诉模型要提取什么。上面的列描述也会作为工具调用 schema 传入。",
+    "previewHelp": "在一小份样本上试跑提取，不保存结果。",
+    "previewEmpty": "没有邮件匹配该范围。试试放宽筛选条件。",
+    "subtitle": "定义筛选条件、字段结构和提取提示词。",
+    "submit": "创建视图",
+    "creating": "正在创建…",
+    "tabTemplates": "模板",
+    "tabCustom": "自定义",
+    "testOnSample": "在 3 封邮件上测试",
+    "testing": "正在测试…",
+    "previewTitle": "预览（{{count}}）",
+    "noSubject": "（无主题）",
+    "defaultPrompt": "从这封邮件中提取下面的字段。邮件中不含某项信息时，可空字段留 null。",
+    "defaultSummaryDescription": "用一句话概括这封邮件。",
+    "errors": {
+      "missingKey": "每一列都需要一个键名。",
+      "invalidKey": "列键名「{{key}}」只能包含字母、数字和下划线，且必须以字母开头。",
+      "duplicateKey": "列键名「{{key}}」重复。",
+      "enumNeedsValues": "枚举列「{{key}}」至少需要一个取值。",
+      "nameRequired": "名称为必填项。",
+      "promptRequired": "提示词为必填项。",
+      "promptBeforePreview": "请先填写提示词再预览。"
+    },
+    "filledFromChatMissing": "已由对话填写。还需要：{{fields}}。"
+  },
+  "identity": {
+    "title": "标识",
+    "name": "名称",
+    "icon": "图标（emoji）"
+  },
+  "columns": {
+    "title": "列",
+    "key": "键名",
+    "label": "显示名称",
+    "type": "类型",
+    "description": "说明",
+    "extractionPrompt": "提取提示词",
+    "builtin": {
+      "amount": "金额",
+      "by_when": "到期时间",
+      "cadence": "周期",
+      "cancel_url": "取消链接",
+      "client": "客户",
+      "company": "公司",
+      "confidence": "可信度",
+      "confirmation_code": "确认编号",
+      "contact_email": "邮箱",
+      "contact_name": "姓名",
+      "currency": "币种",
+      "days_overdue": "逾期天数",
+      "days_silent": "静默天数",
+      "destination": "目的地",
+      "due_date": "截止",
+      "end_date": "结束",
+      "invoice_number": "发票号",
+      "newsletter": "简报",
+      "next_renewal": "下次续费",
+      "paid": "已付",
+      "phone": "电话",
+      "priority_guess": "优先级",
+      "promise": "承诺",
+      "provider": "服务商",
+      "question_summary": "问题",
+      "received_date": "收到时间",
+      "recipient": "收件人",
+      "reference": "参考号",
+      "request_type": "类型",
+      "sender_name": "发件人",
+      "sent_date": "发送时间",
+      "service": "服务",
+      "start_date": "开始",
+      "status": "状态",
+      "subject": "主题",
+      "summary": "摘要",
+      "top_topic": "主要话题",
+      "transfer_id": "转账编号",
+      "travel_type": "类型",
+      "vendor": "供应商",
+      "worth_clicking": "值得点开？"
+    },
+    "add": "+ 添加列",
+    "required": "必填",
+    "enumValues": "枚举取值（逗号分隔）",
+    "types": {
+      "string": "短文本",
+      "text": "长文本",
+      "number": "数字",
+      "currency": "金额",
+      "date": "日期",
+      "boolean": "是/否",
+      "enum": "取值列表",
+      "email": "邮箱",
+      "url": "网址"
+    }
+  },
+  "table": {
+    "date": "日期",
+    "email": "邮件",
+    "doubleClickToEdit": "双击可编辑",
+    "openSourceEmail": "打开来源邮件",
+    "reextractRow": "重新提取此行",
+    "includeRow": "把此行放回视图",
+    "excludeRow": "排除此行",
+    "filter": {
+      "button": "筛选列",
+      "search": "搜索取值…",
+      "selectAll": "全选",
+      "empty": "（空）",
+      "apply": "应用",
+      "clear": "清除筛选",
+      "noValues": "还没有取值",
+      "noMatches": "没有行符合列筛选条件。"
+    },
+    "showMore": "更多",
+    "showLess": "收起"
+  },
+  "row": {
+    "sourceEmail": "来源邮件",
+    "closeDrawer": "关闭侧栏",
+    "noEmail": "未选择邮件。"
+  },
+  "runHistory": {
+    "loading": "正在加载…",
+    "empty": "此视图还没有运行记录。",
+    "started": "开始时间",
+    "kind": "类型",
+    "status": "状态",
+    "processed": "已处理",
+    "ok": "成功",
+    "failed": "失败",
+    "duration": "耗时",
+    "title": "运行历史——{{name}}",
+    "kinds": {
+      "backfill": "回填",
+      "incremental": "增量",
+      "reextract": "重新提取",
+      "single": "单条"
+    },
+    "statuses": {
+      "running": "运行中",
+      "success": "成功",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
+    "errorsSummary_one": "显示 {{count}} 条错误",
+    "errorsSummary_other": "显示 {{count}} 条错误",
+    "errorsSummary_many": "显示 {{count}} 条错误",
+    "runErrorSummary": "显示运行错误",
+    "runError": "运行错误",
+    "failuresRetried": "失败的行此后已重新处理过。",
+    "unknownError": "未记录原因"
+  },
+  "apply": {
+    "applyToAccount": "应用到账户",
+    "allAccounts": "全部账户"
+  },
+  "showExcludedRows": "显示已排除的行",
+  "showLensRows": "返回视图",
+  "config": {
+    "title": "配置——{{name}}",
+    "tabPrompt": "提示词",
+    "promptHelp": "此提示词会连同每封邮件的内容一起发送给模型。保存后所有现有行会被标记为过期（提示词版本递增），以便重新提取。",
+    "promptVersion": "提示词版本：",
+    "columnsHelp": "每封邮件被读取到哪些列。更改后现有行会被标记为过期，以便重新提取。"
+  },
+  "view": {
+    "renameTooltip": "点击可重命名",
+    "rowCount_one": "{{count}} 行",
+    "rowCount_other": "{{count}} 行",
+    "rowCount_many": "{{count}} 行",
+    "running": "↻ 运行中",
+    "processedCount": "（已处理 {{count}} 条）",
+    "failedCount": "· {{count}} 条失败",
+    "lastRunFailed": "上次运行失败",
+    "rowsFailedRetry_one": "{{count}} 行提取失败——点「{{action}}」重试",
+    "rowsFailedRetry_other": "{{count}} 行提取失败——点「{{action}}」重试",
+    "rowsFailedRetry_many": "{{count}} 行提取失败——点「{{action}}」重试",
+    "config": "配置",
+    "history": "历史",
+    "newLens": "+ 新建视图",
+    "extractingFrom_one": "正在从 {{count}} 封匹配邮件中提取——首次运行可能需要一段时间。",
+    "extractingFrom_other": "正在从 {{count}} 封匹配邮件中提取——首次运行可能需要一段时间。",
+    "extractingFrom_many": "正在从 {{count}} 封匹配邮件中提取——首次运行可能需要一段时间。",
+    "noRowsHelp": "在匹配的邮件上运行一次提取，即可填充此表格。",
+    "progress": "已处理 {{processed}}/{{total}}（{{pct}}%）",
+    "runningShort": "运行中…",
+    "runningProgress": "运行中… {{processed}}/{{total}}"
+  },
+  "templates": {
+    "awaiting_reply": {
+      "name": "等待回复",
+      "description": "你提出了问题但未得到答复的发件邮件。"
+    },
+    "promises_made": {
+      "name": "做出的承诺",
+      "description": "你在发件邮件中承诺要做的事。"
+    },
+    "invoices_received": {
+      "name": "收到的发票",
+      "description": "寄给你的账单和发票。"
+    },
+    "invoices_sent": {
+      "name": "发出的发票",
+      "description": "你发给客户的发票。"
+    },
+    "travel": {
+      "name": "差旅",
+      "description": "机票、酒店、租车及其他出行确认。"
+    },
+    "subscriptions": {
+      "name": "订阅",
+      "description": "周期性 SaaS 账单与续费。"
+    },
+    "wise_transfers": {
+      "name": "Wise 转账",
+      "description": "通过 Wise 完成的跨境付款。"
+    },
+    "newsletter_digest": {
+      "name": "简报摘要",
+      "description": "近期简报的一句话摘要。"
+    },
+    "contact_form_leads": {
+      "name": "表单线索",
+      "description": "通过你网站的联系表单留言的人。"
+    }
+  },
+  "chooser": {
+    "title": "新建视图",
+    "chat": "用对话创建",
+    "chatHint": "描述你想要什么，助手会帮你把视图填好。",
+    "manual": "手动设置",
+    "manualHint": "选择模板，或自己设置范围、列和提示词。",
+    "chatPrompt": "为账户 {{account}} 创建一个 AI 视图，从 X 的邮件中提取以下内容：[你想提取的字段]",
+    "chatPromptAllAccounts": "为我的全部账户创建一个 AI 视图，从 X 的邮件中提取以下内容：[你想提取的字段]"
+  }
+}
