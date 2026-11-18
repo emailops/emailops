@@ -448,7 +448,10 @@ Die Werkzeugleiste beim Verfassen hat je eine Auswahl für **Schriftart**, **Sch
 **Textfarbe**. Alle drei folgen dem Cursor und zeigen Schriftart, Größe und Farbe des Textes, in dem
 Sie gerade schreiben. Aus einer anderen App eingefügter Text behält seine Farben nur dort, wo sie
 lesbar sind: Eine Farbe, die sich zu schwach von ihrem Hintergrund abhebt, etwa der weiße Text einer
-App im Dunkelmodus, wird entfernt, damit die Nachricht nicht mit unsichtbarem Text ankommt.
+App im Dunkelmodus, wird entfernt, damit die Nachricht nicht mit unsichtbarem Text ankommt. Die
+Schaltfläche **Formatierung entfernen** daneben macht den markierten Text wieder zu normalem Text:
+Sie entfernt Fett, Kursiv, Schriftarten, Größen und Farben und macht aus einer Überschrift einen
+normalen Absatz, behält aber Links, Listen und Tabellen.
 
 <!-- claim:feat-interface-5 -->
 **Einstellungen → Erscheinungsbild → Dichte der Seitenleiste** bietet **Kompakt**, die

@@ -336,11 +336,51 @@ const ReadablePaste = Extension.create({
   },
 });
 
-/** The toolbar's font, size and colour pickers. */
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    clearFormatting: {
+      /** Clear the formatting of the selection: see `clearFormatting`. */
+      clearFormatting: () => ReturnType;
+    };
+  }
+}
+
+/** Blocks around other blocks whose inline style clearing drops, keeping the block. */
+const STYLED_WRAPPERS = new Set(['blockquote', 'bulletList', 'orderedList', 'listItem']);
+
+/**
+ * The selected text loses every mark but its link, the text blocks it touches
+ * become plain paragraphs (a pasted heading too: the toolbar has no other way
+ * back to body text), and the lists and quotes around it lose their inline
+ * style but stay. Tables keep their layout. With nothing selected, the text
+ * typed next is plain.
+ */
+function clearFormatting() {
+  return ({ tr, state, dispatch }: CommandProps) => {
+    const { schema } = state;
+    const { from, to, empty } = tr.selection;
+    for (const type of Object.values(schema.marks)) {
+      if (type !== schema.marks.link) tr.removeMark(from, to, type);
+    }
+    tr.setBlockType(from, to, schema.nodes.paragraph);
+    tr.doc.nodesBetween(from, to, (node, pos) => {
+      if (STYLED_WRAPPERS.has(node.type.name) && node.attrs.style) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, style: null });
+      }
+    });
+    // Last: every step above resets the stored marks.
+    if (empty) tr.setStoredMarks([]);
+    if (dispatch) dispatch(tr);
+    return true;
+  };
+}
+
+/** The toolbar's font, size and colour pickers and its Clear formatting button. */
 const FontControls = Extension.create({
   name: 'fontControls',
   addCommands() {
     return {
+      clearFormatting,
       setFontFamily: (font: string) => setStyleProperty('font-family', font),
       unsetFontFamily: () => setStyleProperty('font-family', null),
       setFontSize: (size: string) => setStyleProperty('font-size', size),

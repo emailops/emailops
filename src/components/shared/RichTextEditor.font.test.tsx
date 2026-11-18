@@ -1,6 +1,7 @@
-// The compose toolbar offers font, size and colour pickers, and every control
-// names the formatting of the text at the cursor, following it as the cursor
-// moves. Applying a font, size or colour to a selection is covered on the
+// The compose toolbar offers font, size and colour pickers and a Clear
+// formatting button, and every control names the formatting of the text at
+// the cursor, following it as the cursor moves. What applying a font, size or
+// colour, or clearing the formatting, does to the document is covered on the
 // schema side (`composeEditorExtensions.test.ts`).
 
 import type { Editor } from '@tiptap/react';
@@ -163,5 +164,21 @@ describe('RichTextEditor colour picker', () => {
     const span = new DOMParser().parseFromString(editor().getHTML(), 'text/html').querySelector('span');
     expect(span?.style.color).toBe(blue.value);
     expect(span?.textContent).toBe('Hello');
+  });
+});
+
+describe('RichTextEditor clear formatting', () => {
+  it('clears the formatting of the selected text', () => {
+    // Ends in a paragraph: after a heading the editor appends an empty one.
+    render('<h2 style="color: red"><strong>Hello</strong></h2><p><em>world</em></p>');
+    act(() => {
+      editor().commands.selectAll();
+    });
+    const button = container.querySelector<HTMLButtonElement>('button[title="Clear formatting"]');
+    if (!button) throw new Error('Clear formatting button not found');
+
+    act(() => button.click());
+
+    expect(editor().getHTML()).toBe('<p>Hello</p><p>world</p>');
   });
 });

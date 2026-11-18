@@ -19,6 +19,14 @@
     "src/lib/composeEditorExtensions.test.ts::goes back to the default colour": "«Color predeterminado» quita el color del texto.",
     "src/components/shared/RichTextEditor.font.test.tsx::offers the default colour and a palette": "La barra del compositor ofrece el color predeterminado y una paleta de colores.",
     "src/components/shared/RichTextEditor.font.test.tsx::names the colour of the text at the cursor": "El selector de color muestra el color del texto bajo el cursor y lo sigue al moverse.",
-    "src/components/shared/RichTextEditor.font.test.tsx::colours the selected text with the chosen colour": "Elegir un color en la barra colorea el texto seleccionado."
+    "src/components/shared/RichTextEditor.font.test.tsx::colours the selected text with the chosen colour": "Elegir un color en la barra colorea el texto seleccionado.",
+    "src/lib/composeEditorExtensions.test.ts::removes the bold, italic, underline, strikethrough, font, size and colour of the selected text": "«Borrar formato» quita negrita, cursiva, subrayado, tachado, fuente, tamaño y color del texto seleccionado.",
+    "src/lib/composeEditorExtensions.test.ts::leaves the text outside the selection as it is": "«Borrar formato» no toca el texto fuera de la selección.",
+    "src/lib/composeEditorExtensions.test.ts::keeps links": "«Borrar formato» conserva los enlaces.",
+    "src/lib/composeEditorExtensions.test.ts::turns a heading into a paragraph without its style or alignment": "«Borrar formato» convierte un título en un párrafo normal, sin su estilo ni su alineación.",
+    "src/lib/composeEditorExtensions.test.ts::drops the style of the list the selection sits in and keeps the list": "«Borrar formato» quita el estilo de la lista que contiene la selección y conserva la lista.",
+    "src/lib/composeEditorExtensions.test.ts::keeps the background and style of a table cell": "«Borrar formato» conserva el fondo y el estilo de las celdas de una tabla.",
+    "src/lib/composeEditorExtensions.test.ts::with nothing selected, makes the text typed next plain": "Sin selección, «Borrar formato» hace que lo siguiente que se escriba salga sin formato.",
+    "src/components/shared/RichTextEditor.font.test.tsx::clears the formatting of the selected text": "El botón «Borrar formato» de la barra deja sin formato el texto seleccionado."
   }
 }

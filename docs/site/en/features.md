@@ -418,7 +418,9 @@ The compose toolbar has a **Font**, a **Font size** and a **Text colour** picker
 the cursor, so they show the font, size and colour of the text you are in. Text pasted from another
 app keeps its colours only where they can be read: a colour too faint against its background, such
 as the white text of an app in dark mode, is dropped, so the message does not arrive with invisible
-text.
+text. **Clear formatting**, the button after them, turns the selected text back into normal text: it
+removes bold, italics, fonts, sizes and colours and turns a heading into a normal paragraph, but
+keeps links, lists and tables.
 
 <!-- claim:feat-interface-5 -->
 **Settings → Appearance → Sidebar density** offers **Compact**, the default, which makes the rows

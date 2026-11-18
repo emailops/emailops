@@ -57,6 +57,7 @@
     "blue": "Azul",
     "purple": "Morado"
   },
+  "clearFormatting": "Borrar formato",
   "showCc": "Añadir Cc",
   "showBcc": "Añadir Cco",
   "minimize": "Minimizar",

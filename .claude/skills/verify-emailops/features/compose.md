@@ -13,6 +13,7 @@ provider.
 - `compose.discard` Discard asks "Discard this draft?" and removes it.
 - `compose.tables` a draft or a reply that holds a table keeps it in the editor (sections, captions, cell styles) and in the HTML that is saved and sent.
 - `compose.colors` the toolbar's *Text colour* picker colours the selection (palette + *Default colour*); pasted rich text drops any text colour below 3:1 contrast with its background (a dark-themed app's white text), readable colours stay.
+- `compose.clear` the toolbar's *Clear formatting* button (after the pickers) turns the selection into plain body text: every mark but links goes, headings become paragraphs, lists and quotes lose their inline style but stay; tables keep their layout. With nothing selected, the text typed next is plain.
 - `compose.conflict` a draft edited locally is never dropped by a sync: the dirty marker (V028) makes the local version win and be pushed.
 - `compose.send` Send queues the message in the local outbox for the undo window (see [Undo send and scheduled send](./outbox-undo-schedule.md)); on the demo account it then fails with "A message could not be sent: … Authentication required" (no credentials) and the outbox row is `failed`; nothing leaves the machine.
 
@@ -32,6 +33,7 @@ Preconditions: baseline; account `demo-acct-work` selected. Entry confirmed pres
 - Table draft → Views → **Drafts**, row *Milestone dates (table)* → **Continue editing** opens it in a compose tab: `$V wd js 'document.querySelectorAll("[contenteditable=true] table tr").length'` prints `3`. Put the caret at the end of a cell and `document.execCommand('insertText', false, ' (tbc)')` → the cell text changes, the table keeps its 3 rows, and within ~2 s `sqlite3 .emailops-demo-data/emailops.db "select body_html from drafts where subject='Milestone dates (table)'"` holds the edited cell inside the same `<table>`. Delete the typed text again and close with the tab's `aria-label="Close tab"` button (hidden until hover: click it through the DOM). Confirmed live on 30/09/2026.
 
 - Colours → open Compose; `$V wd js '(() => { const ed = document.querySelector(".ProseMirror").editor; ed.commands.focus("end"); ed.view.pasteHTML("<ul style=\"color: rgb(255, 255, 255); font-style: normal\"><li><p>First point</p></li></ul><p><span style=\"color: rgb(220, 38, 38);\">Red warning</span></p>"); return ed.getHTML(); })()'` → the `<ul>` keeps `font-style` but no `color`, the red span keeps its colour. Select a text run and set `select[aria-label="Text colour"]` to `rgb(37, 99, 235)` (dispatch `change`) → the run becomes `<span style="color: rgb(37, 99, 235);">`; the autosaved row in `drafts` has the blue and the red and no `255, 255, 255`. Delete the draft (Drafts → *Delete draft*). Confirmed live on 17/11/2026.
+- Clear formatting → open Compose; paste `<h2 style="color: rgb(220, 38, 38)">Heading</h2><ul style="font-family: Georgia"><li><p><strong>bold</strong></p></li></ul><p><a href="https://example.com"><em>a link</em></a></p>` the same way, `ed.commands.selectAll()`, then `$V wd click 'button[title="Clear formatting"]'` → `ed.getHTML()` is `<p>Heading</p><ul><li><p>bold</p></li></ul><p><a …>a link</a></p>` (the link keeps its `href`). Delete the draft.
 
 ## Gotchas
 
@@ -49,7 +51,7 @@ Preconditions: baseline; account `demo-acct-work` selected. Entry confirmed pres
 | draft command arguments, `Draft` / `SaveDraftRequest` shapes | contract (`src/lib/apiContract/compose.api.test.ts`) |
 | modal, tab, recipients, AI draft | vitest (`ComposeModal.*`, `ComposeTabView.*`, `draftRequest`, `sendWarnings`) |
 | open, fill, send without credentials, draft, discard, table draft | e2e (`Compose/*`, `Vistas/Drafts`) |
-| pasted text colours below 3:1 on their background are dropped; the text colour picker | vitest (`pastedColors`, `composeEditorExtensions`, `RichTextEditor.font`) |
+| pasted text colours below 3:1 on their background are dropped; the text colour picker; Clear formatting | vitest (`pastedColors`, `composeEditorExtensions`, `RichTextEditor.font`) |
 | a file pasted into the body is attached in every composer; pasted or dropped images go inline and the other files of the same paste or drop are attached | vitest (`RichTextEditor.files`, `composerPastedFiles`) |
 | closing a composer or a compose tab that holds files asks; Escape closes only the question | vitest (`ComposeModal.close`, `ReadingPane.composeClose`) + e2e (`Compose/cerrar con archivos pregunta`, `Compose/cerrar una pestaña con archivos pregunta`) |
 | a compose tab keeps its text and files behind a thread; Discard removes the draft | vitest (`ReadingPane.composeTabs`, `ComposeTabView.discard`) + e2e (`Compose/la pestaña conserva texto y archivos`, `Compose/Discard en una pestaña borra el borrador`) |

@@ -481,3 +481,71 @@ describe('composeEditorExtensions — font size', () => {
     editor.destroy();
   });
 });
+
+describe('composeEditorExtensions — clear formatting', () => {
+  /** Select the first occurrence of `text`. */
+  function select(editor: Editor, text: string) {
+    let from = -1;
+    editor.state.doc.descendants((node, pos) => {
+      if (from === -1 && node.isText && node.text?.includes(text)) from = pos + node.text.indexOf(text);
+    });
+    editor.commands.setTextSelection({ from, to: from + text.length });
+  }
+
+  /** Clear the formatting of `text`, or of the whole document. */
+  function cleared(html: string, text?: string): string {
+    const editor = createEditor(html);
+    if (text) select(editor, text);
+    else editor.commands.selectAll();
+    editor.commands.clearFormatting();
+    const out = editor.getHTML();
+    editor.destroy();
+    return out;
+  }
+
+  it('removes the bold, italic, underline, strikethrough, font, size and colour of the selected text', () => {
+    const html =
+      '<p><strong><em><u><s><span style="font-family: Georgia; font-size: 18px; color: red">Hello</span></s></u></em></strong></p>';
+    expect(cleared(html)).toBe('<p>Hello</p>');
+  });
+
+  it('leaves the text outside the selection as it is', () => {
+    expect(cleared('<p><strong>keep</strong> <strong>clear</strong></p>', 'clear')).toBe(
+      '<p><strong>keep</strong> clear</p>',
+    );
+  });
+
+  it('keeps links', () => {
+    const link = parse(cleared('<p><a href="https://example.com"><strong>site</strong></a></p>')).querySelector('a');
+    expect(link?.getAttribute('href')).toBe('https://example.com');
+    expect(link?.innerHTML).toBe('site');
+  });
+
+  it('turns a heading into a paragraph without its style or alignment', () => {
+    expect(cleared('<h2 style="color: red" align="center">Title</h2>')).toBe('<p>Title</p>');
+  });
+
+  it('drops the style of the list the selection sits in and keeps the list', () => {
+    const html =
+      '<ul style="color: rgb(220, 38, 38); font-family: Georgia"><li style="color: blue"><p>one</p></li></ul>';
+    expect(cleared(html)).toBe('<ul><li><p>one</p></li></ul>');
+  });
+
+  it('keeps the background and style of a table cell', () => {
+    const html =
+      '<table><tbody><tr><td bgcolor="#eeeeee" style="padding: 4px"><p><strong>cell</strong></p></td></tr></tbody></table>';
+    const cell = parse(cleared(html)).querySelector('td');
+    expect(cell?.getAttribute('bgcolor')).toBe('#eeeeee');
+    expect(cell?.style.padding).toBe('4px');
+    expect(cell?.innerHTML).toBe('<p>cell</p>');
+  });
+
+  it('with nothing selected, makes the text typed next plain', () => {
+    const editor = createEditor('<p><strong>bold</strong></p>');
+    editor.commands.setTextSelection(5); // the end of "bold"
+    editor.commands.clearFormatting();
+    editor.commands.insertContent('x');
+    expect(editor.getHTML()).toBe('<p><strong>bold</strong>x</p>');
+    editor.destroy();
+  });
+});

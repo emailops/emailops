@@ -28,7 +28,7 @@
 
 import type { EditorView } from '@tiptap/pm/view';
 import { type Editor, EditorContent, useEditor, useEditorState } from '@tiptap/react';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { currentPlatform } from '@/lib/api';
@@ -160,6 +160,21 @@ const TEXT_COLORS = [
   { key: 'purple', value: 'rgb(124, 58, 237)' },
 ] as const;
 
+/** A T struck through: the usual mark for clearing formatting. */
+const CLEAR_FORMATTING_ICON = (
+  <svg
+    className="block w-4 h-4"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    aria-hidden="true"
+  >
+    <path d="M3 3h10M8 3v10M2.5 13.5l11-11" />
+  </svg>
+);
+
 /** The value of `property` at the cursor if the picker offers it, else '' (the default). */
 function offered(style: string | null, property: string, options: readonly { value: string }[]): string {
   const current = styleProperty(style, property);
@@ -233,7 +248,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
   // toolbar — that predates this change and is tracked separately.)
   const platform = currentPlatform();
 
-  const btn = (label: string, title: string, active: boolean, onClick: () => void, enabled = true) => (
+  const btn = (label: ReactNode, title: string, active: boolean, onClick: () => void, enabled = true) => (
     <button
       type="button"
       title={title}
@@ -301,6 +316,10 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         disabled={disabled}
         size="xs"
       />
+      <span className="w-px h-4 bg-gray-300 mx-1" />
+      {btn(CLEAR_FORMATTING_ICON, t('compose:clearFormatting'), false, () =>
+        editor.chain().focus().clearFormatting().run(),
+      )}
 
       {linkPopoverOpen && (
         <div className="absolute top-full left-2 z-20 mt-1 flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">

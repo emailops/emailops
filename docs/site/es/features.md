@@ -433,11 +433,14 @@ adapta, y uno que ya es oscuro se deja tal cual.
 fuente en GitHub y a **Apoya el proyecto ♥**, que abre la página de GitHub Sponsors del proyecto.
 
 <!-- claim:feat-interface-4 -->
-La barra de herramientas de redacción tiene un selector de **Fuente**, otro de **Tamaño de
-fuente** y otro de **Color del texto**. Los tres siguen al cursor, así que muestran la fuente, el
-tamaño y el color del texto en el que estás. El texto pegado desde otra aplicación conserva sus
-colores solo donde se leen: un color demasiado tenue sobre su fondo, como el texto blanco de una
-aplicación en modo oscuro, se descarta, para que el mensaje no llegue con texto invisible.
+La barra de herramientas de redacción tiene un selector de **Fuente**, otro de **Tamaño de fuente**
+y otro de **Color del texto**. Los tres siguen al cursor, así que muestran la fuente, el tamaño y el
+color del texto en el que estás. El texto pegado desde otra aplicación conserva sus colores solo
+donde se leen: un color demasiado tenue sobre su fondo, como el texto blanco de una aplicación en
+modo oscuro, se descarta, para que el mensaje no llegue con texto invisible. El botón **Borrar
+formato**, a continuación, devuelve el texto seleccionado a texto normal: quita negrita, cursiva,
+fuentes, tamaños y colores y convierte un título en un párrafo normal, pero conserva los enlaces,
+las listas y las tablas.
 
 <!-- claim:feat-interface-5 -->
 **Ajustes → Apariencia → Densidad de la barra lateral** ofrece **Compacta**, la predeterminada,
