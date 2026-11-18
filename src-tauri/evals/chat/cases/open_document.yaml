@@ -1,5 +1,5 @@
-# Open document: with a PDF attachment open in the viewer, the chat answers
-# from the PDF's text.
+# Open document: with a PDF or Word (.docx) attachment open in the viewer, the
+# chat answers from the document's text.
 #
 # The demo DB writes a real mock invoice PDF for every vendor invoice. The
 # Hetzner one's total (€41.77) and line items appear ONLY in the PDF — the
@@ -59,6 +59,40 @@
     - "doesn't mention"
     - "not mentioned"
   expected_output: "The early termination fee is EUR 1,750, payable within 30 days of the termination date if Larkspur Freight ends the agreement early other than for the provider's material breach. The term is 24 months from 1 March 2026."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+# The demo's synthetic larkspur-kickoff-minutes.docx: the prototype's due date
+# sits in a table cell and the budget in a paragraph; the email body names
+# neither, so finding them proves the Word document reached the prompt.
+- id: demo_open_docx_table_fact
+  question: "When is the dispatch board prototype due in this document, and who delivers it?"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: smoke
+  ambient_attachment_filename: "larkspur-kickoff-minutes.docx"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["17 March", "March 17", "17 de marzo", "2026-03-17", "17/03"]
+  expected_answer_not_contains:
+    - "cannot access"
+    - "can't access"
+  expected_output: "The dispatch board prototype is due on 17 March 2026, and Ulises delivers it."
+  metrics:
+    - answer_relevancy
+    - faithfulness
+
+- id: demo_open_docx_budget_es
+  question: "¿Cuál es el presupuesto máximo de este proyecto y cuándo sale a producción?"
+  account: "ulises@emailopslabs.dev"
+  category: email_summary
+  tier: smoke
+  ambient_attachment_filename: "larkspur-kickoff-minutes.docx"
+  ambient_account: "ulises@emailopslabs.dev"
+  expected_tools_not_called: ["search_emails", "generate_email_draft"]
+  expected_answer_contains_any: ["8,400", "8.400", "8400"]
+  expected_output: "El presupuesto es una tarifa fija con un máximo de 8.400 EUR, facturada en dos mitades, y el portal sale a producción el 14 de abril de 2026, tras dos semanas de pruebas de aceptación."
   metrics:
     - answer_relevancy
     - faithfulness

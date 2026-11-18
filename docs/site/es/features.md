@@ -235,7 +235,8 @@ previa y descarga, en lugar de bucear otra vez en los hilos. Ábrela desde **Adj
 barra lateral.
 
 <!-- claim:feat-attachments-view-9 -->
-Un PDF se abre en su propia pestaña, donde **Acercar** y **Alejar** cambian su tamaño.
+Un PDF se abre en su propia pestaña, donde **Acercar** y **Alejar** cambian su tamaño. Un documento
+de Word (.docx) también se abre en su propia pestaña, en modo lectura.
 
 <!-- claim:feat-attachments-view-2 -->
 La vista recopila adjuntos mediante **reglas**, así que empieza vacía. Pulsa **Gestionar

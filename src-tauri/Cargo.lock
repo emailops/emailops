@@ -1880,6 +1880,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "pdf_oxide",
+ "quick-xml",
  "reedline",
  "refinery",
  "regex",
@@ -1917,6 +1918,7 @@ dependencies = [
  "wiremock",
  "yrs",
  "zeroize",
+ "zip",
 ]
 
 [[package]]

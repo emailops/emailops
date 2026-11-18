@@ -14,6 +14,9 @@ vi.mock('@/hooks/useOpenAttachment', () => ({
   useOpenAttachment: () => ({ openAttachment: vi.fn(), confirmDialog: null }),
 }));
 vi.mock('./PdfViewer', () => ({ PdfViewer: () => null }));
+vi.mock('./DocxViewer', () => ({
+  DocxViewer: ({ title }: { title: string }) => <div data-testid="docx-viewer-stub">{title}</div>,
+}));
 vi.mock('@/lib/api', () => ({
   getAttachmentData: vi.fn(),
   getPref: vi.fn(),
@@ -75,5 +78,18 @@ describe('AttachmentViewer', () => {
     expect(srcdoc).not.toContain(TRACKER);
     expect(srcdoc).toContain('Content-Security-Policy');
     expect(api.isSenderTrusted).toHaveBeenCalledWith('acct-1', 'sender@example.com');
+  });
+
+  it('renders a Word file saved with a generic type in the docx viewer', async () => {
+    await act(async () =>
+      root.render(
+        <AttachmentViewer
+          attachment={attachment({ filename: 'minutes.docx', mimeType: 'application/octet-stream' })}
+        />,
+      ),
+    );
+
+    expect(container.querySelector('[data-testid="docx-viewer-stub"]')?.textContent).toBe('minutes.docx');
+    expect(frame()).toBeNull();
   });
 });

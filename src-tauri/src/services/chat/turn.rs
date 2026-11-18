@@ -232,7 +232,7 @@ message here, call generate_email_draft with the exact id shown next to it.",
 }
 
 /// What the user has open in the app, carried into one turn's final user
-/// message: the email thread they are reading, or a PDF attachment.
+/// message: the email thread they are reading, or a PDF or Word attachment.
 #[derive(Debug, Clone)]
 pub(super) enum Ambient {
     Thread(String),
@@ -257,7 +257,7 @@ impl Ambient {
     }
 }
 
-/// [`build_prompt`] plus, when the user has an email or a PDF open, that as
+/// [`build_prompt`] plus, when the user has an email or a document open, that as
 /// context in place of the "you MUST call search_emails" nag — the nag would
 /// push the model to search for an answer that is already in front of it.
 #[allow(clippy::too_many_arguments)]
@@ -3479,7 +3479,7 @@ pub(super) enum ChatTurnMode {
         /// turn's own account", which is correct for single-account callers.
         account_id: Option<String>,
     },
-    /// The user is reading this PDF attachment in the viewer; ground only
+    /// The user is reading this PDF or Word attachment in the viewer; ground only
     /// THIS turn in its text.
     AmbientDocument {
         /// The attachment's meta id (`email_attachment_meta.id`).
@@ -3519,7 +3519,7 @@ pub(super) fn plan_turn_mode(
     // lookup that matches nothing.
     let present = |id: Option<&str>| id.map(str::trim).filter(|id| !id.is_empty()).map(str::to_string);
     let account_id = present(ambient_account_id);
-    // An open PDF sits on top of the email it came from, so it wins.
+    // An open document sits on top of the email it came from, so it wins.
     if let Some(attachment_id) = present(ambient_attachment_id) {
         return ChatTurnMode::AmbientDocument {
             attachment_id,
@@ -4557,7 +4557,7 @@ pub struct TurnContext {
     /// assumed to equal the chat's account: in unified mode the panel runs on
     /// one account while the open thread can belong to any of them.
     pub ambient_account_id: Option<String>,
-    /// PDF attachment (its `email_attachment_meta.id`) the user has open in
+    /// PDF or Word attachment (its `email_attachment_meta.id`) the user has open in
     /// the viewer, offered as ambient context in place of the thread. Owned
     /// by `ambient_account_id` when set.
     pub ambient_attachment_id: Option<String>,
@@ -4810,20 +4810,22 @@ async fn run_chat_turn_inner(
             match super::open_document::load_open_document(&db, lookup_account, &attachment_id).await {
                 Ok(doc) => {
                     if doc.text.is_none() {
-                        emit_log(
-                            "warn",
-                            &format!(
-                                "The open PDF has no extractable text (probably a scan): {}",
-                                doc.filename
-                            ),
-                        );
+                        let why = match doc.kind {
+                            super::open_document::DocumentKind::Pdf => {
+                                "The open PDF has no extractable text (probably a scan)"
+                            }
+                            super::open_document::DocumentKind::Word => {
+                                "The open Word document has no text (only images or objects)"
+                            }
+                        };
+                        emit_log("warn", &format!("{why}: {}", doc.filename));
                     }
                     ambient_context = Some(Ambient::Document(doc));
                 }
                 Err(e) => {
                     emit_log(
                         "error",
-                        "The open PDF couldn't be used as context for this answer — answering from search instead.",
+                        "The open document couldn't be used as context for this answer — answering from search instead.",
                     );
                     emit_log(
                         "warn",
@@ -9036,6 +9038,7 @@ mod tests {
 
     fn open_pdf(text: &str) -> Ambient {
         Ambient::Document(super::super::open_document::OpenDocument {
+            kind: super::super::open_document::DocumentKind::Pdf,
             filename: "quote.pdf".to_string(),
             text: Some(text.to_string()),
             read_in_parts: None,

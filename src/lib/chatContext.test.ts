@@ -110,6 +110,16 @@ describe('deriveChatContext', () => {
     expect(deriveChatContext({ viewMode: 'inbox', activeTab: pdf, selectedEmail: null })?.attachmentId).toBe('att-1');
   });
 
+  it('offers an open Word tab as the context, like a PDF', () => {
+    const docx = attachmentTab({ mimeType: 'application/octet-stream', filename: 'kickoff-minutes.docx' });
+    expect(deriveChatContext({ viewMode: 'inbox', activeTab: docx, selectedEmail: null })).toEqual({
+      threadId: '',
+      accountId: 'acct-pdf',
+      subject: 'kickoff-minutes.docx',
+      attachmentId: 'att-1',
+    });
+  });
+
   it('lets a non-PDF attachment tab fall through to the selected email', () => {
     const selected = { ...email(), threadId: 'thread-7', subject: 'Photos' };
     const image = attachmentTab({ mimeType: 'text/plain', filename: 'notes.txt' });
@@ -125,6 +135,16 @@ describe('deriveChatContext', () => {
     expect(
       deriveChatContext({ viewMode: 'attachments', activeTab: null, selectedEmail: null, selectedAttachment: pdf }),
     ).toEqual({ threadId: '', accountId: 'acct-saved', subject: 'statement.pdf', attachmentId: 'saved-1' });
+  });
+
+  it('offers the Word file selected in the Attachments view', () => {
+    const docx = savedAttachment({
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      filename: 'minutes.docx',
+    });
+    expect(
+      deriveChatContext({ viewMode: 'attachments', activeTab: null, selectedEmail: null, selectedAttachment: docx }),
+    ).toEqual({ threadId: '', accountId: 'acct-saved', subject: 'minutes.docx', attachmentId: 'saved-1' });
   });
 
   it('offers nothing in the Attachments view for a non-PDF or no selection', () => {

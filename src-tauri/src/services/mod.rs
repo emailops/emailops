@@ -16,6 +16,7 @@ pub mod connectivity;
 pub mod contacts;
 pub mod dashboard;
 pub mod data_move;
+pub mod docx_text;
 pub mod email_company;
 pub mod emails;
 pub mod embeddings;

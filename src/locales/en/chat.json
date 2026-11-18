@@ -301,8 +301,8 @@
         "hint": "Chat is answering from a different account, so it can't read this email. Switch to ask about it.",
         "action": "Switch"
       },
-      "hintDocument": "Answers use the text of this PDF. Remove it to ask about your inbox instead.",
-      "restoreDocument": "Use the open PDF as context"
+      "hintDocument": "Answers use the text of this document. Remove it to ask about your inbox instead.",
+      "restoreDocument": "Use the open document as context"
     },
     "newChat": "New chat"
   },
