@@ -143,7 +143,7 @@ pub fn parse_vcalendar(ics: &str) -> ParsedCalendar {
                 Some(_) => {}
                 None => match name.as_str() {
                     "X-WR-CALNAME" => cal.name = Some(unescape_text(value.trim())),
-                    "X-WR-TIMEZONE" => cal.timezone = Some(normalize_tzid(&value).to_string()),
+                    "X-WR-TIMEZONE" => cal.timezone = Some(unquote(&value).to_string()),
                     "METHOD" => cal.method = Some(value.trim().to_ascii_uppercase()),
                     _ => {}
                 },
@@ -183,7 +183,8 @@ impl ZoneComponent {
     }
 }
 
-fn normalize_tzid(value: &str) -> &str {
+/// A TZID or parameter value without the spaces and quotes around it.
+fn unquote(value: &str) -> &str {
     value.trim().trim_matches('"').trim()
 }
 
@@ -191,7 +192,7 @@ fn collect_fixed_zones(components: Vec<ZoneComponent>) -> HashMap<String, chrono
     let mut zones = HashMap::new();
     let mut seen = HashSet::new();
     for zone in components {
-        let Some(id) = zone.one_value("TZID").map(normalize_tzid).filter(|id| !id.is_empty()) else {
+        let Some(id) = zone.one_value("TZID").map(unquote).filter(|id| !id.is_empty()) else {
             return HashMap::new();
         };
         // Repeated identities or identities nested in observations are ambiguous.
@@ -298,37 +299,37 @@ pub fn unescape_text(value: &str) -> String {
     out
 }
 
+/// A parameter's value by name, read the same way wherever one is looked up:
+/// any case, spaces around the name or the value, a quoted value.
+pub fn param_value<'a>(params: &'a [String], name: &str) -> Option<&'a str> {
+    params.iter().find_map(|param| param_named(param, name))
+}
+
+/// `param`'s value when it is the parameter `name`.
+fn param_named<'a>(param: &'a str, name: &str) -> Option<&'a str> {
+    let (key, value) = param.split_once('=')?;
+    key.trim().eq_ignore_ascii_case(name).then(|| unquote(value))
+}
+
 /// Parse an ICS date/time value with its params into UTC epoch seconds.
 /// Handles `...Z` (UTC), `TZID=<zone>` local wall time, floating local time
 /// (treated as UTC — best effort), and `VALUE=DATE` all-day dates.
 pub fn parse_ics_time(value: &str, params: &[String]) -> Option<(i64, bool)> {
-    parse_ics_time_with_zones(value, params, None)
+    parse_ics_time_with_fixed_zones(value, params, &HashMap::new())
 }
 
-/// Parse with document-local fixed offsets for non-IANA identifiers. IANA zones
-/// keep their native DST rules; absent/unsupported zones retain the UTC fallback.
+/// [`parse_ics_time`] that also knows the fixed offsets the document defines
+/// (`ParsedCalendar::fixed_zones`). Names IANA or Windows know keep their own
+/// rules; a zone nobody can resolve still falls back to UTC.
 pub fn parse_ics_time_with_fixed_zones(
     value: &str,
     params: &[String],
     zones: &HashMap<String, chrono::FixedOffset>,
 ) -> Option<(i64, bool)> {
-    parse_ics_time_with_zones(value, params, Some(zones))
-}
-
-fn parse_ics_time_with_zones(
-    value: &str,
-    params: &[String],
-    zones: Option<&HashMap<String, chrono::FixedOffset>>,
-) -> Option<(i64, bool)> {
     use chrono::TimeZone;
     let value = value.trim();
-    let parameter = |name: &str| {
-        params.iter().find_map(|p| {
-            let (key, value) = p.split_once('=')?;
-            key.trim().eq_ignore_ascii_case(name).then_some(value.trim())
-        })
-    };
-    if parameter("VALUE").is_some_and(|v| v.eq_ignore_ascii_case("DATE")) || (value.len() == 8 && !value.contains('T'))
+    if param_value(params, "VALUE").is_some_and(|v| v.eq_ignore_ascii_case("DATE"))
+        || (value.len() == 8 && !value.contains('T'))
     {
         let date = chrono::NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
         return Some((date.and_hms_opt(0, 0, 0)?.and_utc().timestamp(), true));
@@ -338,41 +339,64 @@ fn parse_ics_time_with_zones(
         return Some((naive.and_utc().timestamp(), false));
     }
     let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
-    if let Some(id) = parameter("TZID").map(normalize_tzid) {
-        if let Some(tz) = resolve_tzid(id) {
-            let epoch = match tz.from_local_datetime(&naive).earliest() {
-                Some(local) => local.timestamp(),
-                None => skipped_local_time(tz, naive),
-            };
-            return Some((epoch, false));
-        } else if let Some(offset) = zones.and_then(|zones| zones.get(id)) {
-            return offset
-                .from_local_datetime(&naive)
-                .single()
-                .map(|local| (local.timestamp(), false));
-        }
-    }
-    Some((naive.and_utc().timestamp(), false))
+    let epoch = match param_value(params, "TZID").and_then(|id| resolve_tzid(id, zones)) {
+        Some(IcsZone::Named(tz)) => match tz.from_local_datetime(&naive).earliest() {
+            Some(local) => local.timestamp(),
+            None => skipped_local_time(tz, naive),
+        },
+        Some(IcsZone::Offset(offset)) => naive.and_utc().timestamp() - i64::from(offset.local_minus_utc()),
+        // Unknown zone / floating time: UTC is the least-wrong fallback.
+        None => naive.and_utc().timestamp(),
+    };
+    Some((epoch, false))
 }
 
-/// The zone a `TZID` names: an IANA name, or the Windows name Outlook writes.
-fn resolve_tzid(tzid: &str) -> Option<chrono_tz::Tz> {
-    let name = tzid.trim().trim_matches('"');
-    name.parse()
+/// The zone a `TZID` stands for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IcsZone {
+    /// A zone with an IANA name, which the `rrule` parser reads by that name.
+    Named(chrono_tz::Tz),
+    /// A fixed offset no IANA zone names, such as +05:30.
+    Offset(chrono::FixedOffset),
+}
+
+/// The zone a `TZID` names: an IANA name, the Windows name Outlook writes, or a
+/// fixed offset the document defines (`fixed_zones`), which becomes its
+/// `Etc/GMT±N` zone when it is a whole number of hours.
+pub fn resolve_tzid(tzid: &str, fixed_zones: &HashMap<String, chrono::FixedOffset>) -> Option<IcsZone> {
+    let name = unquote(tzid);
+    if let Some(tz) = name
+        .parse()
         .ok()
         .or_else(|| windows_zones::iana_name(name)?.parse().ok())
+    {
+        return Some(IcsZone::Named(tz));
+    }
+    let offset = *fixed_zones.get(name)?;
+    Some(etc_zone(offset).map_or(IcsZone::Offset(offset), IcsZone::Named))
+}
+
+/// The `Etc/GMT±N` zone of a whole-hour offset. Its sign is POSIX's, the
+/// opposite of ISO 8601's: `Etc/GMT-2` is UTC+2. `None` for any other offset,
+/// and for whole hours west of UTC-12 or east of UTC+14, which no `Etc/` zone
+/// covers.
+fn etc_zone(offset: chrono::FixedOffset) -> Option<chrono_tz::Tz> {
+    let seconds = offset.local_minus_utc();
+    if seconds % 3600 != 0 {
+        return None;
+    }
+    match -seconds / 3600 {
+        0 => Some(chrono_tz::Etc::GMT),
+        hours => format!("Etc/GMT{hours:+}").parse().ok(),
+    }
 }
 
 /// `param` with a `TZID` rewritten to its IANA name, for readers that know no
-/// Windows names, such as the `rrule` parser.
-pub fn with_iana_tzid(param: &str) -> String {
-    let zone = param
-        .strip_prefix("TZID=")
-        .or_else(|| param.strip_prefix("tzid="))
-        .and_then(resolve_tzid);
-    match zone {
-        Some(tz) => format!("TZID={}", tz.name()),
-        None => param.to_string(),
+/// Windows names or document-defined zones, such as the `rrule` parser.
+pub fn with_iana_tzid(param: &str, fixed_zones: &HashMap<String, chrono::FixedOffset>) -> String {
+    match param_named(param, "TZID").and_then(|id| resolve_tzid(id, fixed_zones)) {
+        Some(IcsZone::Named(tz)) => format!("TZID={}", tz.name()),
+        _ => param.to_string(),
     }
 }
 
@@ -526,6 +550,47 @@ mod tests {
         let zones = parse_vcalendar(&zone("-033030", "-033030", "")).fixed_zones;
         assert_eq!(zones["Example Fixed Time"].local_minus_utc(), -12630);
     }
+
+    /// `Etc/` zones carry the POSIX sign: `Etc/GMT-2` is two hours east of UTC.
+    #[test]
+    fn a_whole_hour_fixed_zone_is_named_by_its_etc_zone() {
+        for (offset, etc) in [
+            ("+0200", "Etc/GMT-2"),
+            ("-0500", "Etc/GMT+5"),
+            ("+0000", "Etc/GMT"),
+            ("+1400", "Etc/GMT-14"),
+        ] {
+            let zones = parse_vcalendar(&zone(offset, offset, "")).fixed_zones;
+            assert_eq!(
+                with_iana_tzid("TZID=\"Example Fixed Time\"", &zones),
+                format!("TZID={etc}"),
+                "{offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fixed_zone_without_an_etc_zone_keeps_its_name_and_its_exact_offset() {
+        let zones = parse_vcalendar(&zone("+0530", "+0530", "")).fixed_zones;
+        let param = "TZID=Example Fixed Time";
+        assert_eq!(with_iana_tzid(param, &zones), param);
+        assert_eq!(
+            parse_ics_time_with_fixed_zones("20261023T103000", &[param.into()], &zones),
+            Some((utc("20261023T050000Z"), false))
+        );
+    }
+
+    #[test]
+    fn a_parameter_is_read_whatever_its_case_spacing_or_quotes() {
+        let params = vec![
+            " value = \"DATE\" ".to_string(),
+            "TzId= \" Example Fixed Time \"".to_string(),
+        ];
+        assert_eq!(param_value(&params, "VALUE"), Some("DATE"));
+        assert_eq!(param_value(&params, "TZID"), Some("Example Fixed Time"));
+        assert_eq!(param_value(&params, "PARTSTAT"), None);
+    }
+
     #[test]
     fn seasonal_and_conflicting_offsets_are_not_assumed_fixed() {
         for input in [

@@ -20,7 +20,8 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::CalendarAttendee;
 use crate::services::calendar::ics::{
-    parse_ics_time_with_fixed_zones, parse_vcalendar, unescape_text, with_iana_tzid, ParsedCalendar, RawVEvent,
+    param_value, parse_ics_time_with_fixed_zones, parse_vcalendar, resolve_tzid, unescape_text, with_iana_tzid,
+    IcsZone, ParsedCalendar, RawVEvent,
 };
 use crate::services::unsubscribe::{host_may_be_public, PublicOnlyResolver};
 use crate::sync::calendar_provider::{
@@ -336,19 +337,10 @@ impl EventBody {
     }
 }
 
-fn timezone_param(params: &[String]) -> Option<&str> {
-    params.iter().find_map(|param| {
-        let (name, value) = param.split_once('=')?;
-        name.trim()
-            .eq_ignore_ascii_case("TZID")
-            .then(|| value.trim().trim_matches('"').trim())
-    })
-}
-
 /// Add `TZID=<default>` to floating times using the feed's `X-WR-TIMEZONE`.
 fn params_with_default_tz(params: &[String], value: &str, default_tz: Option<&str>) -> Vec<String> {
-    let has_tz = timezone_param(params).is_some();
-    let is_date = params.iter().any(|p| p.eq_ignore_ascii_case("VALUE=DATE")) || !value.contains('T');
+    let has_tz = param_value(params, "TZID").is_some();
+    let is_date = param_value(params, "VALUE").is_some_and(|v| v.eq_ignore_ascii_case("DATE")) || !value.contains('T');
     match default_tz {
         Some(tz) if !has_tz && !is_date && !value.trim().ends_with('Z') => {
             let mut out = params.to_vec();
@@ -448,7 +440,7 @@ fn event_body(
     };
     let dtstart = event.first("DTSTART")?;
     let params = params_with_default_tz(&dtstart.params, &dtstart.value, default_tz);
-    let timezone = timezone_param(&params).unwrap_or_default().to_string();
+    let timezone = param_value(&params, "TZID").unwrap_or_default().to_string();
     let text = |name: &str| {
         event
             .first_value(name)
@@ -510,19 +502,62 @@ fn occurrence_id(uid: &str, recurrence_epoch: i64, is_all_day: bool) -> String {
     }
 }
 
+/// `epoch` written as a UTC date-time value, the form `rrule` reads with no zone.
+fn utc_value(epoch: i64) -> Option<String> {
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
+    Some(dt.format("%Y%m%dT%H%M%SZ").to_string())
+}
+
+/// How far ahead of UTC a master's wall clock runs when `rrule` has to expand
+/// it on that wall clock: its `DTSTART` is a local time in a fixed offset no
+/// IANA zone names (+05:30, +05:45). Every value of such a series reaches the
+/// parser as its wall clock written in UTC, and the occurrences come back
+/// moved by the same amount. `None` for every other series, whose zone the
+/// parser reads by name (a whole-hour offset as its `Etc/GMT±N`).
+fn wall_clock_shift(
+    event: &RawVEvent,
+    is_all_day: bool,
+    default_tz: Option<&str>,
+    fixed_zones: &HashMap<String, chrono::FixedOffset>,
+) -> Option<i64> {
+    let start = event.first("DTSTART")?;
+    if is_all_day || start.value.trim().ends_with('Z') {
+        return None;
+    }
+    let params = params_with_default_tz(&start.params, &start.value, default_tz);
+    match resolve_tzid(param_value(&params, "TZID")?, fixed_zones)? {
+        IcsZone::Offset(offset) => Some(i64::from(offset.local_minus_utc())),
+        IcsZone::Named(_) => None,
+    }
+}
+
+/// A value of a series expanded on its wall clock (see [`wall_clock_shift`]):
+/// the instant it names, `shift` seconds later, in UTC.
+fn shifted_value(
+    value: &str,
+    params: &[String],
+    fixed_zones: &HashMap<String, chrono::FixedOffset>,
+    shift: i64,
+) -> Option<String> {
+    let (epoch, _) = parse_ics_time_with_fixed_zones(value, params, fixed_zones)?;
+    utc_value(epoch.checked_add(shift)?)
+}
+
 /// A rule's `UNTIL` as the `rrule` parser takes it. Anything without a `Z` it
 /// reads in the machine's zone, and it refuses that next to a zoned `DTSTART`,
 /// so the value becomes a UTC instant, read in the zone of `start_params` (UTC
-/// when they name none). A bare date covers its whole day. A floating `DTSTART`
-/// is read in the machine's zone too, so its `UNTIL` stays floating.
+/// when they name none) and moved by the series' `shift`. A bare date covers
+/// its whole day. A floating `DTSTART` is read in the machine's zone too, so
+/// its `UNTIL` stays floating.
 fn rrule_until(
     until: &str,
     start_params: &[String],
     floating: bool,
     fixed_zones: &HashMap<String, chrono::FixedOffset>,
+    shift: Option<i64>,
 ) -> Option<String> {
     let until = until.trim();
-    if until.ends_with('Z') {
+    if until.ends_with('Z') && shift.is_none() {
         return Some(until.to_string());
     }
     let wall = if until.contains('T') {
@@ -533,9 +568,7 @@ fn rrule_until(
     if floating {
         return Some(wall);
     }
-    let (epoch, _) = parse_ics_time_with_fixed_zones(&wall, start_params, fixed_zones)?;
-    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
-    Some(dt.format("%Y%m%dT%H%M%SZ").to_string())
+    shifted_value(&wall, start_params, fixed_zones, shift.unwrap_or(0))
 }
 
 /// A master's `RRULE` value with its `UNTIL` in the parser's form.
@@ -544,6 +577,7 @@ fn rrule_value(
     is_all_day: bool,
     default_tz: Option<&str>,
     fixed_zones: &HashMap<String, chrono::FixedOffset>,
+    shift: Option<i64>,
 ) -> Option<String> {
     let start = event.first("DTSTART")?;
     let params = if is_all_day {
@@ -551,14 +585,14 @@ fn rrule_value(
     } else {
         params_with_default_tz(&start.params, &start.value, default_tz)
     };
-    let floating = !is_all_day && !start.value.trim().ends_with('Z') && timezone_param(&params).is_none();
+    let floating = !is_all_day && !start.value.trim().ends_with('Z') && param_value(&params, "TZID").is_none();
     let parts = event
         .first_value("RRULE")?
         .trim()
         .split(';')
         .map(|part| match part.split_once('=') {
             Some((name, value)) if name.trim().eq_ignore_ascii_case("UNTIL") => {
-                rrule_until(value, &params, floating, fixed_zones).map(|until| format!("UNTIL={until}"))
+                rrule_until(value, &params, floating, fixed_zones, shift).map(|until| format!("UNTIL={until}"))
             }
             _ => Some(part.to_string()),
         })
@@ -568,57 +602,42 @@ fn rrule_value(
 
 /// The `DTSTART`/`RRULE`/`EXDATE` lines of a master, normalised for the
 /// `rrule` parser: all-day values become UTC midnights (it does not read
-/// `VALUE=DATE`), floating values get the feed's default zone.
+/// `VALUE=DATE`), floating values get the feed's default zone, every `TZID`
+/// its IANA name, `UNTIL` follows [`rrule_until`]. A series with a
+/// [`wall_clock_shift`] has every value moved by it instead.
 fn rrule_source(
     event: &RawVEvent,
     is_all_day: bool,
     default_tz: Option<&str>,
     fixed_zones: &HashMap<String, chrono::FixedOffset>,
-    recurrence_offset: Option<i32>,
+    shift: Option<i64>,
 ) -> Option<String> {
     let mut lines = Vec::new();
     for name in ["DTSTART", "EXDATE"] {
         for prop in event.all(name) {
             let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
-            let fixed_property = timezone_param(&params)
-                .is_some_and(|tzid| tzid.parse::<chrono_tz::Tz>().is_err() && fixed_zones.contains_key(tzid));
-            if is_all_day || recurrence_offset.is_some() || fixed_property {
+            if is_all_day {
                 for date in prop.value.split(',') {
-                    let date_params = if is_all_day {
-                        vec!["VALUE=DATE".to_string()]
-                    } else {
-                        params.clone()
-                    };
-                    let (epoch, _) = parse_ics_time_with_fixed_zones(date, &date_params, fixed_zones)?;
-                    let epoch = epoch.checked_add(i64::from(recurrence_offset.unwrap_or(0)))?;
-                    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
-                    lines.push(format!("{name}:{}", dt.format("%Y%m%dT%H%M%SZ")));
+                    let (epoch, _) = parse_ics_time_with_fixed_zones(date, &["VALUE=DATE".to_string()], fixed_zones)?;
+                    lines.push(format!("{name}:{}", utc_value(epoch)?));
+                }
+            } else if let Some(shift) = shift {
+                for value in prop.value.split(',') {
+                    lines.push(format!("{name}:{}", shifted_value(value, &params, fixed_zones, shift)?));
                 }
             } else {
                 let head = std::iter::once(name.to_string())
-                    .chain(params.iter().map(|p| with_iana_tzid(p)))
+                    .chain(params.iter().map(|p| with_iana_tzid(p, fixed_zones)))
                     .collect::<Vec<_>>()
                     .join(";");
                 lines.push(format!("{head}:{}", prop.value.trim()));
             }
         }
     }
-    let mut rule = Vec::new();
-    for part in rrule_value(event, is_all_day, default_tz, fixed_zones)?.split(';') {
-        if let Some(offset) = recurrence_offset {
-            if let Some((name, value)) = part.split_once('=') {
-                if name.eq_ignore_ascii_case("UNTIL") && value.ends_with('Z') {
-                    let (epoch, _) = parse_ics_time_with_fixed_zones(value, &[], fixed_zones)?;
-                    let epoch = epoch.checked_add(i64::from(offset))?;
-                    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(epoch, 0)?;
-                    rule.push(format!("UNTIL={}", dt.format("%Y%m%dT%H%M%SZ")));
-                    continue;
-                }
-            }
-        }
-        rule.push(part.to_string());
-    }
-    lines.push(format!("RRULE:{}", rule.join(";")));
+    lines.push(format!(
+        "RRULE:{}",
+        rrule_value(event, is_all_day, default_tz, fixed_zones, shift)?
+    ));
     Some(lines.join("\n"))
 }
 
@@ -637,18 +656,10 @@ fn occurrences(
     fixed_zones: &HashMap<String, chrono::FixedOffset>,
 ) -> Option<Vec<i64>> {
     let duration = (body.end - body.start).max(0);
-    // rrule supports IANA zones, but not FixedOffset. Represent a fixed
-    // zone's wall clock in UTC while expanding, then translate the results.
-    // This preserves local BYDAY/BYHOUR even when its UTC date differs.
-    let recurrence_offset = event
-        .first("DTSTART")
-        .filter(|p| !body.is_all_day && !p.value.trim().ends_with('Z'))
-        .filter(|_| body.timezone.parse::<chrono_tz::Tz>().is_err())
-        .and_then(|_| fixed_zones.get(&body.timezone))
-        .map(chrono::FixedOffset::local_minus_utc);
-    let shift = i64::from(recurrence_offset.unwrap_or(0));
-    let source = rrule_source(event, body.is_all_day, default_tz, fixed_zones, recurrence_offset)?;
+    let shift = wall_clock_shift(event, body.is_all_day, default_tz, fixed_zones);
+    let source = rrule_source(event, body.is_all_day, default_tz, fixed_zones, shift)?;
     let set = rrule::RRuleSet::from_str(&source).ok()?;
+    let shift = shift.unwrap_or(0);
     let result = set
         .after(utc_dt(window_start.checked_sub(duration)?.checked_add(shift)?)?)
         .before(utc_dt(window_end.checked_add(shift)?)?)
@@ -872,6 +883,79 @@ mod tests {
         let moved = out.iter().find(|event| event.title == "Moved").unwrap();
         assert_eq!(moved.provider_event_id, "fixed-series@x_20260810T223000Z");
         assert_eq!(moved.end_time, utc(2026, 8, 11, 1, 0));
+    }
+
+    /// What reaches `rrule` for a master in a fixed zone: a whole-hour offset
+    /// by its `Etc/GMT±N` name, read natively; any other offset as its wall
+    /// clock written in UTC.
+    #[test]
+    fn a_fixed_zone_series_reaches_rrule_by_etc_name_or_on_its_wall_clock() {
+        let master = "UID:s@x\nDTSTART;TZID=\"Example Fixed Time\":20261023T233000\nRRULE:FREQ=DAILY;UNTIL=20261030T233000\nEXDATE;TZID=\"Example Fixed Time\":20261025T233000";
+        let cases = [
+            (
+                "+0200",
+                "DTSTART;TZID=Etc/GMT-2:20261023T233000\nEXDATE;TZID=Etc/GMT-2:20261025T233000\nRRULE:FREQ=DAILY;UNTIL=20261030T213000Z",
+            ),
+            (
+                "+0530",
+                "DTSTART:20261023T233000Z\nEXDATE:20261025T233000Z\nRRULE:FREQ=DAILY;UNTIL=20261030T233000Z",
+            ),
+        ];
+        for (offset, expected) in cases {
+            let calendar = with_zones(&[master], &FIXED_ZONE.replace("+0200", offset));
+            let event = &calendar.events[0];
+            let shift = wall_clock_shift(event, false, None, &calendar.fixed_zones);
+            assert_eq!(
+                rrule_source(event, false, None, &calendar.fixed_zones, shift).as_deref(),
+                Some(expected),
+                "{offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_floating_until_with_a_time_ends_a_fixed_zone_series_on_that_wall_clock() {
+        let calendar = with_zones(
+            &["UID:u@x\nDTSTART;TZID=\"Example Fixed Time\":20261023T233000\nRRULE:FREQ=DAILY;UNTIL=20261030T233000"],
+            FIXED_ZONE,
+        );
+        let out = expand_events(&calendar, utc(2026, 10, 20, 0, 0), utc(2026, 11, 5, 0, 0));
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(
+            starts,
+            (23..=30).map(|day| utc(2026, 10, day, 21, 30)).collect::<Vec<_>>()
+        );
+    }
+
+    /// 22:00 on a Friday five hours west of UTC is 03:00Z on the Saturday.
+    #[test]
+    fn a_series_west_of_utc_lands_after_its_wall_clock() {
+        let calendar = with_zones(
+            &["UID:w@x\nDTSTART;TZID=\"Example Fixed Time\":20261023T220000\nRRULE:FREQ=WEEKLY;BYDAY=FR;COUNT=2"],
+            &FIXED_ZONE.replace("+0200", "-0500"),
+        );
+        let out = expand_events(&calendar, utc(2026, 10, 20, 0, 0), utc(2026, 11, 5, 0, 0));
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(starts, vec![utc(2026, 10, 24, 3, 0), utc(2026, 10, 31, 3, 0)]);
+    }
+
+    /// 01:30 on a Friday at +05:30 is 20:00Z on the Thursday: BYDAY, UNTIL and
+    /// EXDATE still follow the zone's own wall clock.
+    #[test]
+    fn a_half_hour_fixed_zone_series_keeps_its_wall_clock_day_until_and_exdate() {
+        let calendar = with_zones(
+            &["UID:h@x\nDTSTART;TZID=\"Example Fixed Time\":20261023T013000\nDTEND;TZID=\"Example Fixed Time\":20261023T023000\nRRULE:FREQ=WEEKLY;BYDAY=FR;UNTIL=20261106T013000\nEXDATE;TZID=\"Example Fixed Time\":20261030T013000"],
+            &FIXED_ZONE.replace("+0200", "+0530"),
+        );
+        let out = expand_events(&calendar, utc(2026, 10, 20, 0, 0), utc(2026, 11, 20, 0, 0));
+        let spans: Vec<(i64, i64)> = out.iter().map(|e| (e.start_time, e.end_time)).collect();
+        assert_eq!(
+            spans,
+            vec![
+                (utc(2026, 10, 22, 20, 0), utc(2026, 10, 22, 21, 0)),
+                (utc(2026, 11, 5, 20, 0), utc(2026, 11, 5, 21, 0)),
+            ]
+        );
     }
 
     #[test]

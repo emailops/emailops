@@ -231,6 +231,14 @@ mod tests {
         assert_eq!(invite.method, "CANCEL");
     }
 
+    /// The invite shares the feed's parser, which keeps only events that end:
+    /// a truncated attachment shows no card rather than a partial one.
+    #[test]
+    fn an_invite_whose_event_never_ends_shows_no_card() {
+        let ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:truncated@example.test\r\nDTSTART:20261023T083000Z\r\nSUMMARY:Partial\r\nEND:VCALENDAR\r\n";
+        assert_eq!(parse_ics_invite(ics), None);
+    }
+
     const SAMPLE_INVITE: &str = "BEGIN:VCALENDAR\r\nPRODID:-//Test//EN\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Europe/Madrid:20260728T073000\r\nDTEND;TZID=Europe/Madrid:20260728T083000\r\nRRULE:FREQ=WEEKLY;BYDAY=TU\r\nDTSTAMP:20260723T103000Z\r\nORGANIZER;CN=Organizer:mailto:Organizer@Example.com\r\nUID:abc123DEF@example.com\r\nSUMMARY:Team sync\\, weekly\r\nLOCATION:Room 4\\; floor 2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
     /// Seed an IMAP account + email whose `.ics` part is recorded as stored at
