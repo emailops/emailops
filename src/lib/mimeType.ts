@@ -12,3 +12,11 @@ export function normalizeMimeType(raw: string): string {
   const base = raw.split(';')[0].trim().toLowerCase();
   return MIME_SHAPE.test(base) ? base : FALLBACK_MIME;
 }
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** A Word (.docx) file by its mime type, or by its name when the sender
+ *  declared a generic type. Mirrors the backend's `DocumentKind::detect`. */
+export function isDocxAttachment(mimeType: string, filename: string): boolean {
+  return mimeType.toLowerCase() === DOCX_MIME || filename.toLowerCase().endsWith('.docx');
+}

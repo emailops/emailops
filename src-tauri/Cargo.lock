@@ -1924,6 +1924,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pdf_oxide",
  "proptest",
+ "quick-xml",
  "reedline",
  "refinery",
  "regex",
@@ -1961,6 +1962,7 @@ dependencies = [
  "wiremock",
  "yrs",
  "zeroize",
+ "zip",
 ]
 
 [[package]]

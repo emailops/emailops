@@ -2524,6 +2524,51 @@ def _build_invoice_pdf(
     return bytes(out)
 
 
+def _build_docx(title: str, paragraphs: list[str], table: list[list[str]]) -> bytes:
+    """A minimal Word (.docx) file: `title`, then a table of `table` rows, then
+    `paragraphs`. Only the parts Word and the app's viewer need."""
+    import io
+    import zipfile
+    from xml.sax.saxutils import escape
+
+    def para(text: str, bold: bool = False) -> str:
+        run_props = "<w:rPr><w:b/></w:rPr>" if bold else ""
+        return f'<w:p><w:r>{run_props}<w:t xml:space="preserve">{escape(text)}</w:t></w:r></w:p>'
+
+    rows = "".join(
+        "<w:tr>" + "".join(f"<w:tc>{para(cell, bold=i == 0)}</w:tc>" for cell in row) + "</w:tr>"
+        for i, row in enumerate(table)
+    )
+    body = (para(title, bold=True)
+            + '<w:tbl><w:tblPr><w:tblBorders><w:insideH w:val="single" w:sz="4"/></w:tblBorders></w:tblPr>'
+            + rows + "</w:tbl>"
+            + "".join(para(p) for p in paragraphs))
+    document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                f"<w:body>{body}</w:body></w:document>")
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        "</Types>")
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/></Relationships>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as docx:
+        # A fixed timestamp keeps the bytes (and the demo DB) reproducible.
+        for name, data in (("[Content_Types].xml", content_types), ("_rels/.rels", rels),
+                           ("word/document.xml", document)):
+            docx.writestr(zipfile.ZipInfo(name, date_time=(2026, 3, 1, 0, 0, 0)), data, zipfile.ZIP_DEFLATED)
+    return out.getvalue()
+
+
 def _build_text_pdf(title: str, paragraphs: list[str], line_chars: int = 95,
                     lines_per_page: int = 48) -> bytes:
     """A plain multi-page text PDF: `title` on the first page, then the
@@ -3037,6 +3082,12 @@ FIXTURE_LENS_NAME = "Renewal quotes"
 # early-termination fee sits near the end, past what a cut-to-fit read keeps.
 FIXTURE_LONG_PDF_SUBJECT = "Larkspur Freight master services agreement"
 FIXTURE_LONG_PDF_FILENAME = "larkspur-master-services-agreement.pdf"
+# Meeting minutes in Word, for the in-app .docx viewer and the chat's
+# open-document reading: the due date sits in a table cell, the budget in a
+# paragraph, and the email body names neither.
+FIXTURE_DOCX_SUBJECT = "Kickoff minutes: dispatch portal"
+FIXTURE_DOCX_FILENAME = "larkspur-kickoff-minutes.docx"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> int:
@@ -3206,6 +3257,39 @@ def insert_verification_fixtures(conn: sqlite3.Connection, locale: Locale, demo_
            VALUES (?, ?, ?, '', ?, 'application/pdf', ?, ?, NULL)""",
         (demo_id("att_", msa_id, FIXTURE_LONG_PDF_FILENAME), msa_id, account.id, FIXTURE_LONG_PDF_FILENAME,
          len(msa), msa_rel),
+    )
+
+    # Kickoff minutes as a Word document stored on disk.
+    minutes_id, new = email(
+        "Ines Okafor", "ines@larkspur-freight.example", FIXTURE_DOCX_SUBJECT,
+        "Hi Ulises,\n\nThe minutes from Tuesday's kickoff are attached, with the action items "
+        "and what we agreed on scope.\n\nInes", 5)
+    added += new
+    minutes = _build_docx(
+        "Kickoff meeting minutes: Larkspur Freight dispatch portal",
+        [
+            "Attendees: Ines Okafor (Larkspur Freight) and Ulises (EmailOps Labs).",
+            "Scope: a dispatch board for the Rotterdam depot, with carrier status pulled from the carriers' APIs.",
+            "Budget: the work is a fixed fee capped at EUR 8,400, invoiced in two halves.",
+            "The portal goes live on 14 April 2026, after two weeks of user acceptance testing.",
+        ],
+        [
+            ["Action item", "Owner", "Due"],
+            ["Share the carrier API keys", "Ines Okafor", "3 March 2026"],
+            ["Deliver the dispatch board prototype", "Ulises", "17 March 2026"],
+            ["Book the user acceptance testing slots", "Ines Okafor", "24 March 2026"],
+        ],
+    )
+    minutes_rel = f"attachments/{account.id}/{demo_id('', minutes_id, FIXTURE_DOCX_FILENAME, length=32)}.docx"
+    (demo_dir / minutes_rel).parent.mkdir(parents=True, exist_ok=True)
+    (demo_dir / minutes_rel).write_bytes(minutes)
+    conn.execute(
+        """INSERT OR IGNORE INTO email_attachment_meta
+           (id, email_id, account_id, provider_attachment_id, filename, mime_type, file_size, file_path,
+            inline_data)
+           VALUES (?, ?, ?, '', ?, ?, ?, ?, NULL)""",
+        (demo_id("att_", minutes_id, FIXTURE_DOCX_FILENAME), minutes_id, account.id, FIXTURE_DOCX_FILENAME,
+         DOCX_MIME, len(minutes), minutes_rel),
     )
 
     # A draft whose body is a table, for the compose editor.

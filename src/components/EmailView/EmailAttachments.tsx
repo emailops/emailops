@@ -4,14 +4,16 @@ import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
 import { saveToDownloads } from '@/lib/download';
 import { errorText } from '@/lib/errors';
+import { isDocxAttachment } from '@/lib/mimeType';
 import { importKind, importOfficeFile } from '@/lib/officeImport';
 import { useSharedDocsEnabledStore } from '@/stores/featureToggleStore';
 import { useLogStore } from '@/stores/logStore';
 import { useSharedDocsStore } from '@/stores/sharedDocsStore';
 import type { EmailAttachmentMeta } from '@/types';
 
-function isViewableAttachment(mimeType: string): boolean {
+function isViewableAttachment(mimeType: string, filename: string): boolean {
   return (
+    isDocxAttachment(mimeType, filename) ||
     mimeType.startsWith('image/') ||
     mimeType === 'application/pdf' ||
     mimeType === 'text/html' ||
@@ -69,7 +71,7 @@ export function EmailAttachments({
   };
 
   const handleClick = async (meta: EmailAttachmentMeta) => {
-    if (isViewableAttachment(meta.mimeType)) {
+    if (isViewableAttachment(meta.mimeType, meta.filename)) {
       onOpenAttachment(meta);
       return;
     }
@@ -109,7 +111,7 @@ export function EmailAttachments({
         {metas.map((meta) => {
           const isLoading = downloading.has(meta.id);
           const isCached = !!meta.filePath;
-          const isViewable = isViewableAttachment(meta.mimeType);
+          const isViewable = isViewableAttachment(meta.mimeType, meta.filename);
           const actionLabel = isViewable ? 'click to view' : isCached ? 'click to open' : 'click to download';
           return (
             <div

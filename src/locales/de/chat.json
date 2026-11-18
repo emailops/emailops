@@ -301,8 +301,8 @@
         "hint": "Der Chat antwortet aus einem anderen Konto und kann diese E-Mail nicht lesen. Wechsle das Konto, um danach zu fragen.",
         "action": "Wechseln"
       },
-      "hintDocument": "Antworten stützen sich auf den Text dieses PDFs. Entferne es, um zu deinem Posteingang zu fragen.",
-      "restoreDocument": "Geöffnetes PDF als Kontext verwenden"
+      "hintDocument": "Antworten stützen sich auf den Text dieses Dokuments. Entferne es, um zu deinem Posteingang zu fragen.",
+      "restoreDocument": "Geöffnetes Dokument als Kontext verwenden"
     },
     "newChat": "Neuer Chat"
   },

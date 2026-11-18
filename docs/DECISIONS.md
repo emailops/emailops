@@ -4626,3 +4626,24 @@ colour support in the editor rather than losing colours on paste.
   mid greys of other themes. A contrast ratio against the actual background covers them all.
 - *Painting the composer with the reader's scheme (inverted on the dark theme)*: it shows the
   problem but does not prevent it, and it is a larger change to the editor's CSS.
+
+## 2026-11-18 — Word attachments are read in the app with docx-preview, behind the email frame
+
+**Decision:** A `.docx` attachment opens read-only in its own tab, laid out with
+`docx-preview`; the chat reads its text like a PDF's (`services::docx_text`, extracted in
+Rust with the `zip` and `quick-xml` crates `calamine` already builds). docx-preview's
+nodes are never attached to the app's DOM: they are serialized and rendered through
+`EmailBody`, so a Word file gets the same DOMPurify sanitizing, null-origin sandbox and
+remote-content consent as an email body, with images inlined as `data:` URLs (a blob:
+URL from the app's origin would not load in that frame). The page keeps its own colours on
+the dark theme (white paper, as in the PDF viewer) instead of the luminance inversion an
+email body gets. The old binary `.doc` and the macro-enabled `.docm` still open with the OS.
+**Context:** The developer asked for Word attachments to be readable inside the app and
+usable as chat context like PDFs. docx-preview builds its `<style>` and `<a>` elements with
+the app's own `document`, so rendering it in place would let a crafted file restyle the
+app or reach the network from its origin.
+**Rejected:** `mammoth` (already a dependency for the EO Docs import) — semantic HTML only,
+loses fonts, colours, columns, headers and page layout, which the developer wanted kept.
+Extracting the chat text in the frontend and sending it with the turn — the eval harness
+and the CLI read documents through the backend, and the backend would have to trust text
+the webview sends.

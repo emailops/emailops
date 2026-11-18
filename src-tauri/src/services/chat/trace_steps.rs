@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn a_document_part_reports_its_prefix_slot_and_its_part_number() {
-        // A long open PDF is read on the auxiliary slot too, one call a part.
+        // A long open document is read on the auxiliary slot too, one call a part.
         let mut c = llm("document_part", 1, 0);
         c.prefix_plan = Some("Reuse".into());
         let a = cache_action(&c).expect("an action");
