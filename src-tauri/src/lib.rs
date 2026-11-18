@@ -149,6 +149,7 @@ macro_rules! app_commands {
             commands::accounts::get_imap_settings,
             commands::accounts::update_imap_credentials,
             commands::accounts::list_accounts,
+            commands::accounts::get_sent_counts,
             commands::accounts::remove_account,
             commands::accounts::reauthenticate_account,
             commands::accounts::reorder_accounts,

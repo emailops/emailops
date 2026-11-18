@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
-use crate::models::{Account, AccountColor, OAuthTokens};
+use crate::models::{Account, AccountColor, AccountSentCount, OAuthTokens};
 use crate::services::logger;
 use crate::sync::gmail::GmailClient;
 use crate::sync::imap::{ImapClient, ImapCredentials};
@@ -127,6 +127,10 @@ fn persist_oauth_account(db: &Arc<Database>, account: &Account, tokens: &OAuthTo
 
 pub fn list_accounts(db: &Arc<Database>) -> Result<Vec<Account>> {
     db.list_accounts()
+}
+
+pub fn sent_counts(db: &Arc<Database>) -> Result<Vec<AccountSentCount>> {
+    db.sent_counts_by_account()
 }
 
 pub fn remove_account(db: &Arc<Database>, account_id: &str, app_data_dir: &std::path::Path) -> Result<()> {

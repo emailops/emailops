@@ -15,6 +15,13 @@ export interface Account {
 
 export type AccountColor = 'blue' | 'emerald' | 'amber' | 'purple' | 'rose' | 'cyan' | 'indigo' | 'orange';
 
+/** Sent messages the local DB holds for an account (Rust `AccountSentCount`);
+ *  accounts without sent mail are absent. */
+export interface AccountSentCount {
+  accountId: string;
+  sentCount: number;
+}
+
 export interface AccountSettings {
   gmailCategories: string[];
   /** Categories for which attachments are downloaded to disk during sync. Empty = on-demand only. */

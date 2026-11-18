@@ -6,6 +6,7 @@ import type {
   Account,
   AccountColor,
   AccountDashboard,
+  AccountSentCount,
   AccountSettings,
   AccountSignature,
   AiConfig,
@@ -211,6 +212,11 @@ export async function reauthenticateAccount(accountId: string): Promise<void> {
 
 export async function reorderAccounts(accountIds: string[]): Promise<void> {
   return invoke('reorder_accounts', { accountIds });
+}
+
+/** Sent mail stored per account; Compose orders its From list by it. */
+export async function getSentCounts(): Promise<AccountSentCount[]> {
+  return invoke('get_sent_counts');
 }
 
 export async function setAccountEnabled(accountId: string, enabled: boolean): Promise<void> {

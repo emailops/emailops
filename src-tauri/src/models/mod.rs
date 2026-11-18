@@ -26,6 +26,16 @@ pub struct Account {
     pub color: AccountColor,
 }
 
+/// How many messages the local DB holds as sent from an account. Compose orders
+/// its From list by it; accounts without sent mail are absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(TS), ts(export, export_to = "../src/types/generated/"))]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSentCount {
+    pub account_id: String,
+    pub sent_count: i64,
+}
+
 /// The colour that identifies an account wherever accounts are mixed (sidebar,
 /// unified inbox, "All accounts" calendar). Stored as its wire name in
 /// `accounts.color` (V040, CHECK-constrained to this set); the frontend maps
