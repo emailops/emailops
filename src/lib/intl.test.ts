@@ -5,7 +5,9 @@ import {
   formatDate,
   formatDayMonthYearTime,
   formatNumber,
+  formatReceptionTime,
   formatRelativeTime,
+  formattingLocale,
   relativeParts,
 } from './intl';
 
@@ -91,5 +93,40 @@ describe('formatDayMonthYearTime', () => {
 
   it('shows a dash for a missing timestamp', () => {
     expect(formatDayMonthYearTime(null)).toBe('—');
+  });
+});
+
+describe('formattingLocale', () => {
+  it('pairs the UI language with the system region', () => {
+    expect(formattingLocale('en', 'US')).toBe('en-US');
+    expect(formattingLocale('en', 'ES')).toBe('en-ES');
+  });
+
+  it('is the UI language alone when the system names no region', () => {
+    expect(formattingLocale('en', null)).toBe('en');
+  });
+});
+
+describe('formatReceptionTime', () => {
+  const nowMs = new Date(2026, 10, 16, 18, 30).getTime();
+  const august12 = new Date(2026, 7, 12, 9, 5).getTime() / 1000;
+
+  it("shows today's mail as HH:MM, zero-padded, 24h", () => {
+    const morning = new Date(2026, 10, 16, 9, 5).getTime() / 1000;
+    expect(formatReceptionTime(morning, 'en-US', nowMs)).toBe('09:05');
+  });
+
+  it('writes an older date month first for a US English user', () => {
+    expect(formatReceptionTime(august12, 'en-US', nowMs)).toBe('08/12/2026');
+  });
+
+  it('writes an older date day first for a UK or Spain English user', () => {
+    expect(formatReceptionTime(august12, 'en-GB', nowMs)).toBe('12/08/2026');
+    expect(formatReceptionTime(august12, 'en-ES', nowMs)).toBe('12/08/2026');
+  });
+
+  it("writes an older date in the order of the UI language's own convention", () => {
+    expect(formatReceptionTime(august12, 'es', nowMs)).toBe('12/08/2026');
+    expect(formatReceptionTime(august12, 'de', nowMs)).toBe('12.08.2026');
   });
 });

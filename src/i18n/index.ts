@@ -45,6 +45,19 @@ export async function initI18n(language: string | null | undefined): Promise<typ
   return i18n;
 }
 
+// The OS region (`"US"`, `"GB"`), read once at boot by `main.tsx`. Dates pair
+// it with the UI language (see `formattingLocale` in `lib/intl.ts`); a region
+// changed in the OS settings is picked up on the next launch.
+let osRegionValue: string | null = null;
+
+export function setOsRegion(region: string | null): void {
+  osRegionValue = region;
+}
+
+export function osRegion(): string | null {
+  return osRegionValue;
+}
+
 /** Re-export the configured i18n singleton for direct access where needed. */
 export { default as i18n } from 'i18next';
 export type { Language, Namespace } from './resources';

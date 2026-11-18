@@ -4531,6 +4531,23 @@ invited to also lands on their own calendar, so it keeps exactly one reminder.
 - *Google `accessRole == owner` as the ownership test*: a calendar shared with "manage sharing"
   rights reports `owner` too.
 
+## 2026-11-16 — Dates follow the UI language plus the OS region
+
+**Decision:** Dates on screen are written in a locale made of the UI language and the
+region of the OS locale (`get_system_region` → `formattingLocale`): an English UI writes
+`08/12/2026` on a US system and `12/08/2026` on a UK or Spanish one. The email list's date
+column follows it too, instead of a fixed `DD/MM/YYYY`. There is no date-format setting.
+**Context:** A user in the US asked to see the list's received date as mm/dd/yyyy. The UI
+offers four languages without regions, so the language alone would give every English user
+the US order. The region comes from `sys_locale`: the preferred-language list on macOS
+(which carries the system region, e.g. `en-ES`), the display language on Windows (not the
+regional-format setting), and `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` on Linux. It is read
+once at startup, so a region changed in the OS applies on the next launch. Code that formats
+with `i18n.language` directly instead of `useFormatters` still uses the UI language alone.
+**Rejected:** The UI language alone, because an English UI outside the US would switch to
+month-first. A date-format setting (Automatic / DD/MM / MM/DD / ISO): a new preference and
+strings in four languages for what the OS already says.
+
 ## 2026-11-17 — Sidebar density is a two-level preference that only changes vertical spacing
 
 **Decision:** The sidebar gets a remembered `sidebar_density` preference for the whole

@@ -1538,6 +1538,13 @@ export async function getSystemLocale(): Promise<string> {
   return invoke('get_system_locale');
 }
 
+// Returns the region of the OS locale ("US", "GB", "419"), or null when it
+// names none. main.tsx reads it once at startup; dates pair it with the UI
+// language (`formattingLocale` in lib/intl.ts).
+export async function getSystemRegion(): Promise<string | null> {
+  return invoke('get_system_region');
+}
+
 // Host capability probe — used by the onboarding wizard to recommend "Use AI"
 // or "Plain email client". Keyed on RAM rather than on being a Mac, so a
 // well-specced Linux or Windows machine is recommended AI too.
