@@ -1050,6 +1050,84 @@ pub struct ChatCorrection {
     pub reason: String,
 }
 
+/// Which composer a draft in the chat's context comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DraftKind {
+    New,
+    Reply,
+    ReplyAll,
+}
+
+/// The draft the user is writing, sent by the chat panel with each turn while
+/// a compose tab or an inline reply is on screen and its chip is on.
+///
+/// Read-only context: the chat answers about it and writes improved versions
+/// as answer text; it never writes into the composer. Like
+/// `context_thread_id` it is ephemeral — the turn replaces its prompt block
+/// with a note before the user message is saved, so the draft never reaches
+/// `prompt_content` or a later turn's history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatDraftContext {
+    pub kind: DraftKind,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub to: Vec<String>,
+    #[serde(default)]
+    pub cc: Vec<String>,
+    /// The user's own text: the body without the EmailOps signature node.
+    pub body: String,
+    /// The email a reply answers; the turn reads its thread. Absent on a new
+    /// email, and on a reply from another account than the chat's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_email_id: Option<String>,
+}
+
+impl ChatDraftContext {
+    pub const MAX_SUBJECT_CHARS: usize = 1_000;
+    pub const MAX_RECIPIENTS: usize = 50;
+    /// An input cap at the IPC boundary, not the window limit: whether the
+    /// draft fits the model is the context budget's call.
+    pub const MAX_BODY_CHARS: usize = 100_000;
+
+    /// Checks a draft that crossed the IPC boundary before any of it is used.
+    pub fn validate(&self) -> error::Result<()> {
+        let invalid = |what: &str| Err(error::AppError::InvalidInput(format!("Chat draft: {what}")));
+        if self.subject.chars().count() > Self::MAX_SUBJECT_CHARS {
+            return invalid("subject too long");
+        }
+        if self.to.len() > Self::MAX_RECIPIENTS || self.cc.len() > Self::MAX_RECIPIENTS {
+            return invalid("too many recipients");
+        }
+        if self.body.trim().is_empty() {
+            return invalid("empty body");
+        }
+        if self.body.chars().count() > Self::MAX_BODY_CHARS {
+            return invalid("body too long");
+        }
+        match (&self.reply_to_email_id, self.kind) {
+            (Some(_), DraftKind::New) => invalid("a new email answers no email"),
+            (Some(id), _) if id.trim().is_empty() => invalid("empty reply id"),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// What a chat trace records about the draft that rode in a turn: its size,
+/// never its text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftTrace {
+    pub kind: DraftKind,
+    /// Characters of the draft's body.
+    pub chars: u32,
+    /// The draft did not fit the model's window, so the turn answered with
+    /// the fixed "too long" reply instead of calling the model.
+    pub too_long: bool,
+}
+
 // ── Reasoning trace ────────────────────────────────────────────────────────
 
 /// Which retrieval/tool path the router picked for a given chat turn.
@@ -1414,6 +1492,10 @@ pub struct ChatTrace {
     /// here and not in the answer text, which later turns replay to the model.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub answer_truncated: bool,
+    /// The user's draft rode in this turn as context: its size, never its
+    /// text. `None` on a turn without one and on traces written before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<DraftTrace>,
 }
 
 /// One thing the context budget cut from a chat prompt so it fits the window
@@ -1958,6 +2040,7 @@ pub struct CreateTaskRequest {
 
 #[cfg(test)]
 mod tests {
+    use super::error::AppError;
     use super::*;
 
     #[test]
@@ -2037,5 +2120,134 @@ mod tests {
         assert_eq!(json["messageId"], "m1");
         assert_eq!(json["conversationId"], "c1");
         assert_eq!(json["phase"], "generating");
+    }
+
+    fn reply_draft() -> ChatDraftContext {
+        ChatDraftContext {
+            kind: DraftKind::Reply,
+            subject: "Re: Q3 report".into(),
+            to: vec!["ana@example.com".into()],
+            cc: Vec::new(),
+            body: "Hi Ana, the report is attached.".into(),
+            reply_to_email_id: Some("email-1".into()),
+        }
+    }
+
+    fn rejects(draft: &ChatDraftContext) -> bool {
+        matches!(draft.validate(), Err(AppError::InvalidInput(_)))
+    }
+
+    #[test]
+    fn a_reply_draft_within_every_limit_is_valid() {
+        assert!(reply_draft().validate().is_ok());
+    }
+
+    #[test]
+    fn a_draft_body_is_capped_at_its_input_limit() {
+        let mut draft = reply_draft();
+        draft.body = "a".repeat(ChatDraftContext::MAX_BODY_CHARS);
+        assert!(draft.validate().is_ok());
+        draft.body.push('a');
+        assert!(rejects(&draft));
+    }
+
+    #[test]
+    fn a_draft_body_limit_counts_characters_not_bytes() {
+        let mut draft = reply_draft();
+        draft.body = "ñ".repeat(ChatDraftContext::MAX_BODY_CHARS);
+        assert!(draft.validate().is_ok());
+    }
+
+    #[test]
+    fn a_draft_with_a_blank_body_is_rejected() {
+        let mut draft = reply_draft();
+        draft.body = " \n\t".into();
+        assert!(rejects(&draft));
+    }
+
+    #[test]
+    fn a_draft_subject_is_capped_at_its_input_limit() {
+        let mut draft = reply_draft();
+        draft.subject = "s".repeat(ChatDraftContext::MAX_SUBJECT_CHARS);
+        assert!(draft.validate().is_ok());
+        draft.subject.push('s');
+        assert!(rejects(&draft));
+    }
+
+    #[test]
+    fn a_draft_takes_at_most_fifty_addresses_in_to_and_in_cc() {
+        let addresses = |n: usize| (0..n).map(|i| format!("p{i}@example.com")).collect::<Vec<_>>();
+        let mut draft = reply_draft();
+        draft.to = addresses(ChatDraftContext::MAX_RECIPIENTS);
+        draft.cc = addresses(ChatDraftContext::MAX_RECIPIENTS);
+        assert!(draft.validate().is_ok());
+
+        let mut too_many_to = draft.clone();
+        too_many_to.to = addresses(ChatDraftContext::MAX_RECIPIENTS + 1);
+        assert!(rejects(&too_many_to));
+
+        let mut too_many_cc = draft;
+        too_many_cc.cc = addresses(ChatDraftContext::MAX_RECIPIENTS + 1);
+        assert!(rejects(&too_many_cc));
+    }
+
+    #[test]
+    fn only_a_reply_draft_names_the_email_it_answers() {
+        for (kind, reply_to, valid) in [
+            (DraftKind::New, None, true),
+            (DraftKind::New, Some("email-1"), false),
+            (DraftKind::Reply, Some("email-1"), true),
+            (DraftKind::ReplyAll, Some("email-1"), true),
+            // The chat leaves the id out when the reply belongs to another
+            // account, so a reply without one is still a valid draft.
+            (DraftKind::Reply, None, true),
+            (DraftKind::ReplyAll, None, true),
+            (DraftKind::Reply, Some("  "), false),
+        ] {
+            let mut draft = reply_draft();
+            draft.kind = kind;
+            draft.reply_to_email_id = reply_to.map(str::to_string);
+            assert_eq!(draft.validate().is_ok(), valid, "{kind:?} with {reply_to:?}");
+        }
+    }
+
+    #[test]
+    fn a_draft_crosses_the_ipc_boundary_in_camel_case() {
+        let draft: ChatDraftContext = serde_json::from_value(serde_json::json!({
+            "kind": "replyAll",
+            "subject": "Re: Q3 report",
+            "to": ["ana@example.com"],
+            "cc": [],
+            "body": "Hi Ana",
+            "replyToEmailId": "email-1"
+        }))
+        .unwrap();
+        assert_eq!(draft.kind, DraftKind::ReplyAll);
+        assert_eq!(draft.reply_to_email_id.as_deref(), Some("email-1"));
+    }
+
+    #[test]
+    fn a_trace_written_before_drafts_existed_still_reads() {
+        let trace: ChatTrace = serde_json::from_value(serde_json::json!({
+            "route": {"mode": "tools_first", "reason": "r", "classifier": "heuristic"},
+            "model": "m",
+            "totalElapsedMs": 1
+        }))
+        .unwrap();
+        assert!(trace.draft.is_none());
+    }
+
+    #[test]
+    fn a_draft_trace_serializes_without_any_draft_text() {
+        let trace = DraftTrace {
+            kind: DraftKind::Reply,
+            chars: 31,
+            too_long: false,
+        };
+        let json = serde_json::to_value(&trace).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"kind": "reply", "chars": 31, "tooLong": false})
+        );
     }
 }

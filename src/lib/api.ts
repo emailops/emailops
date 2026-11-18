@@ -26,6 +26,7 @@ import type {
   CalendarInvite,
   CatalogModel,
   ChatConversation,
+  ChatDraftContext,
   ChatMessage,
   ChatStarter,
   ClassificationConfig,
@@ -1820,6 +1821,18 @@ export async function sendChatMessage(
    * the thread, for this turn only.
    */
   contextAttachmentId?: string | null,
+  /**
+   * The draft the user is writing in a compose tab or an inline reply, as
+   * read-only context for this turn: subject, To, Cc and their own text. The
+   * backend never cuts it, never saves it with the message and never logs it.
+   */
+  contextDraft?: ChatDraftContext | null,
+  /**
+   * A composer is open, whether or not its draft is sent (the chip may be
+   * off): the backend then refuses `generate_email_draft`, which would replace
+   * that draft's body.
+   */
+  composerOpen = false,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1832,6 +1845,8 @@ export async function sendChatMessage(
     research,
     researchEstimateId: researchEstimateId ?? null,
     contextAttachmentId: contextAttachmentId ?? null,
+    contextDraft: contextDraft ?? null,
+    composerOpen,
   });
 }
 

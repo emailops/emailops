@@ -173,6 +173,16 @@ sugiere entonces **Resumir este documento**, **Puntos clave, fechas e importes**
 sobre este documento**. Un documento demasiado largo para la ventana de contexto del modelo se lee por partes, y la respuesta se
 construye con notas de cada parte.
 
+<!-- claim:ai-chat-mailbox-18 -->
+Mientras escribes un correo en una pestaña de redacción, o una respuesta o respuesta a todos
+bajo el correo abierto, el chip ofrece ese borrador: su asunto, sus destinatarios y tu propio
+texto, sin la firma. Pregunta *"¿he contestado a todo?"* o *"hazlo más corto"* y el chat
+responde a partir del borrador; una versión mejorada llega como texto en la respuesta, para
+que la copies en el borrador. El chat nunca cambia el borrador y, mientras está abierto, no
+escribe otro. Desactiva el chip para preguntar solo por el hilo. Un borrador demasiado largo
+para la ventana de contexto del modelo recibe un aviso que lo dice, no una revisión de su
+principio.
+
 <!-- claim:ai-chat-mailbox-17 -->
 Una conversación vacía muestra **Peticiones sugeridas** sacadas de tu correo, como el resumen
 de hoy o un hilo que sigue esperando tu respuesta, y **Otra cosa…** para escribir la tuya.
