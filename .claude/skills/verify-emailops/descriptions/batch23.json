@@ -27,6 +27,10 @@
     "src/lib/composeEditorExtensions.test.ts::drops the style of the list the selection sits in and keeps the list": "«Borrar formato» quita el estilo de la lista que contiene la selección y conserva la lista.",
     "src/lib/composeEditorExtensions.test.ts::keeps the background and style of a table cell": "«Borrar formato» conserva el fondo y el estilo de las celdas de una tabla.",
     "src/lib/composeEditorExtensions.test.ts::with nothing selected, makes the text typed next plain": "Sin selección, «Borrar formato» hace que lo siguiente que se escriba salga sin formato.",
-    "src/components/shared/RichTextEditor.font.test.tsx::clears the formatting of the selected text": "El botón «Borrar formato» de la barra deja sin formato el texto seleccionado."
+    "src/components/shared/RichTextEditor.font.test.tsx::clears the formatting of the selected text": "El botón «Borrar formato» de la barra deja sin formato el texto seleccionado.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Bullet list as an icon named by its tooltip": "El botón de lista con viñetas de la barra es un icono, sin texto, y su tooltip le da nombre.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Numbered list as an icon named by its tooltip": "El botón de lista numerada de la barra es un icono, sin texto, y su tooltip le da nombre.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Insert link as an icon named by its tooltip": "El botón de enlace de la barra es un icono, sin texto, y su tooltip le da nombre.",
+    "src/components/shared/RichTextEditor.font.test.tsx::shows Clear formatting as an icon named by its tooltip": "El botón de borrar formato de la barra es un icono, sin texto, y su tooltip le da nombre."
   }
 }

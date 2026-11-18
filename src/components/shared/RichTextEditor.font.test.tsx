@@ -79,7 +79,7 @@ describe('RichTextEditor font picker', () => {
     render('<p>Hello</p>');
 
     const labels = Array.from(fontPicker().options).map((option) => option.textContent);
-    expect(labels[0]).toBe('Default font');
+    expect(labels[0]).toBe('Font');
     expect(labels).toContain('Arial');
     expect(labels).toContain('Georgia');
     expect(labels).toContain('Times New Roman');
@@ -88,7 +88,7 @@ describe('RichTextEditor font picker', () => {
   it('shows the default font for unstyled text', () => {
     render('<p>Hello</p>');
 
-    expect(fontPicker().selectedOptions[0]?.textContent).toBe('Default font');
+    expect(fontPicker().selectedOptions[0]?.textContent).toBe('Font');
   });
 
   it('names the font of the text at the cursor', () => {
@@ -101,7 +101,7 @@ describe('RichTextEditor font picker', () => {
     render('<p>Hello</p>');
 
     const labels = Array.from(sizePicker().options).map((option) => option.textContent);
-    expect(labels[0]).toBe('Default size');
+    expect(labels[0]).toBe('Size');
     expect(labels).toContain('12');
     expect(labels).toContain('24');
   });
@@ -115,8 +115,8 @@ describe('RichTextEditor font picker', () => {
   it('follows the cursor into differently formatted text', () => {
     render('<p>plain <strong><span style="font-family: Georgia, serif; font-size: 24px">styled</span></strong></p>');
     moveCursorInto('plain');
-    expect(shownLabel(fontPicker())).toBe('Default font');
-    expect(shownLabel(sizePicker())).toBe('Default size');
+    expect(shownLabel(fontPicker())).toBe('Font');
+    expect(shownLabel(sizePicker())).toBe('Size');
     expect(boldButton().className).not.toContain('bg-primary-100');
 
     moveCursorInto('styled');
@@ -132,7 +132,7 @@ describe('RichTextEditor colour picker', () => {
     render('<p>Hello</p>');
 
     const labels = Array.from(colorPicker().options).map((option) => option.textContent);
-    expect(labels[0]).toBe('Default colour');
+    expect(labels[0]).toBe('Colour');
     expect(labels).toContain('Red');
     expect(labels).toContain('Blue');
   });
@@ -140,7 +140,7 @@ describe('RichTextEditor colour picker', () => {
   it('names the colour of the text at the cursor', () => {
     render('<p>plain <span style="color: rgb(220, 38, 38)">red</span></p>');
     moveCursorInto('plain');
-    expect(shownLabel(colorPicker())).toBe('Default colour');
+    expect(shownLabel(colorPicker())).toBe('Colour');
 
     moveCursorInto('red');
 
@@ -181,4 +181,18 @@ describe('RichTextEditor clear formatting', () => {
 
     expect(editor().getHTML()).toBe('<p>Hello</p><p>world</p>');
   });
+});
+
+describe('RichTextEditor compact toolbar', () => {
+  it.each(['Bullet list', 'Numbered list', 'Insert link', 'Clear formatting'])(
+    'shows %s as an icon named by its tooltip',
+    (title) => {
+      render('<p>Hello</p>');
+
+      const button = container.querySelector<HTMLButtonElement>(`button[title="${title}"]`);
+
+      expect(button?.textContent).toBe('');
+      expect(button?.querySelector('svg')).not.toBeNull();
+    },
+  );
 });

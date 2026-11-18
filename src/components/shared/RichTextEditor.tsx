@@ -160,20 +160,40 @@ const TEXT_COLORS = [
   { key: 'purple', value: 'rgb(124, 58, 237)' },
 ] as const;
 
-/** A T struck through: the usual mark for clearing formatting. */
-const CLEAR_FORMATTING_ICON = (
-  <svg
-    className="block w-4 h-4"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <path d="M3 3h10M8 3v10M2.5 13.5l11-11" />
-  </svg>
-);
+/** A 16 px line icon for a toolbar button; the button's title names it. */
+function toolbarIcon(paths: ReactNode): ReactNode {
+  return (
+    <svg
+      className="block w-4 h-4"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths}
+    </svg>
+  );
+}
+
+const ICONS = {
+  bulletList: toolbarIcon(
+    <>
+      <path d="M6.5 4h7M6.5 8h7M6.5 12h7" />
+      <path d="M3 4h.01M3 8h.01M3 12h.01" strokeWidth={2.5} />
+    </>,
+  ),
+  orderedList: toolbarIcon(
+    <path d="M7 4.5h6.5M7 11.5h6.5M2.5 3 4 2v4M2.5 10a1.25 1.25 0 0 1 2.5 0c0 1.25-2.5 1.75-2.5 3h2.5" />,
+  ),
+  link: toolbarIcon(
+    <path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-.5.5M9 7a2.5 2.5 0 0 0-3.5 0l-2 2a2.5 2.5 0 0 0 3.5 3.5l.5-.5" />,
+  ),
+  /** A T struck through: the usual mark for clearing formatting. */
+  clearFormatting: toolbarIcon(<path d="M3 3h10M8 3v10M2.5 13.5l11-11" />),
+};
 
 /** The value of `property` at the cursor if the picker offers it, else '' (the default). */
 function offered(style: string | null, property: string, options: readonly { value: string }[]): string {
@@ -254,7 +274,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
       title={title}
       onClick={onClick}
       disabled={disabled || !enabled}
-      className={`px-2 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+      className={`px-1.5 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         active
           ? 'bg-primary-100 text-primary-700 border-primary-200'
           : 'bg-white text-gray-700 border-transparent hover:bg-gray-100'
@@ -276,13 +296,15 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         editor.chain().focus().toggleUnderline().run(),
       )}
       {btn('S', 'Strikethrough', format.strike, () => editor.chain().focus().toggleStrike().run())}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
-      {btn('• List', 'Bullet list', format.bulletList, () => editor.chain().focus().toggleBulletList().run())}
-      {btn('1. List', 'Numbered list', format.orderedList, () => editor.chain().focus().toggleOrderedList().run())}
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
+      {btn(ICONS.bulletList, 'Bullet list', format.bulletList, () => editor.chain().focus().toggleBulletList().run())}
+      {btn(ICONS.orderedList, 'Numbered list', format.orderedList, () =>
+        editor.chain().focus().toggleOrderedList().run(),
+      )}
       {btn('❝', 'Quote', format.blockquote, () => editor.chain().focus().toggleBlockquote().run())}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
-      {btn('Link', 'Insert link', format.link || linkPopoverOpen, openLinkPopover)}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
+      {btn(ICONS.link, 'Insert link', format.link || linkPopoverOpen, openLinkPopover)}
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
       <Select
         value={format.font}
         options={[{ value: '', label: t('compose:defaultFont') }, ...FONTS]}
@@ -316,8 +338,8 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         disabled={disabled}
         size="xs"
       />
-      <span className="w-px h-4 bg-gray-300 mx-1" />
-      {btn(CLEAR_FORMATTING_ICON, t('compose:clearFormatting'), false, () =>
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
+      {btn(ICONS.clearFormatting, t('compose:clearFormatting'), false, () =>
         editor.chain().focus().clearFormatting().run(),
       )}
 
