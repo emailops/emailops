@@ -1440,7 +1440,8 @@ fn extract_body(msg: &mailparse::ParsedMail) -> (String, String) {
     let snippet_src: &str = if let Some(ref p) = plain {
         p.as_str()
     } else {
-        stripped = strip_html_tags_owned(&body);
+        // Text only: no style sheet, entities decoded.
+        stripped = crate::util::html::strip_html_for_fts(&body);
         &stripped
     };
     let snippet: String = snippet_src.chars().take(200).collect();
@@ -1514,20 +1515,6 @@ fn is_attached_file(part: &mailparse::ParsedMail, allow_named: bool) -> bool {
     let disposition = part.get_content_disposition();
     let named = disposition.params.contains_key("filename") || part.ctype.params.contains_key("name");
     disposition.disposition == mailparse::DispositionType::Attachment || (named && !allow_named)
-}
-
-fn strip_html_tags_owned(html: &str) -> String {
-    let mut out = String::new();
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out
 }
 
 // ── Attachment extraction ─────────────────────────────────────────────────────
@@ -3582,6 +3569,16 @@ mod tests {
 
     fn body_of(raw: &[u8]) -> String {
         extract_body(&parse_mail(raw).expect("parse")).0
+    }
+
+    /// The snippet of a message with only an HTML body is its text, without
+    /// the style sheet and with the entities decoded.
+    #[test]
+    fn the_snippet_of_an_html_only_message_is_its_decoded_text() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\nContent-Type: text/html\r\n\r\n\
+            <style>p { color: red }</style><p>It&#39;s caf&eacute;&nbsp;time</p>\r\n";
+        let (_, snippet) = extract_body(&parse_mail(raw).expect("parse"));
+        assert_eq!(snippet, "It's café time");
     }
 
     #[test]

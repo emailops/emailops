@@ -32,5 +32,15 @@
     "src/components/shared/RichTextEditor.font.test.tsx::shows Numbered list as an icon named by its tooltip": "El botón de lista numerada de la barra es un icono, sin texto, y su tooltip le da nombre.",
     "src/components/shared/RichTextEditor.font.test.tsx::shows Insert link as an icon named by its tooltip": "El botón de enlace de la barra es un icono, sin texto, y su tooltip le da nombre.",
     "src/components/shared/RichTextEditor.font.test.tsx::shows Clear formatting as an icon named by its tooltip": "El botón de borrar formato de la barra es un icono, sin texto, y su tooltip le da nombre."
+  },
+  "rust": {
+    "src-tauri/src/util/html.rs::decodes_spanish_accents_and_inverted_marks": "Las entidades de vocales acentuadas, ¡ y ¿ se decodifican.",
+    "src-tauri/src/util/html.rs::decodes_apos_and_the_zero_width_non_joiner": "&apos; y &zwnj; se decodifican.",
+    "src-tauri/src/util/html.rs::decodes_text_escaped_twice_only_once": "Un texto escapado dos veces (&amp;lt;) se decodifica una sola vez: queda el literal &lt;, no <.",
+    "src-tauri/src/util/html.rs::leaves_an_unknown_named_entity_and_a_bare_ampersand_untouched": "Una entidad desconocida y un & suelto se dejan tal cual.",
+    "src-tauri/src/sync/gmail.rs::parse_message_decodes_the_html_escaped_snippet": "El snippet que Gmail manda escapado (I&#39;m) se guarda decodificado (regresión: la lista mostraba &#39;).",
+    "src-tauri/src/sync/imap.rs::the_snippet_of_an_html_only_message_is_its_decoded_text": "El snippet de un mensaje IMAP solo HTML es su texto: sin la hoja de estilos y con las entidades decodificadas.",
+    "src-tauri/src/db/emails/snippets.rs::decodes_the_entities_of_stored_snippets": "La reparación de arranque decodifica las entidades de los snippets ya guardados.",
+    "src-tauri/src/db/emails/snippets.rs::decodes_only_once": "La reparación corre una sola vez: un segundo arranque no vuelve a decodificar el texto ya decodificado."
   }
 }
