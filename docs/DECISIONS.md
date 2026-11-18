@@ -4696,3 +4696,25 @@ database at all.
   thread or need combined variants.
 - *Sending the draft only when a classifier says the question is about it*: that
   classifier was rejected before; the chip lets the user control the cost, as with the PDF.
+
+## 2026-11-18 — The archive/delete undo window is a setting; Off commits at once without Undo
+
+**Decision:** Settings → Appearance → *Undo archive and delete*, right after *Undo send* and
+separate from it, sets the window of "Archive and delete wait out a six-second undo window
+before reaching the provider" (2026-10-01): Off, 6, 10, 20 or 30 seconds, 6 by default. It is
+stored the way Undo send is, as a SQLite preference (`ui.archive_delete_undo_secs`, seconds;
+unset or unknown values read as 6), loaded at startup into `undoWindowStore`, and read per
+action: the same value goes to the queue (`schedule(action, windowMs)`) and to the Undo
+toast. It applies to single and bulk archive and delete, and to the Undo offered after a
+snooze, which already shared the window. With Off, archive and delete call the provider at
+once (the path move-to-inbox takes) and show no toast; a refusal still rolls back with an
+error toast. A snooze then shows its "Snoozed until …" notice without Undo.
+**Context:** Issue #259: six seconds can be too short to catch a mistake, and people who want
+actions to happen at once could not turn the delay off.
+**Rejected:**
+- *Undo send's exact choices (off, 5, 10, 20, 30)*: the 6 s default must be a choice, and
+  5 next to 6 adds an option without a real difference.
+- *One setting for send and for archive/delete*: they hold back different things (a
+  message leaving the machine, a provider call) and the issue asked to keep them apart.
+- *Keeping the snooze Undo when the window is Off*: it would need a duration of its own,
+  and Off means no Undo.

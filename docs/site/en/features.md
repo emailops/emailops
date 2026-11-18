@@ -100,6 +100,11 @@ Archiving or deleting removes the conversations from the list at once and shows 
 **Undo** for 6 seconds. Your mail provider is only told when those seconds are up (or sooner, if
 you archive or delete something else or open another view), so Undo simply puts them back.
 
+<!-- claim:feat-organize-undo-window -->
+**Settings → Appearance → Undo archive and delete** sets that wait: off, 6, 10, 20 or 30 seconds,
+6 by default. With it off, archiving and deleting reach your mail provider at once, without Undo.
+The Undo offered after a snooze lasts as long. **Undo send** is a separate setting.
+
 <!-- claim:feat-organize-5 -->
 When the conversation you are reading leaves the list — archived, deleted, snoozed, or moved to
 Spam — the next one opens. **Settings → Appearance → After archiving or deleting** chooses
