@@ -64,6 +64,7 @@ import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
 import { fitColumns, LIST_COLUMN, parseWidth, readingAreaRoom, SIDEBAR_COLUMN } from '@/lib/columnResize';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
+import { newMessageAccountId } from '@/lib/composeSender';
 import { freshDraftToOpen } from '@/lib/draftOpen';
 import { errorText } from '@/lib/errors';
 import { buildFeedbackEmail, type FeedbackType } from '@/lib/feedback';
@@ -95,6 +96,7 @@ import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
+import { useDefaultSenderStore } from '@/stores/defaultSenderStore';
 import { pendingThreadActions, useEmailStore } from '@/stores/emailStore';
 import {
   useHelpDocsEnabledStore,
@@ -440,6 +442,10 @@ function AppInner() {
     clearError: clearAccountError,
     refetch: fetchAccounts,
   } = useAccounts();
+  // The account a new blank message starts from (Settings → Appearance);
+  // replies, drafts and links bring their own.
+  const defaultSenderId = useDefaultSenderStore((s) => s.accountId);
+  const newMessageAccount = newMessageAccountId(accounts, defaultSenderId, effectiveAccountId);
 
   // `accounts` can drop the id `removeAccount` filters it out synchronously,
   // before the `onDelete` handler below gets to clear this state — so this
@@ -789,7 +795,7 @@ function AppInner() {
   // and interpolated into the localized body's "technical info" line.
   const handleGiveFeedback = useCallback(
     async (type: FeedbackType) => {
-      if (!effectiveAccountId) return;
+      if (!newMessageAccount) return;
       try {
         const [diag, ai] = await Promise.all([api.getAppDiagnostics(), api.getAiConfig()]);
         // Use the i18next singleton so the fully-qualified `compose:` keys type-
@@ -806,12 +812,12 @@ function AppInner() {
         setViewMode('inbox');
         // Preserve the template's blank lines (answer space between questions)
         // as empty paragraphs rather than collapsing them.
-        openComposeTab(effectiveAccountId, [to], subject, plainTextToParagraphsHtml(body));
+        openComposeTab(newMessageAccount, [to], subject, plainTextToParagraphsHtml(body));
       } catch (error) {
         addLog('error', 'system', `Failed to open feedback email: ${errorText(error)}`);
       }
     },
-    [effectiveAccountId, openComposeTab, addLog],
+    [newMessageAccount, openComposeTab, addLog],
   );
 
   // Keep the memory store (tasks + badge counts) in sync with the active
@@ -849,6 +855,7 @@ function AppInner() {
   useEffect(() => {
     void useShortcutStore.getState().loadEnabled();
     void useAutoAdvanceStore.getState().loadMode();
+    void useDefaultSenderStore.getState().load();
   }, []);
   const listView = isEmailListView(viewMode);
   const conversationShown =
@@ -867,7 +874,7 @@ function AppInner() {
       void selectEmail(null);
     },
     compose: () => {
-      if (effectiveAccountId) setIsComposeOpen(true);
+      if (newMessageAccount) setIsComposeOpen(true);
     },
     focusSearch: () => {
       // Full-width list: the inline search box; elsewhere the search overlay.
@@ -2177,10 +2184,10 @@ function AppInner() {
         />
       )}
 
-      {isComposeOpen && effectiveAccountId && (
+      {isComposeOpen && newMessageAccount && (
         <ComposeModal
           accounts={accounts}
-          defaultAccountId={effectiveAccountId}
+          defaultAccountId={newMessageAccount}
           defaultToRecipients={composePrefillTo}
           onClose={() => {
             setIsComposeOpen(false);

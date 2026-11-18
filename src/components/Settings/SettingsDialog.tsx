@@ -16,6 +16,7 @@ import { AutoAdvanceSetting } from './AutoAdvanceSetting';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
+import { DefaultSenderSetting } from './DefaultSenderSetting';
 import { DocumentsSettings } from './DocumentsSettings';
 import { JunkSettings } from './JunkSettings';
 import { KeyboardShortcutsSetting } from './KeyboardShortcutsSetting';
@@ -356,6 +357,7 @@ function AppearancePanel({
         </div>
       </section>
       <SidebarDensitySetting value={sidebarDensity} onChange={onChangeSidebarDensity} />
+      <DefaultSenderSetting />
       <UndoSendSetting />
       <AutoAdvanceSetting />
       <KeyboardShortcutsSetting />

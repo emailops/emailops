@@ -113,6 +113,25 @@ impl Language {
     }
 }
 
+/// The region subtag of a BCP-47 locale (`"en-US"` → `"US"`, `"zh-Hans-CN"` →
+/// `"CN"`, `"es-419"` → `"419"`), uppercased, or `None` when it names none.
+/// The frontend writes dates in the UI language plus this region, so an
+/// English UI on a US system reads `08/12/2026` and on a UK one `12/08/2026`.
+pub fn region_subtag(locale: &str) -> Option<String> {
+    let mut subtags = locale.trim().split('-').skip(1).peekable();
+    // An optional four-letter script (`Hans`) sits between language and region.
+    if subtags
+        .peek()
+        .is_some_and(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        subtags.next();
+    }
+    let candidate = subtags.next()?;
+    let alpha2 = candidate.len() == 2 && candidate.chars().all(|c| c.is_ascii_alphabetic());
+    let numeric3 = candidate.len() == 3 && candidate.chars().all(|c| c.is_ascii_digit());
+    (alpha2 || numeric3).then(|| candidate.to_ascii_uppercase())
+}
+
 /// Strip the small set of Latin accents we expect in language-name inputs.
 /// Not a full Unicode normalisation — we only care about the few names this
 /// module accepts. Keeps the parser dependency-free.
@@ -478,5 +497,41 @@ mod tests {
             db.get_preference(PREF_AI_OUTPUT_LANGUAGE_V2).unwrap().as_deref(),
             Some("fr")
         );
+    }
+
+    // ── region_subtag ───────────────────────────────────────────────────
+
+    #[test]
+    fn region_subtag_reads_the_region_after_the_language() {
+        assert_eq!(region_subtag("en-US").as_deref(), Some("US"));
+        assert_eq!(region_subtag("en-ES").as_deref(), Some("ES"));
+    }
+
+    #[test]
+    fn region_subtag_skips_a_script_subtag() {
+        assert_eq!(region_subtag("zh-Hans-CN").as_deref(), Some("CN"));
+    }
+
+    #[test]
+    fn region_subtag_accepts_a_numeric_region() {
+        assert_eq!(region_subtag("es-419").as_deref(), Some("419"));
+    }
+
+    #[test]
+    fn region_subtag_uppercases_the_region() {
+        assert_eq!(region_subtag("en-gb").as_deref(), Some("GB"));
+    }
+
+    #[test]
+    fn region_subtag_is_none_without_a_region() {
+        assert_eq!(region_subtag("en"), None);
+        assert_eq!(region_subtag("zh-Hans"), None);
+        assert_eq!(region_subtag(""), None);
+    }
+
+    #[test]
+    fn region_subtag_rejects_a_subtag_that_is_not_a_region() {
+        assert_eq!(region_subtag("en-USA"), None);
+        assert_eq!(region_subtag("en-1"), None);
     }
 }

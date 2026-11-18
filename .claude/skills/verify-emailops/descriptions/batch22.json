@@ -6,7 +6,13 @@
     "src-tauri/src/services/emails/inline_repair.rs::a_fetch_that_resolves_nothing_more_keeps_the_stored_body": "Si el proveedor no resuelve más imágenes se conserva el cuerpo guardado y no se le vuelve a preguntar en esta ejecución.",
     "src-tauri/src/services/emails/inline_repair.rs::a_failed_fetch_keeps_the_stored_body_and_tries_again_next_time": "Si la descarga falla se muestra el cuerpo guardado y se reintenta la próxima vez que se abra el correo.",
     "src-tauri/src/services/emails/inline_repair.rs::a_message_gone_from_the_provider_is_not_asked_for_again": "Un mensaje que ya no existe en el proveedor conserva su cuerpo y no se vuelve a pedir en esta ejecución.",
-    "src-tauri/src/services/emails/inline_repair.rs::imap_mail_never_lost_its_images_and_is_left_alone": "Un correo IMAP no se pide de nuevo al proveedor, porque esa vía nunca perdió las imágenes."
+    "src-tauri/src/services/emails/inline_repair.rs::imap_mail_never_lost_its_images_and_is_left_alone": "Un correo IMAP no se pide de nuevo al proveedor, porque esa vía nunca perdió las imágenes.",
+    "src-tauri/src/services/i18n.rs::region_subtag_reads_the_region_after_the_language": "Lee la región que sigue al idioma en la configuración regional del sistema: \"en-US\" da \"US\" y \"en-ES\" da \"ES\".",
+    "src-tauri/src/services/i18n.rs::region_subtag_skips_a_script_subtag": "Salta el código de escritura de cuatro letras que puede ir entre idioma y región: \"zh-Hans-CN\" da \"CN\".",
+    "src-tauri/src/services/i18n.rs::region_subtag_accepts_a_numeric_region": "Acepta una región numérica de tres cifras: \"es-419\" (español de Latinoamérica) da \"419\".",
+    "src-tauri/src/services/i18n.rs::region_subtag_uppercases_the_region": "Devuelve la región en mayúsculas aunque el sistema la escriba en minúsculas: \"en-gb\" da \"GB\".",
+    "src-tauri/src/services/i18n.rs::region_subtag_is_none_without_a_region": "Sin región en la configuración del sistema (\"en\", \"zh-Hans\" o cadena vacía) no devuelve ninguna, y las fechas siguen solo el idioma de la interfaz.",
+    "src-tauri/src/services/i18n.rs::region_subtag_rejects_a_subtag_that_is_not_a_region": "No toma como región algo que no lo es, como \"USA\" o \"1\": solo valen dos letras o tres cifras."
   },
   "vitest": {
     "src/components/Documents/DocEditor.test.tsx::asks before leaving through a link while editing too": "En un documento editable, pulsar un enlace también pide confirmación antes de salir de la app.",
@@ -23,6 +29,15 @@
     "src/components/EmailView/composerPastedFiles.test.tsx::is attached in Compose": "Un archivo pegado en el cuerpo de Compose se guarda con el borrador como adjunto.",
     "src/components/EmailView/composerPastedFiles.test.tsx::is attached in a compose tab": "Un archivo pegado en el cuerpo de una pestaña de redacción se guarda con el borrador como adjunto.",
     "src/components/EmailView/composerPastedFiles.test.tsx::is attached in reply": "Un archivo pegado en el cuerpo de una respuesta se guarda con el borrador como adjunto.",
-    "src/components/EmailView/composerPastedFiles.test.tsx::is attached in forward": "Un archivo pegado en el cuerpo de un reenvío se guarda con el borrador como adjunto."
+    "src/components/EmailView/composerPastedFiles.test.tsx::is attached in forward": "Un archivo pegado en el cuerpo de un reenvío se guarda con el borrador como adjunto.",
+    "src/lib/intl.test.ts::pairs the UI language with the system region": "Las fechas se escriben con el idioma de la interfaz más la región del sistema: inglés en un sistema de EE. UU. es \"en-US\" y en uno de España \"en-ES\".",
+    "src/lib/intl.test.ts::is the UI language alone when the system names no region": "Si el sistema no indica región, las fechas usan solo el idioma de la interfaz.",
+    "src/lib/intl.test.ts::shows today's mail as HH:MM, zero-padded, 24h": "En la lista, un correo de hoy muestra solo la hora en formato HH:MM de 24 horas, con ceros a la izquierda.",
+    "src/lib/intl.test.ts::writes an older date month first for a US English user": "En la lista, un correo anterior a hoy muestra el mes primero para un usuario en inglés de EE. UU.: 08/12/2026 para el 12 de agosto.",
+    "src/lib/intl.test.ts::writes an older date day first for a UK or Spain English user": "En la lista, un usuario en inglés con región Reino Unido o España ve el día primero: 12/08/2026.",
+    "src/lib/intl.test.ts::writes an older date in the order of the UI language's own convention": "En la lista, la fecha sigue la convención del idioma de la interfaz: 12/08/2026 en español y 12.08.2026 en alemán.",
+    "src/hooks/useFormatters.test.tsx::writes the list date month first on a US system": "Con la interfaz en inglés y un sistema de EE. UU., la columna de fecha de la lista escribe el mes primero (08/12/2026).",
+    "src/hooks/useFormatters.test.tsx::writes the list date day first on a UK system": "Con la interfaz en inglés y un sistema del Reino Unido, la columna de fecha de la lista escribe el día primero (12/08/2026).",
+    "src/hooks/useFormatters.test.tsx::formats the other dates in the same locale as the list": "Las demás fechas que pasan por useFormatters (panel de lectura, contactos, borradores) usan la misma configuración regional que la lista."
   }
 }

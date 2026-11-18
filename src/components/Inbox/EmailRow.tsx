@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
+import { useFormatters } from '@/hooks/useFormatters';
 import { bulkMoveTargets } from '@/lib/bulkActions';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { emailsToDrag, setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
@@ -83,6 +84,7 @@ export function EmailRow({
   inSentView = false,
 }: EmailRowProps) {
   const { t } = useTranslation(['inbox', 'common']);
+  const fmt = useFormatters();
   // Who the row names: the sender, or the recipients of a message the user
   // sent. The avatar, the drag image and the menu's filter items follow it.
   const party = rowParty(email, {
@@ -112,7 +114,7 @@ export function EmailRow({
     />
   );
   // Search and smart-filter rows are dated by their thread's latest activity.
-  const receivedTime = formatReceptionTime(email.threadLatestAt ?? email.timestamp);
+  const receivedTime = fmt.receivedAt(email.threadLatestAt ?? email.timestamp);
   // Hide classification chips when the master AI switch is off — the tags
   // remain in the DB (so toggling AI back on is lossless), but the user has
   // explicitly opted out of seeing AI-derived metadata in the inbox.
@@ -606,16 +608,4 @@ function TriageBadge({ status }: { status: Email['triageStatus'] }) {
   const { label, color } = config[status];
 
   return <span className={`inline-block px-2 py-0.5 text-xs rounded-full ${color}`}>{label}</span>;
-}
-
-/** Format a unix timestamp (seconds) as HH:MM for today's emails or DD/MM/YYYY for older ones. */
-function formatReceptionTime(timestampSec: number): string {
-  const d = new Date(timestampSec * 1000);
-  const now = new Date();
-  const isToday =
-    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  if (isToday) {
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  }
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 }

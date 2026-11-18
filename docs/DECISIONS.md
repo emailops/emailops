@@ -4498,6 +4498,22 @@ not saved at all.
   local and provider copies, keeping the original when the From account changes, an "open as
   independent copy" action): each is a change of its own; left out.
 
+## 2026-11-13 — A chosen default sender overrides the view; From lists follow sent-mail usage
+
+**Decision:** Settings → Appearance → "Send new messages from" holds either "Account of the
+selected view" (the default, and the behaviour before it existed) or one enabled account.
+A chosen account starts every new blank message — Compose, the `c` shortcut, Contacts'
+Compose, the feedback email — whichever account the sidebar shows; replies, forwards,
+drafts, outbox restores, `mailto:` links and chat drafts keep their own account. Every From
+list (new message, compose tab, reply/forward) is always ordered by the sent mail stored
+locally per account (`is_sent`), most first, ties in account order; reordering never
+changes the selected sender, and the counts never leave the machine.
+**Context:** GitHub issue #273: with several accounts the sender of a new message was
+whatever account happened to be selected, so every blank draft needed checking.
+**Rejected:** applying the default only under "All accounts" (the selected account would
+still decide most new messages); a switch for the usage order, off by default (the
+developer chose the order always on).
+
 ## 2026-11-13 — Files pasted into the composer body are attached; images stay inline
 
 **Decision:** Pasting into the body of Compose, a compose tab, Reply or Forward attaches the
@@ -4531,43 +4547,22 @@ invited to also lands on their own calendar, so it keeps exactly one reminder.
 - *Google `accessRole == owner` as the ownership test*: a calendar shared with "manage sharing"
   rights reports `owner` too.
 
-## 2026-11-12 — The chat reads the draft being written; it never writes into it
+## 2026-11-16 — Dates follow the UI language plus the OS region
 
-**Decision:** While a compose tab or an inline reply (reply or reply-all; not forwards, not
-the compose modal) is on screen, each chat turn carries that draft as read-only context: its
-subject, To and Cc, and the text the user wrote without the EmailOps signature. It travels
-as its own field of the turn (`TurnContext.draft`), sent by the frontend with every turn,
-and rides in the final user message after the open thread and before the question. A reply's
-thread travels as part of the draft, through `reply_to_email_id`, also when the reply is in
-a compose tab, and is read with the answered message first. The draft is never cut to fit:
-when it is what does not fit the window, the turn answers with a fixed "too long" reply
-instead of reviewing its start. It is never saved with the user message (a note replaces
-it), and logs and traces keep its size only. While a composer is open, even with its chip
-switched off, `generate_email_draft` is refused and the thread block stops suggesting it.
-The draft chip is a toggle like the thread chip. An active compose tab no longer offers
-the selected email as context. On a research turn the draft does not travel, like the
-thread and the PDF.
-The chat never writes into the draft: an improved version arrives as answer text and the
-user pastes it.
-**Context:** Asking the chat to review a draft meant pasting it into the chat; asking about
-"my draft" made the model search the Drafts folder. Two earlier entries are amended. "Chat
-docks on the right; ambient context is the open thread only" (2026-08-04): ambient context
-is now the open thread, the open PDF and the draft. "The chat reads an open PDF through local
-text extraction, without OCR" (2026-10-28) rejected sending content from the frontend
-because the CLI and evals could not drive that path; here the CLI (`--draft`) and the evals
-(`ambient_draft`) build the same `ChatDraftContext`, and an unsaved draft is not in the
-database at all.
-**Rejected:**
-- *An "Apply to draft" button and a "Copy" button*: dropped by the developer on 12/11/2026
-  for the complexity they add (a per-turn rewrite route, a proposal card, undo, version
-  checks).
-- *Loading the draft by id from the database*: the autosave lags the editor by up to a
-  second and skips some bodies, so the turn would review an older text than the one on
-  screen.
-- *A new `Ambient::Draft` variant*: `Ambient` holds one value, so a reply would lose its
-  thread or need combined variants.
-- *Sending the draft only when a classifier says the question is about it*: that
-  classifier was rejected before; the chip lets the user control the cost, as with the PDF.
+**Decision:** Dates on screen are written in a locale made of the UI language and the
+region of the OS locale (`get_system_region` → `formattingLocale`): an English UI writes
+`08/12/2026` on a US system and `12/08/2026` on a UK or Spanish one. The email list's date
+column follows it too, instead of a fixed `DD/MM/YYYY`. There is no date-format setting.
+**Context:** A user in the US asked to see the list's received date as mm/dd/yyyy. The UI
+offers four languages without regions, so the language alone would give every English user
+the US order. The region comes from `sys_locale`: the preferred-language list on macOS
+(which carries the system region, e.g. `en-ES`), the display language on Windows (not the
+regional-format setting), and `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` on Linux. It is read
+once at startup, so a region changed in the OS applies on the next launch. Code that formats
+with `i18n.language` directly instead of `useFormatters` still uses the UI language alone.
+**Rejected:** The UI language alone, because an English UI outside the US would switch to
+month-first. A date-format setting (Automatic / DD/MM / MM/DD / ISO): a new preference and
+strings in four languages for what the OS already says.
 
 ## 2026-11-17 — Sidebar density is a two-level preference that only changes vertical spacing
 
@@ -4663,3 +4658,41 @@ loses fonts, colours, columns, headers and page layout, which the developer want
 Extracting the chat text in the frontend and sending it with the turn — the eval harness
 and the CLI read documents through the backend, and the backend would have to trust text
 the webview sends.
+
+## 2026-11-12 — The chat reads the draft being written; it never writes into it
+
+**Decision:** While a compose tab or an inline reply (reply or reply-all; not forwards, not
+the compose modal) is on screen, each chat turn carries that draft as read-only context: its
+subject, To and Cc, and the text the user wrote without the EmailOps signature. It travels
+as its own field of the turn (`TurnContext.draft`), sent by the frontend with every turn,
+and rides in the final user message after the open thread and before the question. A reply's
+thread travels as part of the draft, through `reply_to_email_id`, also when the reply is in
+a compose tab, and is read with the answered message first. The draft is never cut to fit:
+when it is what does not fit the window, the turn answers with a fixed "too long" reply
+instead of reviewing its start. It is never saved with the user message (a note replaces
+it), and logs and traces keep its size only. While a composer is open, even with its chip
+switched off, `generate_email_draft` is refused and the thread block stops suggesting it.
+The draft chip is a toggle like the thread chip. An active compose tab no longer offers
+the selected email as context. On a research turn the draft does not travel, like the
+thread and the PDF.
+The chat never writes into the draft: an improved version arrives as answer text and the
+user pastes it.
+**Context:** Asking the chat to review a draft meant pasting it into the chat; asking about
+"my draft" made the model search the Drafts folder. Two earlier entries are amended. "Chat
+docks on the right; ambient context is the open thread only" (2026-08-04): ambient context
+is now the open thread, the open PDF and the draft. "The chat reads an open PDF through local
+text extraction, without OCR" (2026-10-28) rejected sending content from the frontend
+because the CLI and evals could not drive that path; here the CLI (`--draft`) and the evals
+(`ambient_draft`) build the same `ChatDraftContext`, and an unsaved draft is not in the
+database at all.
+**Rejected:**
+- *An "Apply to draft" button and a "Copy" button*: dropped by the developer on 12/11/2026
+  for the complexity they add (a per-turn rewrite route, a proposal card, undo, version
+  checks).
+- *Loading the draft by id from the database*: the autosave lags the editor by up to a
+  second and skips some bodies, so the turn would review an older text than the one on
+  screen.
+- *A new `Ambient::Draft` variant*: `Ambient` holds one value, so a reply would lose its
+  thread or need combined variants.
+- *Sending the draft only when a classifier says the question is about it*: that
+  classifier was rejected before; the chip lets the user control the cost, as with the PDF.

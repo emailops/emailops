@@ -11,6 +11,7 @@ import { useComposerSignature } from '@/hooks/useComposerSignature';
 import { useDraftFiles } from '@/hooks/useDraftFiles';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useFormatters } from '@/hooks/useFormatters';
+import { useSenderOptions } from '@/hooks/useSenderOptions';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -235,6 +236,7 @@ export function ReplyCompose({
   const { t } = useTranslation(['compose', 'common']);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
+  const senderOptions = useSenderOptions(accounts);
   // Editor holds HTML. AI drafts and the initial empty state are plain text;
   // we wrap them in <p>...</p> so Tiptap renders them as one paragraph each.
   const [bodyHtml, setBodyHtml] = useState<string>(() =>
@@ -746,7 +748,7 @@ export function ReplyCompose({
           <Select
             value={fromAccountId}
             onChange={setFromAccountId}
-            options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
+            options={senderOptions}
             ariaLabel={t('compose:from')}
             fullWidth
           />

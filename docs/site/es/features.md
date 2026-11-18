@@ -33,6 +33,13 @@ vacío para enviar solo con la dirección. Las cuentas de Gmail empiezan con el 
 configuración «Enviar como» de Gmail, y las IMAP con el nombre visible que indicaste al
 conectarlas. El correo enviado por Outlook lleva el nombre que Microsoft tiene para el buzón.
 
+<!-- claim:feat-accounts-default-sender -->
+**Ajustes → Apariencia → Enviar mensajes nuevos desde** elige la cuenta con la que empieza un
+mensaje nuevo, sea cual sea la cuenta que muestra la barra lateral; con **Cuenta de la vista
+seleccionada**, un mensaje nuevo empieza desde la cuenta que estás viendo. Las respuestas y los
+reenvíos mantienen la cuenta de su mensaje, y los borradores la cuenta con la que se guardaron.
+Cada lista **De** pone primero la cuenta desde la que más correo envías, contado en tu equipo.
+
 ## Bandeja unificada {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
