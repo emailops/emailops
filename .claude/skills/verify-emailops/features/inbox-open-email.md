@@ -7,11 +7,12 @@ the list.
 
 ## Sub-features
 
-- `inbox.list` rows render sender + subject for the selected account.
+- `inbox.list` rows render sender + subject for the selected account; the body preview after the subject is plain text, with no HTML entities (`&#39;`, `&iacute;`): the Gmail and IMAP syncs decode them, and a one-time startup repair decodes the snippets stored before.
 - `inbox.categories` the Primary/Social/Updates/Forums/Promotions tabs filter the list.
 - `inbox.open` clicking a row shows the thread with its subject as the page H1.
 - `inbox.close` Back hides the thread and shows the list again.
 - `inbox.unread` the header's **All / Unread** toggle lists only conversations with an unread message (flat views: unread messages), in every mailbox view and sidebar filter; hidden during a free-text search.
+- `inbox.columns` the folder sidebar and (split view) the email list resize from the line on their right edge: drag, arrows / Home / End, double-click for the default; a column stops growing when the reading pane reaches 320 px; when the right dock opens or the window narrows, a widened column gives its extra width back (list first, down to its default) and gets it back when the dock closes; a drag saves once, on release; the widths survive a relaunch.
 
 ## How to get to it (user POV)
 
@@ -33,6 +34,19 @@ Preconditions: baseline; account `demo-acct-work` selected (default). `R=$(readl
 - Unread → `$V wd click 'button=Unread'` → `$V wd js '[...document.querySelectorAll("[role=radio]")].map(b=>b.textContent+":"+b.getAttribute("aria-checked")).join(",")'` prints `"All:false,Unread:true"`; `$V wd js 'document.querySelectorAll("div[role=button]").length'` prints the unread thread count of the view (6 in `demo-acct-work`'s inbox on a fresh demo DB: Nadia Brunner, Marisol Vega, Juan Ramírez, two BorgBase, Hetzner) and the list ends in *No more emails*. Open the Nadia Brunner row and go **Back**: the row is still listed, now read. `$V wd click 'button=All'` restores the full list.
 - Unread on a filter → type `tag:priority=urgent` in the list search + Enter → the toggle is `present` and Unread/All list 1/2 rows; type a plain word (`invoice`) instead → `$V wd exists '[role="radiogroup"]'` prints `absent`.
 
+### `inbox.columns`
+
+Preconditions: baseline. The demo DB ships `inbox_layout = full-width`: switch to **Split view** in Settings → Appearance first and put **Full-width list** back at the end. The handles are `[role=separator]` labelled *Resize the folder list* and *Resize the email list* (the third one, *Resize chat panel*, is the right dock's). Measure with `getBoundingClientRect().width` of `aside.theme-chrome`, the list handle's `previousElementSibling` and `[data-reading-pane]`.
+
+1. Keyboard → focus a handle and dispatch `keydown` `End` / `ArrowLeft` (`$V wd js`). With the right dock open on the 1200 px demo window the reading pane is 180 px, already under 320: End leaves the width alone, ArrowLeft takes 16 px off and saves it.
+2. Drag → close the dock (`Close chat panel`), then in three `$V wd js` calls (React needs a turn between them): `pointerdown` on the handle (`new PointerEvent(…, { clientX, button: 0, pointerId: 1, isPrimary: true })`), a series of `pointermove` on `window`, `pointerup` on `window`. Between the moves and the release, `sqlite3 .emailops-demo-data/emailops.db "SELECT value FROM user_preferences WHERE key='layout.list_width'"` still prints the old width and `[data-testid=column-resize-drag-capture]` exists; after the release the row holds the new width and the layer is gone. `__TAURI_INTERNALS__.invoke` is read-only, so the database read is the way to see that a drag writes once.
+3. Floor → drag or End until the column stops: `[data-reading-pane]` is exactly 320 px wide; a sidebar drag with the pane at 320 does not move; with room left the sidebar stops at its 420 px maximum.
+4. Double-click → `pointerdown` + `pointerup` without moving (no capture layer appears), then a `dblclick` on the handle: the widths go back to 256 / 384.
+5. `$V cleanup`, `$V launch` → the handles' `aria-valuenow` show the saved widths.
+6. Dock reopened → with the dock closed, End on both handles (sidebar first); then open the dock (`Open chat` in the list header or the rail): the list's `aria-valuenow` drops to 384 before the sidebar's moves, neither goes below its default (256 / 384), the reading pane keeps `max(320, what the defaults leave)` px and the list is not clipped (its right edge ≤ the pane's left edge). The `layout.*_width` rows keep the widened values; closing the dock brings them back.
+
+Live run 17/11/2026 (T-0064, PR #134 takeover): steps 1–5 passed (pane 180 → End no-op; drag 368 → 584 with the DB at 368 mid-drag; pane 320 at every stop; sidebar capped at 420; double-click 256 / 384; 420 / 420 after relaunch); evidence in `src-tauri/reports/verify/20261117-084349/`. Not covered by the floor in that run: reopening the dock (or narrowing the window) after widening the columns left the pane at 0 px and clipped the list's right edge by about 20 px; `fitColumns` (step 6) fixed it afterwards. The wheel handoff over a wide email has no live check: cua-driver's scroll sends keys, not wheel events; the bridge tests in `EmailHtmlFrame.zoom.test.ts` cover it.
+
 Live run 14/10/2026 (T-0014): Unread proven on the work inbox (6 rows), the unified inbox (4 rows under the Primary tab), a `tag:` filter (1 vs 2) and Sent (0 vs 12); opening a thread kept it listed; evidence in `src-tauri/reports/verify/20261014-155030/`.
 
 Live run 11/09/2026: open and close proven on the *Nadia Brunner* and *Marisol Vega · Production bug* rows; evidence in `src-tauri/reports/verify/20260911-141357/`.
@@ -50,9 +64,11 @@ Live run 11/09/2026: open and close proven on the *Nadia Brunner* and *Marisol V
 |---|---|
 | list queries, thread order, soft delete, mailbox state, redownload | unit (`db::emails::*`, `services::emails::*`) |
 | HTML sanitising, remote content blocking (images, background images, media) | unit + vitest (`util::html`, `emailFormatting`, `EmailHtmlFrame.*`, `EmailPreviewById.*`) |
+| list preview without HTML entities: decoder, Gmail and IMAP snippets, one-time repair of stored ones | unit (`util::html::decodes_*`, `sync::gmail::*snippet*`, `sync::imap::*snippet*`, `db::emails::snippets`) |
 | stale responses, auto-select, navigation | vitest (`emailStore.*`, `Inbox.*`) |
 | unread filter: list + count + filters SQL, thread-level read dot, toggle, refetch | unit (`db::emails::crud` / `search` / `mailbox_state` `*unread*`, `services::emails::list_tests`) + vitest (`emailStore.unreadOnly`, `useEmails`, `Inbox.unreadToggle`) |
 | lists, threads, read state, deletes against the in-memory DB | integration (`*email*`, `*thread*`, `*mailbox*`, `mark_as_read_*`) |
 | email command arguments | contract (`src/lib/apiContract/inbox.api.test.ts`) |
 | list, open, back, row menu, remote images blocked, Sent / Spam / Deleted / Attachments views | e2e (`Inbox/*`, `Vistas/*`) |
+| column widths: limits, reading-pane floor, fit to a shrinking space, drag saved once, keyboard, double-click | vitest (`src/lib/columnResize`, `ColumnResizeHandle`, `useColumnSpace`) |
 | eval | n/a: reading mail has no model reply of its own; questions about an open thread are chat evals (`thread_*`) |

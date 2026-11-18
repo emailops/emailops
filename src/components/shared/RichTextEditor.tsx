@@ -11,6 +11,8 @@
  *   - inline images via paste / drag-drop (stored as data: URLs in the
  *     editor; converted to cid: + attachments by `prepareOutgoingHtml`
  *     just before send)
+ *   - other pasted or dropped files handed to `onAttachFiles`, so the
+ *     composer attaches them
  *
  * It also carries, without any toolbar for them, the tables and inline
  * styles of a draft written in the provider's own web client, so editing
@@ -24,8 +26,9 @@
  * reset its content when `value` changes externally (e.g. AI draft arrived).
  */
 
+import type { EditorView } from '@tiptap/pm/view';
 import { type Editor, EditorContent, useEditor, useEditorState } from '@tiptap/react';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/shared/Select';
 import { currentPlatform } from '@/lib/api';
@@ -40,6 +43,11 @@ export interface RichTextEditorProps {
   disabled?: boolean;
   /** Extra classes for the editor's contenteditable surface. */
   contentClassName?: string;
+  /**
+   * Gets the pasted or dropped files that are not images (those go inline).
+   * Without it, such a paste keeps the browser's default.
+   */
+  onAttachFiles?: (files: File[]) => void;
 }
 
 export function RichTextEditor({
@@ -48,7 +56,12 @@ export function RichTextEditor({
   placeholder,
   disabled = false,
   contentClassName,
+  onAttachFiles,
 }: RichTextEditorProps) {
+  // The editor keeps the handlers it was created with; read the latest one.
+  const attachRef = useRef(onAttachFiles);
+  attachRef.current = onAttachFiles;
+
   const editor = useEditor({
     extensions: composeEditorExtensions,
     content: value,
@@ -64,41 +77,22 @@ export function RichTextEditor({
         ].join(' '),
         ...(placeholder ? { 'data-placeholder': placeholder } : {}),
       },
+      // A paste with files (a Finder copy) takes them all, so the file names
+      // that come with them as text are not typed into the body.
       handlePaste(view, event) {
-        const items = event.clipboardData?.items;
-        if (!items) return false;
-        for (const item of Array.from(items)) {
-          if (item.kind === 'file' && item.type.startsWith('image/')) {
-            const file = item.getAsFile();
-            if (!file) continue;
-            event.preventDefault();
-            void readFileAsDataUrl(file).then((dataUrl) => {
-              view.dispatch(
-                view.state.tr.replaceSelectionWith(
-                  view.state.schema.nodes.image.create({ src: dataUrl, alt: file.name }),
-                ),
-              );
-            });
-            return true;
-          }
-        }
-        return false;
+        const { images, others } = splitFiles(event.clipboardData?.files);
+        if (images.length === 0 && (others.length === 0 || !attachRef.current)) return false;
+        insertImages(view, images);
+        if (others.length > 0) attachRef.current?.(others);
+        return true;
       },
+      // A drop without images is the composer's (`useFileDrop`), which
+      // attaches it; one with images is the editor's, so it hands on the rest.
       handleDrop(view, event) {
-        const files = event.dataTransfer?.files;
-        if (!files || files.length === 0) return false;
-        const images = Array.from(files).filter((f) => f.type.startsWith('image/'));
+        const { images, others } = splitFiles(event.dataTransfer?.files);
         if (images.length === 0) return false;
-        event.preventDefault();
-        for (const file of images) {
-          void readFileAsDataUrl(file).then((dataUrl) => {
-            view.dispatch(
-              view.state.tr.replaceSelectionWith(
-                view.state.schema.nodes.image.create({ src: dataUrl, alt: file.name }),
-              ),
-            );
-          });
-        }
+        insertImages(view, images);
+        if (others.length > 0) attachRef.current?.(others);
         return true;
       },
     },
@@ -152,8 +146,57 @@ const FONTS = [
 /** Sizes offered by the picker, in px (the label is the number alone). */
 const FONT_SIZES = ['10', '12', '14', '16', '18', '20', '24', '32'].map((px) => ({ label: px, value: `${px}px` }));
 
+/**
+ * Text colours offered by the picker. Each reads on the white page a message
+ * renders on (contrast 4.5:1 or more), so none is one the paste filter
+ * (`dropUnreadableColors`) would drop.
+ */
+const TEXT_COLORS = [
+  { key: 'grey', value: 'rgb(107, 114, 128)' },
+  { key: 'red', value: 'rgb(220, 38, 38)' },
+  { key: 'orange', value: 'rgb(194, 65, 12)' },
+  { key: 'green', value: 'rgb(21, 128, 61)' },
+  { key: 'blue', value: 'rgb(37, 99, 235)' },
+  { key: 'purple', value: 'rgb(124, 58, 237)' },
+] as const;
+
+/** A 16 px line icon for a toolbar button; the button's title names it. */
+function toolbarIcon(paths: ReactNode): ReactNode {
+  return (
+    <svg
+      className="block w-4 h-4"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths}
+    </svg>
+  );
+}
+
+const ICONS = {
+  bulletList: toolbarIcon(
+    <>
+      <path d="M6.5 4h7M6.5 8h7M6.5 12h7" />
+      <path d="M3 4h.01M3 8h.01M3 12h.01" strokeWidth={2.5} />
+    </>,
+  ),
+  orderedList: toolbarIcon(
+    <path d="M7 4.5h6.5M7 11.5h6.5M2.5 3 4 2v4M2.5 10a1.25 1.25 0 0 1 2.5 0c0 1.25-2.5 1.75-2.5 3h2.5" />,
+  ),
+  link: toolbarIcon(
+    <path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-.5.5M9 7a2.5 2.5 0 0 0-3.5 0l-2 2a2.5 2.5 0 0 0 3.5 3.5l.5-.5" />,
+  ),
+  /** A T struck through: the usual mark for clearing formatting. */
+  clearFormatting: toolbarIcon(<path d="M3 3h10M8 3v10M2.5 13.5l11-11" />),
+};
+
 /** The value of `property` at the cursor if the picker offers it, else '' (the default). */
-function offered(style: string | null, property: string, options: { value: string }[]): string {
+function offered(style: string | null, property: string, options: readonly { value: string }[]): string {
   const current = styleProperty(style, property);
   return options.some((option) => option.value === current) ? (current as string) : '';
 }
@@ -184,6 +227,7 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         link: editor.isActive('link'),
         font: offered(style, 'font-family', FONTS),
         size: offered(style, 'font-size', FONT_SIZES),
+        color: offered(style, 'color', TEXT_COLORS),
       };
     },
   });
@@ -224,13 +268,13 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
   // toolbar — that predates this change and is tracked separately.)
   const platform = currentPlatform();
 
-  const btn = (label: string, title: string, active: boolean, onClick: () => void, enabled = true) => (
+  const btn = (label: ReactNode, title: string, active: boolean, onClick: () => void, enabled = true) => (
     <button
       type="button"
       title={title}
       onClick={onClick}
       disabled={disabled || !enabled}
-      className={`px-2 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+      className={`px-1.5 py-1 rounded text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         active
           ? 'bg-primary-100 text-primary-700 border-primary-200'
           : 'bg-white text-gray-700 border-transparent hover:bg-gray-100'
@@ -252,13 +296,15 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         editor.chain().focus().toggleUnderline().run(),
       )}
       {btn('S', 'Strikethrough', format.strike, () => editor.chain().focus().toggleStrike().run())}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
-      {btn('• List', 'Bullet list', format.bulletList, () => editor.chain().focus().toggleBulletList().run())}
-      {btn('1. List', 'Numbered list', format.orderedList, () => editor.chain().focus().toggleOrderedList().run())}
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
+      {btn(ICONS.bulletList, 'Bullet list', format.bulletList, () => editor.chain().focus().toggleBulletList().run())}
+      {btn(ICONS.orderedList, 'Numbered list', format.orderedList, () =>
+        editor.chain().focus().toggleOrderedList().run(),
+      )}
       {btn('❝', 'Quote', format.blockquote, () => editor.chain().focus().toggleBlockquote().run())}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
-      {btn('Link', 'Insert link', format.link || linkPopoverOpen, openLinkPopover)}
-      <span className="w-px h-4 bg-gray-300 mx-1" />
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
+      {btn(ICONS.link, 'Insert link', format.link || linkPopoverOpen, openLinkPopover)}
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
       <Select
         value={format.font}
         options={[{ value: '', label: t('compose:defaultFont') }, ...FONTS]}
@@ -279,6 +325,23 @@ function Toolbar({ editor, disabled }: ToolbarProps) {
         disabled={disabled}
         size="xs"
       />
+      <Select
+        value={format.color}
+        options={[
+          { value: '', label: t('compose:defaultColor') },
+          ...TEXT_COLORS.map(({ key, value }) => ({ value, label: t(`compose:colors.${key}`) })),
+        ]}
+        onChange={(value) =>
+          value ? editor.chain().focus().setColor(value).run() : editor.chain().focus().unsetColor().run()
+        }
+        ariaLabel={t('compose:textColor')}
+        disabled={disabled}
+        size="xs"
+      />
+      <span className="w-px h-4 bg-gray-300 mx-0.5" />
+      {btn(ICONS.clearFormatting, t('compose:clearFormatting'), false, () =>
+        editor.chain().focus().clearFormatting().run(),
+      )}
 
       {linkPopoverOpen && (
         <div className="absolute top-full left-2 z-20 mt-1 flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
@@ -339,4 +402,23 @@ function readFileAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+/** The images among `files`, which go inline, and the rest. */
+function splitFiles(files: FileList | null | undefined): { images: File[]; others: File[] } {
+  const all = Array.from(files ?? []);
+  return {
+    images: all.filter((f) => f.type.startsWith('image/')),
+    others: all.filter((f) => !f.type.startsWith('image/')),
+  };
+}
+
+function insertImages(view: EditorView, images: File[]) {
+  for (const file of images) {
+    void readFileAsDataUrl(file).then((dataUrl) => {
+      view.dispatch(
+        view.state.tr.replaceSelectionWith(view.state.schema.nodes.image.create({ src: dataUrl, alt: file.name })),
+      );
+    });
+  }
 }

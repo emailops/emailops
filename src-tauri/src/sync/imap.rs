@@ -110,6 +110,10 @@ fn attachment_search_folders(plan: &folder_plan::FolderPlan) -> Vec<(ImapFolder,
 /// message landing on the watermark day is not missed, `BEFORE` outward so the
 /// boundary day is not excluded. Already-stored messages that the padding pulls
 /// back in are dropped by `emails_exist_batch` on the caller's side.
+///
+/// Messages flagged `\Deleted` are left out: a move that could not expunge
+/// leaves its original flagged in the source folder, and listing it again
+/// would bring it back as a new message once its row is re-keyed.
 fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64>) -> String {
     fn day(ts: i64) -> String {
         chrono::DateTime::from_timestamp(ts, 0)
@@ -125,11 +129,8 @@ fn build_search_query(after_timestamp: Option<i64>, before_timestamp: Option<i64
     if let Some(before) = before_timestamp {
         clauses.push(format!("BEFORE {}", day(before.saturating_add(86_400))));
     }
-    if clauses.is_empty() {
-        "ALL".to_string()
-    } else {
-        clauses.join(" ")
-    }
+    clauses.push("UNDELETED".to_string());
+    clauses.join(" ")
 }
 
 /// Cut one page out of an INBOX `SEARCH` result, newest UID first.
@@ -212,6 +213,12 @@ fn reusable_inbox_uids(cached: Option<&InboxSearch>, query: &str, page_token: Op
 /// hang a blocking task forever.
 pub(crate) const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// A blocking IMAP task that did not finish: a panic there is an ordinary error
+/// of that operation, without the panic's text (see `util::panic_guard`).
+fn task_failed(error: tokio::task::JoinError) -> AppError {
+    crate::util::panic_guard::join_failed("IMAP operation", &error)
+}
+
 /// How an IMAP connection reaches TLS. 993 is IMAPS (TLS on connect); any
 /// other port (143, Proton Mail Bridge's 1143) greets in clear text and is
 /// upgraded with STARTTLS — the same port rule `test_smtp` applies to 465.
@@ -286,6 +293,66 @@ fn read_imap_line<S: std::io::Read>(stream: &mut S) -> std::io::Result<String> {
         line.push(byte[0]);
     }
     Ok(String::from_utf8_lossy(&line).trim_end().to_string())
+}
+
+/// Why one address did not connect, and whether the next one is worth trying.
+#[derive(Debug)]
+pub(crate) struct AddressFailure {
+    message: String,
+    try_next: bool,
+}
+
+impl AddressFailure {
+    /// A failure that may be particular to this address: a TCP connect
+    /// error, a timeout.
+    fn next(message: String) -> Self {
+        Self {
+            message,
+            try_next: true,
+        }
+    }
+
+    /// A failure every address would repeat: a certificate, a refused STARTTLS.
+    fn stop(message: String) -> Self {
+        Self {
+            message,
+            try_next: false,
+        }
+    }
+}
+
+/// The first stream `attempt` opens on `addrs`, tried in order until
+/// `deadline`. An unreachable first address (IPv6 or IPv4) no longer fails
+/// the whole connect. The error names every address tried and what happened
+/// on it, which is what a failed sync needs to be diagnosed.
+pub(crate) fn connect_any_address<S>(
+    addrs: &[std::net::SocketAddr],
+    deadline: std::time::Instant,
+    now: impl Fn() -> std::time::Instant,
+    mut attempt: impl FnMut(std::net::SocketAddr, std::time::Instant) -> std::result::Result<S, AddressFailure>,
+) -> std::result::Result<S, String> {
+    let mut failures = Vec::new();
+    let mut tried = 0;
+    for &addr in addrs {
+        if now() >= deadline {
+            failures.push(format!("{} more not tried before the deadline", addrs.len() - tried));
+            break;
+        }
+        tried += 1;
+        match attempt(addr, deadline) {
+            Ok(stream) => return Ok(stream),
+            Err(failure) => {
+                failures.push(format!("{addr}: {}", failure.message));
+                if !failure.try_next {
+                    break;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "IMAP connection failed on {tried} address(es): {}",
+        failures.join("; ")
+    ))
 }
 
 /// Stream wrapper for the IDLE session. imap 2.4.1's `Handle::wait_with_timeout`
@@ -655,11 +722,7 @@ impl ImapClient {
         if has_role_attr {
             return Ok(entries);
         }
-        let advertises_special_use = session
-            .capabilities()
-            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("SPECIAL-USE")))
-            .unwrap_or(false);
-        if !advertises_special_use {
+        if !imap_search::advertises(session, "SPECIAL-USE") {
             return Ok(entries);
         }
         match session.run_command_and_read_response("LIST \"\" \"*\" RETURN (SPECIAL-USE)") {
@@ -801,40 +864,40 @@ impl ImapClient {
         target: &str,
     ) -> Result<()> {
         let uid_set = uid.to_string();
-        let has_move = session
-            .capabilities()
-            .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("MOVE")))
-            .unwrap_or(false);
-        if has_move {
+        if imap_search::advertises(session, "MOVE") {
             session
                 .uid_mv(&uid_set, target)
                 .map_err(|e| AppError::SyncError(format!("IMAP MOVE to '{target}' failed: {e}")))?;
         } else {
             // RFC 3501 fallback: COPY + \Deleted + expunge. Prefer UID
             // EXPUNGE (UIDPLUS) so other \Deleted messages in the source
-            // folder are left alone.
+            // folder are left alone. Without it a plain EXPUNGE would remove
+            // them too, so it runs only when no other message is flagged.
             imap_search::uid_copy(session, &uid_set, target)?;
             session
                 .uid_store(&uid_set, "+FLAGS (\\Deleted)")
                 .map_err(|e| AppError::SyncError(format!("IMAP STORE \\Deleted failed: {e}")))?;
-            let has_uidplus = session
-                .capabilities()
-                .map(|caps| caps.iter().any(|c| format!("{c:?}").contains("UIDPLUS")))
-                .unwrap_or(false);
-            let expunged = if has_uidplus {
+            let expunged = if imap_search::advertises(session, "UIDPLUS") {
                 session
                     .run_command_and_read_response(format!("UID EXPUNGE {uid}"))
                     .map(|_| ())
+                    .map_err(|e| e.to_string())
             } else {
-                session.expunge().map(|_| ())
+                match imap_search::uid_search(session, "DELETED") {
+                    Ok(flagged) if plain_expunge_is_safe(uid, &flagged) => {
+                        session.expunge().map(|_| ()).map_err(|e| e.to_string())
+                    }
+                    Ok(_) => Err("other messages in the folder are flagged \\Deleted too".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
             };
             if let Err(e) = expunged {
                 // The copy landed and the original is flagged \Deleted —
                 // functionally moved. Log rather than fail the operation.
                 crate::services::logger::log(
-                    "debug",
+                    "warn",
                     "sync",
-                    format!("IMAP EXPUNGE after move failed (message copied + flagged): {e}"),
+                    format!("IMAP EXPUNGE after move skipped or failed (message copied + flagged): {e}"),
                 );
             }
         }
@@ -859,13 +922,14 @@ impl ImapClient {
             .map(|candidate| (*candidate).to_string())
     }
 
-    /// The blocking half of [`EmailProvider::trash_message`].
+    /// The blocking half of [`EmailProvider::trash_message`]: the message's
+    /// UID in Trash, when it could be found.
     fn trash_uid_blocking<T: std::io::Read + std::io::Write>(
         session: &mut imap::Session<T>,
         source: &ImapFolder,
         uid: u32,
         message_id_header: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<Option<u32>> {
         // Resolved before the source is selected: the legacy fallback probes
         // candidate names with SELECT.
         let trash_path = Self::resolve_trash_path_blocking(session)
@@ -883,7 +947,16 @@ impl ImapClient {
                 ));
             }
         }
-        Self::move_uid_blocking(session, uid, &trash_path)
+        Self::move_uid_blocking(session, uid, &trash_path)?;
+        let mut new_uid = None;
+        if let Some(header) = message_id_header {
+            if imap_search::select(session, &trash_path).is_ok() {
+                if let Ok(found) = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\"")) {
+                    new_uid = found.into_iter().max();
+                }
+            }
+        }
+        Ok(new_uid)
     }
 
     /// The blocking half of [`EmailProvider::archive_message`]: the archive
@@ -894,8 +967,8 @@ impl ImapClient {
         uid: u32,
         message_id_header: Option<&str>,
     ) -> Result<(String, Option<u32>)> {
-        let entries =
-            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let entries = Self::list_entries_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
         let archive_path = folder_plan::resolve_archive_folder(&entries).ok_or(AppError::NoArchiveFolder)?;
         if *source == ImapFolder::Custom(archive_path.clone()) {
             return Ok((archive_path, Some(uid)));
@@ -937,8 +1010,8 @@ impl ImapClient {
         if *source == ImapFolder::Spam {
             return Ok(Some(uid));
         }
-        let entries =
-            Self::list_entries_blocking(session).map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+        let entries = Self::list_entries_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
         let spam_path = resolve_role_folder(WellKnownFolder::Spam, &entries).ok_or(AppError::NoSpamFolder)?;
         if !Self::select_folder_blocking(session, source) {
             return Err(AppError::SyncError(format!(
@@ -979,6 +1052,20 @@ impl ImapClient {
         Ok(session)
     }
 
+    /// A timed-out blocking TLS handshake is reported as WouldBlock by
+    /// native-tls, not as an io::Error in its source chain. For Failure,
+    /// elapsed time distinguishes a socket timeout from fast TLS failures.
+    fn is_retryable_tls_timeout(
+        error: &native_tls::HandshakeError<std::net::TcpStream>,
+        elapsed: std::time::Duration,
+        timeout: std::time::Duration,
+    ) -> bool {
+        match error {
+            native_tls::HandshakeError::WouldBlock(_) => true,
+            native_tls::HandshakeError::Failure(_) => elapsed >= timeout,
+        }
+    }
+
     /// The shared session for one operation: the kept one if it still answers
     /// `NOOP`, otherwise a new connection, retried while the failure is
     /// transient. Hand it back with `slot.checkin` when the operation succeeds.
@@ -1001,6 +1088,68 @@ impl ImapClient {
                 )
             },
         )
+    }
+
+    /// One address of [`NativeTlsTransport::open_tls`]. A TCP connect that fails or
+    /// a timeout lets the next address be tried; a refused STARTTLS or a TLS
+    /// error (a certificate, a protocol) would fail on every address.
+    pub(crate) fn open_on_address(
+        tls: &native_tls::TlsConnector,
+        creds: &ImapCredentials,
+        addr: std::net::SocketAddr,
+        deadline: std::time::Instant,
+    ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, AddressFailure> {
+        use std::io;
+        use std::net::TcpStream;
+        use std::time::{Duration, Instant};
+
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+        // `cap`, or what is left before the deadline when that is shorter.
+        let within_deadline = |cap: Duration| {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                Err(AddressFailure::next("connection deadline reached".to_string()))
+            } else {
+                Ok(cap.min(left))
+            }
+        };
+
+        let mut tcp = TcpStream::connect_timeout(&addr, within_deadline(CONNECT_TIMEOUT)?)
+            .map_err(|e| AddressFailure::next(format!("TCP connect failed: {e}")))?;
+        let timeout = within_deadline(IO_TIMEOUT)?;
+        tcp.set_read_timeout(Some(timeout))
+            .and_then(|()| tcp.set_write_timeout(Some(timeout)))
+            .map_err(|e| AddressFailure::stop(format!("socket timeout not set: {e}")))?;
+
+        if ImapTlsMode::for_port(creds.port) == ImapTlsMode::StartTls {
+            negotiate_starttls(&mut tcp).map_err(|e| match e.kind() {
+                // How a socket read or write timeout surfaces: WouldBlock on
+                // Unix, TimedOut on Windows.
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {
+                    AddressFailure::next(format!("STARTTLS timed out: {e}"))
+                }
+                _ => AddressFailure::stop(format!("STARTTLS failed: {e}")),
+            })?;
+        }
+
+        let started = Instant::now();
+        let stream = tls.connect(creds.host.as_str(), tcp).map_err(|e| {
+            let message = format!("TLS handshake failed: {e}");
+            if Self::is_retryable_tls_timeout(&e, started.elapsed(), timeout) {
+                AddressFailure::next(message)
+            } else {
+                AddressFailure::stop(message)
+            }
+        })?;
+        // The handshake may have run on what was left of the deadline; the
+        // session gets the full timeout, or a long FETCH would time out.
+        stream
+            .get_ref()
+            .set_read_timeout(Some(IO_TIMEOUT))
+            .and_then(|()| stream.get_ref().set_write_timeout(Some(IO_TIMEOUT)))
+            .map_err(|e| AddressFailure::stop(format!("socket timeout not set: {e}")))?;
+        Ok(stream)
     }
 
     /// Test IMAP + SMTP connectivity. Returns separate error messages for each protocol.
@@ -1045,7 +1194,7 @@ impl ImapClient {
             Ok(())
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking join error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(())
     }
 
@@ -1250,7 +1399,8 @@ fn extract_body(msg: &mailparse::ParsedMail) -> (String, String) {
     let snippet_src: &str = if let Some(ref p) = plain {
         p.as_str()
     } else {
-        stripped = strip_html_tags_owned(&body);
+        // Text only: no style sheet, entities decoded.
+        stripped = crate::util::html::strip_html_for_fts(&body);
         &stripped
     };
     let snippet: String = snippet_src.chars().take(200).collect();
@@ -1324,20 +1474,6 @@ fn is_attached_file(part: &mailparse::ParsedMail, allow_named: bool) -> bool {
     let disposition = part.get_content_disposition();
     let named = disposition.params.contains_key("filename") || part.ctype.params.contains_key("name");
     disposition.disposition == mailparse::DispositionType::Attachment || (named && !allow_named)
-}
-
-fn strip_html_tags_owned(html: &str) -> String {
-    let mut out = String::new();
-    let mut in_tag = false;
-    for c in html.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out
 }
 
 // ── Attachment extraction ─────────────────────────────────────────────────────
@@ -1497,7 +1633,7 @@ impl EmailProvider for ImapClient {
                 Ok((inbox_uids, page, sent_uids))
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         *self
             .inbox_search
@@ -1618,7 +1754,7 @@ impl EmailProvider for ImapClient {
                 out
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?;
+            .map_err(task_failed)?;
 
             for (index, parsed) in fetched {
                 slots[index] = Some(parsed);
@@ -1684,7 +1820,7 @@ impl EmailProvider for ImapClient {
             Self::parse_message(uid, &fetched)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         // Use the full (prefixed) message_id so the stored ID is globally unique
         email.id = message_id.to_string();
@@ -1737,7 +1873,7 @@ impl EmailProvider for ImapClient {
             Ok(uids)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         // Newest UIDs first (IMAP UIDs are monotonically increasing per folder),
         // then cap at max_results so the initial sync pulls the most recent
@@ -1769,7 +1905,7 @@ impl EmailProvider for ImapClient {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session)
-                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
             let mut hits = Vec::new();
             for (folder, path) in attachment_search_folders(&folder_plan::plan_folders(&entries)) {
                 if let Err(e) = imap_search::select(&mut session, &path) {
@@ -1783,7 +1919,7 @@ impl EmailProvider for ImapClient {
             Ok(hits)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(Some(self.attachment_hit_ids(hits)))
     }
 
@@ -1795,12 +1931,12 @@ impl EmailProvider for ImapClient {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let entries = Self::list_folders_blocking(&mut session)
-                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {e}")))?;
+                .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
             slot.checkin(session);
             Ok(entries)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn list_folder_messages(
@@ -1833,7 +1969,7 @@ impl EmailProvider for ImapClient {
             Ok(uids)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         let mut sorted = uids;
         sorted.sort_unstable_by(|a, b| b.cmp(a));
@@ -1854,6 +1990,7 @@ impl EmailProvider for ImapClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         target: &crate::sync::provider::ReplyTarget<'_>,
         subject: &str,
         body: &EmailBody,
@@ -1864,6 +2001,8 @@ impl EmailProvider for ImapClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: false,
             subject,
             in_reply_to: target.message_id.filter(|s| !s.trim().is_empty()),
             references: target.references.filter(|s| !s.trim().is_empty()),
@@ -1888,6 +2027,7 @@ impl EmailProvider for ImapClient {
         from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1897,6 +2037,8 @@ impl EmailProvider for ImapClient {
             from_name,
             to_emails,
             cc_emails,
+            bcc_emails,
+            keep_bcc: false,
             subject,
             in_reply_to: None,
             references: None,
@@ -1934,7 +2076,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn rename_folder(&self, old_server_path: &str, new_server_path: &str) -> Result<()> {
@@ -1953,7 +2095,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     async fn delete_folder(&self, server_path: &str) -> Result<()> {
@@ -1971,7 +2113,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// `UID STORE ±FLAGS.SILENT (\Seen)` in the folder the message's id names.
@@ -1999,7 +2141,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// `UID STORE ±FLAGS.SILENT (\Flagged)` in the folder the message's id names.
@@ -2027,7 +2169,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)?
     }
 
     /// Move the message to the account's archive folder (`\Archive`, else
@@ -2061,7 +2203,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(provider::MessageLocation {
             id: new_uid.map_or_else(
                 || message_id.to_string(),
@@ -2099,7 +2241,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
         Ok(provider::MessageLocation {
             id: new_uid.map_or_else(|| message_id.to_string(), |u| self.located_id(&ImapFolder::Spam, u)),
             mailbox: ImapFolder::Spam.mailbox_value(),
@@ -2114,13 +2256,21 @@ impl EmailProvider for ImapClient {
     /// which it can name a different message. When the Message-ID is known the
     /// UID is checked against it first, so a stale id can never trash the
     /// wrong message.
-    async fn trash_message(&self, message_id: &str, message_id_header: Option<&str>) -> Result<()> {
+    ///
+    /// The moved message gets a new UID in Trash. It is found again by
+    /// Message-ID and answered under the `TRASH::` id the Trash sync pass
+    /// gives it, so that pass recognises it instead of storing a second copy.
+    async fn trash_message(
+        &self,
+        message_id: &str,
+        message_id_header: Option<&str>,
+    ) -> Result<Option<provider::MessageLocation>> {
         let (source, uid_str) = self.parse_message_ref(message_id);
         let uid: u32 = uid_str
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
         if source == ImapFolder::Trash {
-            return Ok(());
+            return Ok(None);
         }
         // Quotes inside a Message-ID would break the SEARCH syntax; such ids
         // don't occur in practice, so the check is skipped for them.
@@ -2131,7 +2281,7 @@ impl EmailProvider for ImapClient {
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
         let transport = Arc::clone(&self.transport);
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let new_uid = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
             let mut session = Self::checkout_session(&slot, transport.as_ref(), &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
             let result = Self::trash_uid_blocking(&mut session, &source, uid, header.as_deref());
@@ -2139,7 +2289,11 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))?
+        .map_err(task_failed)??;
+        Ok(new_uid.map(|u| provider::MessageLocation {
+            id: self.located_id(&ImapFolder::Trash, u),
+            mailbox: ImapFolder::Trash.mailbox_value(),
+        }))
     }
 
     /// One connection: `LIST`, then an `EXAMINE` per stored mailbox. A failed
@@ -2155,7 +2309,10 @@ impl EmailProvider for ImapClient {
                 crate::services::logger::log(
                     "debug",
                     "sync",
-                    format!("IMAP LIST failed, checking UIDVALIDITY of the inbox only: {e}"),
+                    format!(
+                        "IMAP LIST failed, checking UIDVALIDITY of the inbox only: {}",
+                        imap_search::describe_error(&e)
+                    ),
                 );
                 Vec::new()
             });
@@ -2179,7 +2336,7 @@ impl EmailProvider for ImapClient {
             Ok(found)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(found
             .into_iter()
@@ -2213,7 +2370,7 @@ impl EmailProvider for ImapClient {
             result
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(fetched
             .into_iter()
@@ -2267,7 +2424,7 @@ impl EmailProvider for ImapClient {
                 Ok(checked)
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         Ok(Some(
             checked
@@ -2313,7 +2470,7 @@ impl EmailProvider for ImapClient {
                 Ok(found)
             })
             .await
-            .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+            .map_err(task_failed)??;
 
         Ok(found.map(|(folder, uid)| provider::MessageLocation {
             id: self.located_id(&folder, uid),
@@ -2373,7 +2530,7 @@ impl EmailProvider for ImapClient {
             Ok(new_uid)
         })
         .await
-        .map_err(|e| AppError::SyncError(format!("spawn_blocking error: {e}")))??;
+        .map_err(task_failed)??;
 
         Ok(new_uid.map(|u| MessageRef {
             id: match target {
@@ -2485,7 +2642,7 @@ impl ImapClient {
         let outcome =
             tokio::task::spawn_blocking(move || Self::append_to_sent_blocking(transport.as_ref(), &creds, &raw))
                 .await
-                .unwrap_or_else(|e| Err(AppError::SyncError(format!("sent-copy task join error: {e}"))));
+                .unwrap_or_else(|e| Err(task_failed(e)));
 
         if let Err(e) = outcome {
             crate::services::logger::log(
@@ -2519,6 +2676,13 @@ impl ImapClient {
         let _ = session.logout();
         append_result.map_err(|e| AppError::SyncError(format!("IMAP APPEND to '{folder}' failed: {e}")))
     }
+}
+
+/// Whether a plain `EXPUNGE` may remove the original of `uid` after a COPY.
+/// Pure. It removes every message flagged `\Deleted` in the folder, flagged by
+/// any client, so only when none but `uid` is.
+fn plain_expunge_is_safe(uid: u32, flagged_deleted: &[u32]) -> bool {
+    flagged_deleted.iter().all(|&flagged| flagged == uid)
 }
 
 #[cfg(test)]
@@ -2565,6 +2729,17 @@ mod tests {
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
+        }
+    }
+
+    // ── move_uid_blocking ─────────────────────────────────────────────────
+
+    /// A plain `EXPUNGE` removes every `\Deleted` message in the folder, not
+    /// just the one moved: it may run only when no other one is flagged.
+    #[test]
+    fn a_plain_expunge_runs_only_when_no_other_message_is_flagged_deleted() {
+        for (flagged, safe) in [(vec![7], true), (vec![], true), (vec![7, 9], false), (vec![9], false)] {
+            assert_eq!(plain_expunge_is_safe(7, &flagged), safe, "flagged {flagged:?}");
         }
     }
 
@@ -3003,8 +3178,16 @@ mod tests {
     }
 
     #[test]
-    fn search_query_is_all_when_unbounded() {
-        assert_eq!(build_search_query(None, None), "ALL");
+    fn search_query_lists_every_message_not_flagged_deleted_when_unbounded() {
+        assert_eq!(build_search_query(None, None), "UNDELETED");
+    }
+
+    #[test]
+    fn the_listing_skips_a_message_whose_move_left_it_flagged_deleted() {
+        // A move that could not expunge leaves the original flagged \Deleted
+        // in the source folder. Once its row is re-keyed to the target folder,
+        // listing it again would download it back as a new message.
+        assert!(build_search_query(Some(1_770_940_800), Some(1_770_940_800)).ends_with(" UNDELETED"));
     }
 
     fn imap_client_synced_from(sync_from: Option<i64>) -> ImapClient {
@@ -3030,14 +3213,14 @@ mod tests {
         // message ever, because the Sent search was a flat `ALL`.
         assert_eq!(
             imap_client_synced_from(Some(1_770_940_800)).sent_search_query(),
-            "SINCE 12-Feb-2026"
+            "SINCE 12-Feb-2026 UNDELETED"
         );
     }
 
     #[test]
     fn an_all_mail_account_keeps_an_unbounded_sent_pass() {
         // "All mail" must not regress into a bounded search.
-        assert_eq!(imap_client_synced_from(None).sent_search_query(), "ALL");
+        assert_eq!(imap_client_synced_from(None).sent_search_query(), "UNDELETED");
     }
 
     #[test]
@@ -3045,7 +3228,10 @@ mod tests {
         // IMAP SEARCH SINCE/BEFORE are day-granular and compare the server's
         // INTERNALDATE in its own timezone, so both bounds are padded by a day.
         // 2026-02-13T00:00:00Z -> SINCE 12-Feb-2026.
-        assert_eq!(build_search_query(Some(1_770_940_800), None), "SINCE 12-Feb-2026");
+        assert_eq!(
+            build_search_query(Some(1_770_940_800), None),
+            "SINCE 12-Feb-2026 UNDELETED"
+        );
     }
 
     #[test]
@@ -3054,12 +3240,12 @@ mod tests {
         // server returns the whole mailbox and the newest-first cap throws the
         // older half away.
         let query = build_search_query(Some(1_684_333_491), Some(1_770_940_800));
-        assert_eq!(query, "SINCE 16-May-2023 BEFORE 14-Feb-2026");
+        assert_eq!(query, "SINCE 16-May-2023 BEFORE 14-Feb-2026 UNDELETED");
     }
 
     #[test]
     fn search_query_clamps_padded_since_at_epoch() {
-        assert_eq!(build_search_query(Some(0), None), "SINCE 01-Jan-1970");
+        assert_eq!(build_search_query(Some(0), None), "SINCE 01-Jan-1970 UNDELETED");
     }
 
     #[test]
@@ -3358,6 +3544,16 @@ mod tests {
         extract_body(&parse_mail(raw).expect("parse")).0
     }
 
+    /// The snippet of a message with only an HTML body is its text, without
+    /// the style sheet and with the entities decoded.
+    #[test]
+    fn the_snippet_of_an_html_only_message_is_its_decoded_text() {
+        let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\nContent-Type: text/html\r\n\r\n\
+            <style>p { color: red }</style><p>It&#39;s caf&eacute;&nbsp;time</p>\r\n";
+        let (_, snippet) = extract_body(&parse_mail(raw).expect("parse"));
+        assert_eq!(snippet, "It's café time");
+    }
+
     #[test]
     fn body_skips_an_attached_html_file() {
         let raw = b"From: a@example.com\r\nMIME-Version: 1.0\r\n\
@@ -3591,5 +3787,165 @@ mod tests {
             assert_eq!(parsed_folder, folder, "folder round-trip for {id}");
             assert_eq!(parsed_uid, uid.to_string(), "uid round-trip for {id}");
         }
+    }
+
+    // ── connect_any_address ───────────────────────────────────────────────
+
+    fn addresses() -> Vec<std::net::SocketAddr> {
+        ["192.0.2.1:993", "192.0.2.2:993", "192.0.2.3:993"]
+            .iter()
+            .map(|a| a.parse().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_timeout_on_one_address_moves_on_to_the_next() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let connected = connect_any_address(
+            &addrs,
+            start + std::time::Duration::from_secs(20),
+            || start,
+            |addr, _| {
+                if addr == addrs[0] {
+                    Err(AddressFailure::next("TLS handshake failed: timed out".to_string()))
+                } else {
+                    Ok(addr)
+                }
+            },
+        );
+        assert_eq!(connected, Ok(addrs[1]));
+    }
+
+    #[test]
+    fn a_failure_every_address_would_repeat_tries_no_other() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let mut tried = Vec::new();
+        let result: std::result::Result<(), String> = connect_any_address(
+            &addrs,
+            start + std::time::Duration::from_secs(20),
+            || start,
+            |addr, _| {
+                tried.push(addr);
+                Err(AddressFailure::stop(
+                    "TLS handshake failed: bad certificate".to_string(),
+                ))
+            },
+        );
+        assert_eq!(tried, vec![addrs[0]]);
+        assert_eq!(
+            result,
+            Err(
+                "IMAP connection failed on 1 address(es): 192.0.2.1:993: TLS handshake failed: bad certificate"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn the_error_names_what_happened_on_every_address() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let result: std::result::Result<(), String> = connect_any_address(
+            &addrs,
+            start + std::time::Duration::from_secs(20),
+            || start,
+            |addr, _| {
+                Err(AddressFailure::next(format!(
+                    "TCP connect failed on port {}",
+                    addr.port()
+                )))
+            },
+        );
+        assert_eq!(
+            result,
+            Err("IMAP connection failed on 3 address(es): \
+                 192.0.2.1:993: TCP connect failed on port 993; \
+                 192.0.2.2:993: TCP connect failed on port 993; \
+                 192.0.2.3:993: TCP connect failed on port 993"
+                .to_string())
+        );
+    }
+
+    #[test]
+    fn no_address_is_tried_after_the_deadline() {
+        let addrs = addresses();
+        let start = std::time::Instant::now();
+        let deadline = start + std::time::Duration::from_secs(20);
+        let clock = std::cell::Cell::new(start);
+        let result: std::result::Result<(), String> = connect_any_address(
+            &addrs,
+            deadline,
+            || clock.get(),
+            |_, _| {
+                // The first attempt uses up the whole deadline.
+                clock.set(deadline);
+                Err(AddressFailure::next("TLS handshake failed: timed out".to_string()))
+            },
+        );
+        assert_eq!(
+            result,
+            Err(
+                "IMAP connection failed on 1 address(es): 192.0.2.1:993: TLS handshake failed: timed out; \
+                 2 more not tried before the deadline"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn tls_timeout_fallback_classifies_real_handshakes() {
+        use std::io::Write;
+        use std::net::{TcpListener, TcpStream};
+        use std::thread;
+        use std::time::{Duration, Instant};
+
+        let tls = native_tls::TlsConnector::new().unwrap_or_else(|e| panic!("TLS setup: {e}"));
+        let timeout = Duration::from_millis(150);
+
+        // A peer that accepts and never sends TLS bytes causes the socket
+        // read timeout during the *actual* native-tls handshake.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            thread::sleep(Duration::from_millis(400));
+        });
+        let tcp = TcpStream::connect(addr).unwrap();
+        tcp.set_read_timeout(Some(timeout)).unwrap();
+        tcp.set_write_timeout(Some(timeout)).unwrap();
+        let started = Instant::now();
+        let error = match tls.connect("localhost", tcp) {
+            Err(err) => err,
+            Ok(_) => panic!("silent peer unexpectedly completed a TLS handshake"),
+        };
+        assert!(
+            ImapClient::is_retryable_tls_timeout(&error, started.elapsed(), timeout),
+            "real handshake timeout must be retryable: {error}"
+        );
+        server.join().unwrap();
+
+        // A peer that sends invalid TLS bytes fails immediately and must
+        // not trigger an address fallback.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").unwrap();
+        });
+        let tcp = TcpStream::connect(addr).unwrap();
+        tcp.set_read_timeout(Some(timeout)).unwrap();
+        tcp.set_write_timeout(Some(timeout)).unwrap();
+        let started = Instant::now();
+        let error = match tls.connect("localhost", tcp) {
+            Err(err) => err,
+            Ok(_) => panic!("invalid TLS unexpectedly completed a handshake"),
+        };
+        assert!(
+            !ImapClient::is_retryable_tls_timeout(&error, started.elapsed(), timeout),
+            "invalid TLS response must be terminal: {error}"
+        );
+        server.join().unwrap();
     }
 }

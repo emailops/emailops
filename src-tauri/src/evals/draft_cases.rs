@@ -75,6 +75,10 @@ pub struct DraftCase {
     pub subject: Option<String>,
     #[serde(default)]
     pub instructions: Option<String>,
+    /// Reply: the user's prompt template (Settings → AI drafts); absent = the
+    /// default one.
+    #[serde(default)]
+    pub prompt_template: Option<String>,
     /// Whether the end of the draft may carry the sender's name (or a
     /// "[Your name]" placeholder). `false`: the app adds the signature, so a
     /// name there signs the message twice. Absent: report only.
@@ -368,6 +372,11 @@ fn seed_case(db: &Database, case: &DraftCase) -> EvalResult<Option<String>> {
     if let Some(sig) = &case.signature {
         db.upsert_account_signature(EVAL_ACCOUNT_ID, &sig.html, sig.use_for_new, sig.use_for_replies, 0)?;
     }
+    // Blank means the default template, so a case without one resets it.
+    db.set_preference(
+        "draft_prompt_template",
+        case.prompt_template.as_deref().unwrap_or_default(),
+    )?;
     for (t, thread) in case.past_threads.iter().enumerate() {
         for (i, m) in thread.iter().enumerate() {
             db.insert_email(&case_email(

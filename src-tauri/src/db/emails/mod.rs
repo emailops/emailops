@@ -21,7 +21,9 @@ pub mod junk_model;
 pub mod list;
 pub mod mailbox_state;
 pub mod search;
+pub mod snippets;
 pub mod snoozes;
+pub(crate) mod text_query;
 
 #[cfg(test)]
 pub(super) mod test_helpers;

@@ -94,7 +94,9 @@ buscar lo que ya ha llegado mientras el resto se pone al día.
 Es un coste único. Cada sincronización posterior es **incremental**: solo pide a tu proveedor
 lo que ha cambiado desde la última vez, así que termina en segundos y se ejecuta discretamente
 según su programación. Si la IA está activada, la clasificación y los embeddings también
-procesan el atraso en la primera ejecución y después solo tocan el correo nuevo.
+procesan el atraso en la primera ejecución y después solo tocan el correo nuevo. Los embeddings
+empiezan por el correo más reciente de todas tus cuentas, así que el correo reciente está listo
+para la Búsqueda con IA antes que el antiguo.
 
 <!-- claim:start-after-wizard-first-sync-3 -->
 Cuando termine la primera sincronización:

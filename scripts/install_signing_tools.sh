@@ -21,6 +21,17 @@ sudo apt-get update
 # loads via libp11's engine.
 sudo apt-get install -y osslsigncode libengine-pkcs11-openssl
 
+# libp11 0.4.12-1.1ubuntu2 (noble-updates, 10/11/2026) makes osslsigncode
+# segfault while signing an MSI through ssign's module (v0.6.19); ubuntu1 signed
+# every MSI up to v0.6.18. Pin ubuntu1 by its hash until a newer libp11 is shown
+# to work, then drop this block.
+LIBP11_DEB="libengine-pkcs11-openssl_0.4.12-1.1ubuntu1_amd64.deb"
+LIBP11_SHA256="d5a3106008c9ceec1b77fbd764ca66e03b8dd5ee14ab5529342cb847c0476baf"
+curl -fsSL -o "${RUNNER_TEMP:?}/$LIBP11_DEB" "https://launchpad.net/ubuntu/+archive/primary/+files/$LIBP11_DEB"
+echo "$LIBP11_SHA256  ${RUNNER_TEMP}/$LIBP11_DEB" | sha256sum --check --strict
+sudo dpkg -i "${RUNNER_TEMP}/$LIBP11_DEB"
+sudo apt-mark hold libengine-pkcs11-openssl
+
 git clone --quiet "$SSIGN_REPO" "$DEST"
 git -C "$DEST" checkout --quiet "$SSIGN_REV"
 if [ "$(git -C "$DEST" rev-parse HEAD)" != "$SSIGN_REV" ]; then
@@ -38,4 +49,4 @@ openssl x509 -inform DER -in "$DEST/ssign-core/src/certs/ccsca2021.der" -out "$D
   echo "SSIGN_PKCS11_MODULE=$DEST/target/release/libssign_pkcs11.so"
   echo "CERTUM_INTERMEDIATE_PEM=$DEST/ccsca2021.pem"
 } >> "${GITHUB_ENV:?}"
-echo "[install-signing-tools] ssign $SSIGN_REV, $(osslsigncode --version 2>&1 | head -1)"
+echo "[install-signing-tools] ssign $SSIGN_REV, $(osslsigncode --version 2>&1 | head -1), libp11 $(dpkg-query -W -f='${Version}' libengine-pkcs11-openssl)"

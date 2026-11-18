@@ -319,7 +319,7 @@ pub async fn load_open_document(db: &Arc<Database>, account_id: &str, attachment
                 return Err(not_found());
             }
             ensure_pdf(attachment_id, &meta.mime_type, &meta.filename)?;
-            let bytes = crate::services::attachments::fetch_meta_bytes(db, &meta).await?;
+            let bytes = crate::services::attachments::fetch_meta_bytes(db, &meta, None).await?;
             (meta.filename, bytes)
         }
         None => {

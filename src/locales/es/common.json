@@ -89,5 +89,10 @@
   },
   "unifiedScope": {
     "hint": "En la vista de todas las cuentas, esta sección solo muestra {{email}}"
+  },
+  "layout": {
+    "resizeSidebar": "Cambiar el tamaño de la lista de carpetas",
+    "resizeList": "Cambiar el tamaño de la lista de correos",
+    "resizeHint": "Arrastra para cambiar el tamaño · doble clic para restablecer"
   }
 }

@@ -4268,6 +4268,36 @@ mail and searched another.
 **Rejected:**
 - *A "Search in Spam and Trash" action*: an extra step for what opening the view already says.
 
+## 2026-11-02 — IMAP runs on a fork of `imap` 2.4.1 that survives lines its parser rejects
+
+**Decision:** The app depends on `emailops/rust-imap`, pinned to a commit of its
+`emailops/2.4-panic-free` branch: tag `v2.4.1` plus our fixes. There, a completion for
+another command is an error, not a panic. An untagged line the parser rejects stays in the
+raw response and the rest of the response is read, so a typed command reports it only once
+the session is back in step. A rejected line that announces a literal, or that is no
+response at all, stops the session: what follows can be message text, so later commands fail
+without writing. In the app, a panic in a blocking IMAP task reaches the error without its
+text, and a rejected line is logged with letters and digits masked.
+**Context:** Issue #243: an account whose sync panicked on every pass and never imported a
+message. `imap` 2.4.1 aborts the read on a line it cannot parse and leaves the tagged
+completion on the stream, so the next command hits an `assert_eq!` on the tag. The first
+step of a sync swallows a failed `CAPABILITY` and carries on, which is exactly that sequence.
+Upstream only replaced the assert on the 3.0 alpha line, and its `main` still aborts on such
+a line. The fork does not cover `imap-proto` 0.10.2, which still panics on a few lines
+(`INTERNALDATE NIL`), hence the containment in the app. The masked log showed the line that
+server sends: a `CAPABILITY` reply ending in a space, which the parser rejects whole. So
+`advertises` reads that reply raw, like `SEARCH`, or MOVE and UIDPLUS would never be used there.
+**Rejected:**
+- *Vendoring the crate into this repo*: a fork keeps upstream's history and stays usable by
+  anyone hitting the same bug.
+- *`async-imap`*: a sync-to-async rewrite that still drops the session on a line it cannot
+  parse.
+- *Dropping a rejected line and answering without it*: `* SEARCH 1 2 3 ` with a trailing space
+  would read as "no mail", which is how a sync silently stops fetching. Typed commands stay
+  strict, and the raw readers in `sync/imap_search.rs` already pick out what they need.
+- *Having the app drop the session after each swallowed failure*: the session stops itself in
+  the library, so a caller that carries on cannot read message text as commands.
+
 ## 2026-11-03 — A blocked connectivity probe falls back to the account mail hosts
 
 **Decision:** The connectivity probe keeps its HEAD request to `https://1.1.1.1/`. When that
@@ -4371,3 +4401,228 @@ See `docs/testing/IMAP-TESTING.md`.
 - *GreenMail as the live server*: no STARTTLS, which every non-993 port uses here.
 - *Trusting the extra CA in release builds too*: any process able to set the environment could
   then make the app trust a CA of its choosing.
+
+## 2026-11-08 — List rows of the user's own messages name the recipients
+
+**Decision:** Every mail list row (Inbox, Sent, Starred, Archive, Trash, Spam, custom folders,
+Snoozed, search, smart filters) decides per row whether the user sent the message, with one rule,
+`isOwnMessage`: the owner is the address of the row's account, not the active account; in Inbox and
+Spam only the provider's `is_sent` flag counts; elsewhere `is_sent`, the Sent mailbox or a sender
+equal to the owner. Every row of the Sent view counts as own, since its query already lists Inbox
+copies whose sender is the account (a reply-all to yourself over IMAP has no sent flag). An own row reads "To: Ana, Luis +1" (To then Cc, deduplicated, the user last
+as "you" in the reader's language), and its avatar, drag image and row-menu filter items follow the
+first recipient who is not the user. A recipient's name comes from the stored header, else the
+latest real name that address uses as a sender in the same account (Spam excluded), else the
+address. The tag board's "Me" label shares the same rule.
+**Context:** Issue #256: Sent repeated the user's own name on every row, and mixed lists gave no
+sign that a message was the user's. Outlook and IMAP store recipient addresses without names, so a
+header-only label would show bare addresses on those providers.
+**Rejected:**
+- *A computed label on the backend `Email`*: it touches the tuned list queries and `EMAIL_COLUMNS`
+  that thread and message reads share.
+- *Reusing `get_contacts` / `list_contacts` for names*: byte-wise `MAX(sender)`, a 500-row cap,
+  case-sensitive grouping and Spam included, or three full scans.
+- *Trusting a From equal to the user in Inbox and Spam*: a forged sender would read "To: you".
+- *Changing sync to store Outlook recipient names*: a separate change.
+
+## 2026-11-09 — On IMAP, deleting a conversation moves each message to Trash once
+
+**Decision:** When a Delete takes a conversation on an IMAP account, rows of that conversation
+that share a Message-ID are treated as copies of one message: one of them is moved to Trash (the
+received copy when there is a choice) and the others are only deleted locally, after it. When a copy
+is already in Trash, none is moved again. Gmail and Outlook keep moving every row.
+**Context:** Issue #277: a message sent to yourself is listed in Inbox and Sent as two UIDs. Proton
+Mail Bridge keeps them as one message, and moving the second UID to a Trash that already holds the
+message makes Bridge delete it for good. IMAP gives no portable way to tell one message under two
+UIDs from two real copies, so the rule holds for every IMAP server: on one that stores two copies,
+the Sent copy stays in Sent on the server while EmailOps no longer lists it.
+**Rejected:**
+- *Searching the server's Trash for the Message-ID before each move*: two more round trips per
+  message, and the same outcome on servers that store two copies.
+- *Detecting Proton Mail Bridge and applying the rule only there*: no stable signal for it in the
+  IMAP session, and other label-based servers can behave the same way.
+- *The same rule for Gmail and Outlook*: a second move there is harmless, and on Outlook the Sent
+  Items copy is a real second item the user expects to go.
+
+## 2026-11-10 — The "Sent with EmailOps" footer is on by default and can be turned off
+
+**Decision:** One global switch in Settings → Signatures (`compose.append_footer`) decides
+whether messages the user sends end with the "Sent with EmailOps" line. Unset means on; only
+`"false"` turns it off. The send service reads it when a message is delivered, so a message
+waiting in the outbox follows the switch as it stands when it leaves, and the local Sent copy
+matches what went out. Messages that never carried the footer (drafts pushed to the provider,
+unsubscribe requests, shared-document notices) are unaffected.
+**Context:** The developer wanted a way to stop adding the line; the published privacy page
+said it was always there. Keeping it on by default leaves every existing install unchanged.
+**Rejected:**
+- *Off by default*: changes what every user sends without them asking for it.
+- *A per-account switch*: the footer's language is already global (the UI language), and no one
+  asked to vary it by account.
+- *Reading the switch when the message is queued*: turning it off during the undo window would
+  not apply to that message.
+
+## 2026-11-10 — Search text is a boolean query with uppercase operators
+
+**Decision:** The free text of a list search is read as a boolean query: quoted phrases match
+exactly, `AND` / `OR` / `NOT` count only in capitals, `-word` is `NOT word`, brackets group,
+and `NOT` binds tighter than words side by side (an implicit `AND`), which bind tighter than
+`OR`. A malformed query never fails: a stray operator or bracket is dropped. The field
+operators (`from:`, `to:`, `cc:`, `subject:`, `has:attachment`…) stay outside the boolean
+query and narrow its result.
+**Context:** Issue #268. FTS5 already has this grammar and precedence; its `NOT` is binary,
+so a negation with nothing to subtract from (`-draft`, `a OR -b`) runs as a condition with one
+MATCH per part instead of one MATCH.
+**Rejected:**
+- *Lowercase operators*: "terms and conditions" and Spanish "o" would turn into operators.
+- *Boolean groups over field operators (`from:a OR from:b`)*: each field has its own SQL and
+  index path; a general expression compiler is a larger change than the request needed.
+- *Relevance ordering and searching Trash from the list*: the list stays in conversation order
+  and searches what its view lists.
+
+## 2026-11-11 — Blind copies travel in the envelope; only Gmail and drafts keep the header
+
+**Decision:** Bcc addresses always go in the delivery envelope. A message sent over SMTP (IMAP
+accounts) carries no `Bcc` header, so its Sent copy on the server does not list them. Gmail's
+`raw` message and every provider draft keep the header: Gmail delivers from the headers and
+removes `Bcc` itself, and a draft must come back from the provider with its blind copies, or the
+read-back after each push would drop them. Outlook gets `bccRecipients`. A reply goes to the
+`Reply-To` captured at sync when the message names a valid one, else to `From`.
+**Context:** Issue #270 asked for Bcc in every composer, Cc- or Bcc-only messages, editable
+reply and forward subjects, and replies that honour `Reply-To`.
+**Rejected:**
+- *Building the SMTP message twice, with and without the header, to keep Bcc in the IMAP Sent
+  copy*: each build mints its own Message-ID, so the Sent copy would no longer match the local
+  row stored at send time.
+- *Reply All from the selected message only, keeping its To and Cc roles and excluding only the
+  sending identity* (asked in the issue's comment): it changes who Reply All reaches in every
+  thread; left out of this change.
+
+## 2026-11-11 — A composer stores each attached file for its draft as it arrives
+
+**Decision:** A file attached in any composer (new message, tab, reply, forward) is written at
+once under `attachments/<account>/drafts/` through the `store_draft_file` command, and the
+draft names it from its next save. The draft owns it from then on: the file goes when the draft
+is sent, deleted or drops it. A draft holding files is always sent through the outbox queue,
+which reads them from the draft, so the composer never sends a copy of its own. A webview save
+may name such a stored file; any other path must already be on the draft. Files no draft took
+(the composer closed before saving, or the app quit) are removed at startup once a day old. A
+forward is kept as a draft of the sending account, outside its thread. A message takes at most
+32 files of 25 MB each, and the composer reads at most 50 MB at once.
+**Context:** Issue #274: the autosaved draft kept the text and lost the files, and forwards were
+not saved at all.
+**Rejected:**
+- *Sending the new files' bytes with every draft save*: a large file would cross IPC on each
+  autosave until a save took it, and matching saved rows back to the composer's files needs a
+  key the composer does not have.
+- *Keeping the bytes in the composer and saving them only on close*: a crash or a force quit
+  still loses them.
+- *The issue's wider asks* (an explicit Save draft acknowledgement, conflict choices between
+  local and provider copies, keeping the original when the From account changes, an "open as
+  independent copy" action): each is a change of its own; left out.
+
+## 2026-11-13 — Files pasted into the composer body are attached; images stay inline
+
+**Decision:** Pasting into the body of Compose, a compose tab, Reply or Forward attaches the
+clipboard's files that are not images (a Finder copy) through the composer's `addFiles`, with
+the same limits as a drop; images are still inlined. A paste or drop that mixes images and other
+files inlines the images and attaches the rest. Pasting into To/Cc/Bcc/Subject keeps the native
+behaviour.
+**Context:** Issue #260: only drag-and-drop and the attach button added files. The editor
+(`RichTextEditor`) owns the paste and hands non-image files to the composer (`onAttachFiles`);
+a drop with no images stays with the composer's `useFileDrop`.
+**Rejected:** Attaching a file pasted anywhere in the composer, like a drop: Office apps put text
+and a picture of it on the clipboard together, so pasting a cell into Subject would attach an
+image instead of the text.
+
+## 2026-11-13 — Meeting reminders come only from the account's own calendars
+
+**Decision:** A meeting reminds (OS notification and in-app banner) only when it is on one of
+the account's own calendars: its primary calendar, an ICS feed the user subscribed to, or a
+calendar whose provider-reported owner is the account (Google calendarList `dataOwner`, Graph
+`owner.address`, compared case-insensitively and stored as `calendars.owner_email`). A calendar
+another person shared with the account still shows its events but never reminds; that includes
+another person's Google primary calendar, which reports no owner. An event whose calendar has
+no registry row still reminds.
+**Context:** Multi-calendar sync made every visible calendar raise reminders, so a colleague's
+shared calendar reminded the user of meetings that were not theirs. A meeting the user is
+invited to also lands on their own calendar, so it keeps exactly one reminder.
+**Rejected:**
+- *Primary calendar only*: no migration, but it silences calendars the user created.
+- *A per-calendar "remind me" switch in Settings → Calendar*: more UI and state than the
+  request needs; hiding a calendar already silences it.
+- *Google `accessRole == owner` as the ownership test*: a calendar shared with "manage sharing"
+  rights reports `owner` too.
+
+## 2026-11-17 — Sidebar density is a two-level preference that only changes vertical spacing
+
+**Decision:** The sidebar gets a remembered `sidebar_density` preference for the whole
+installation (not per account): `compact`, the default, or `comfortable`, the sidebar as it was,
+chosen in Settings → Appearance. The default is never written to the database, so an installation
+that saved Comfortable keeps it. Compact only reduces the vertical padding and gaps
+of the sidebar's scrolling list; it never changes text size, icon size, horizontal padding, or
+the fixed header and footer, and every row it changes stays at least 24 px tall (WCAG 2.5.8).
+The stored values are plain strings and are not renamed without a migration.
+**Context:** Issue #279: with several accounts and groups open, the list makes users scroll or
+fold useful groups. On the demo mailbox the list's content height drops from 2106 to 1618 px
+(0.768), mostly from the view rows and the smart-filter rows; account rows already use
+`text-xs`, keep a `min-h-6` floor (WebKit lays their truncated label out 1 px short), and gain
+the least.
+**Rejected:**
+- *A `data-density` attribute with Tailwind `in-data-*` variants*: the precedence between a row's
+  class and its compact override cannot be checked in jsdom, only in a real browser.
+- *A React context for the density*: a provider and a hook for three components; a required prop
+  lets `tsc` catch a component that was not given it.
+- *Thumbnail cards in Settings*: two new drawings to maintain; the shared `Select` is enough.
+- *All text rows at 28 px*: 0.820 with 2 px gaps (misses the 0.8 target); 0.782 without gaps,
+  where the active and hover backgrounds of neighbouring rows touch.
+- *Smaller icons*: the row height comes from the text's line height, so they save no space.
+
+## 2026-11-17 — Resizable columns keep a 320 px reading-area floor
+
+**Decision:** The folder sidebar (180–420 px, default 256) and the split-view email list
+(300–800 px, default 384) resize from a handle on their right edge. A handle never lets its
+column grow past the point where the reading pane, or the main area in a view without one,
+would be narrower than 320 px, the floor the tag board already gives its reading pane. The
+limit is read from the layout when a drag or key press starts. When the space shrinks
+afterwards (the right dock opens, the window narrows), a column widened past its default is
+drawn narrower, the list first and then the sidebar, until the reading area has 320 px again or
+both are back at their defaults; the saved widths stay and come back with the space. A drag
+saves the width once, on release. The email frame hands the wheel to the reading pane only when
+the email is wider than the frame.
+**Context:** Contributor PR #134 added the columns. Its review asked for one preference write per
+drag, a reading pane the columns cannot squeeze, one clamp for every key, and native scrolling
+for emails that do not need the wheel handoff. The developer chose to fit the drawn widths in
+the same change: without it, reopening the dock after widening both columns left the reading
+pane at 0 px and clipped the list. The fitted widths stop at the defaults, so a tight window
+looks as it did with fixed columns (a 180 px reading pane at 1200 px with the 380 px dock
+open).
+**Rejected:**
+- *Fitting the columns with CSS alone (`flex-shrink` plus `min-width`)*: the browser shrinks
+  every shrinkable item in proportion, so it cannot say "the list first, then the sidebar, and
+  not below the default"; a pure function (`fitColumns`) can, and is unit-tested.
+- *Letting a fitted column shrink to its minimum*: it would change the layout of a window with
+  the dock open for users who never resized a column.
+- *Pointer capture for the drag (the PR's version)*: the app already keeps a drag alive over an
+  email iframe with a window-wide capture layer (`RightDock`). The layer appears only after the
+  pointer moves 3 px, so a double-click still reaches the handle.
+
+## 2026-11-17 — Pasted rich text keeps only colours that read; the composer gets a text colour picker
+
+**Decision:** When rich text is pasted into the composer, any text colour whose contrast with
+the background it will be shown on is below 3:1 (WCAG's floor for large text) is dropped. The
+background is the nearest one the pasted HTML declares, otherwise the white page a message
+renders on (`dropUnreadableColors`, run as the editor's `transformPastedHTML`). All other pasted
+styles stay, and drafts opened from a webmail client are not filtered. The toolbar offers a text
+colour picker: a fixed palette where every colour has 4.5:1 or more on white, plus the default.
+**Context:** A list copied from a note app in dark mode arrived with the theme's white text
+colour as an inline style. The composer keeps inline styles (so webmail drafts survive), and on
+its dark surface the white text looked like the rest. It was sent as white text, invisible on a
+recipient's white page and black under the dark reader's inversion. The developer asked for
+colour support in the editor rather than losing colours on paste.
+**Rejected:**
+- *Dropping every pasted colour and background*: a colour the sender chose (a red warning)
+  would be lost, and the editor could not put it back.
+- *Dropping only near-white or near-black colours*: a fixed list of theme colours misses the
+  mid greys of other themes. A contrast ratio against the actual background covers them all.
+- *Painting the composer with the reader's scheme (inverted on the dark theme)*: it shows the
+  problem but does not prevent it, and it is a larger change to the editor's CSS.

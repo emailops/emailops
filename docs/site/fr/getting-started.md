@@ -98,7 +98,8 @@ C'est un coût unique. Chaque synchronisation ultérieure est **incrémentale** 
 à votre fournisseur que ce qui a changé depuis la dernière fois, donc elle se termine en
 quelques secondes et tourne discrètement selon sa planification. Si l'IA est activée, la
 classification et les embeddings rattrapent également le retard au premier lancement, puis ne
-touchent plus que le courrier nouveau.
+touchent plus que le courrier nouveau. Les embeddings commencent par le courrier le plus récent
+de tous vos comptes, si bien que le courrier récent est prêt pour la Recherche IA avant l'ancien.
 
 <!-- claim:start-after-wizard-first-sync-3 -->
 Une fois la première synchronisation terminée :

@@ -1,6 +1,6 @@
 cask "emailops" do
-  version "0.6.18"
-  sha256 "36c9c834faf5e8af33e3cded59c1264ade0357bcee68fe2eb88b05e15025b8d5"
+  version "0.6.19"
+  sha256 "78259c67e40bf94b283682dfa1293ce4352b4adfd10bba4431cf0e30592a4b8a"
 
   url "https://github.com/emailops/emailops/releases/download/v#{version}/EmailOps-macos.dmg"
   name "EmailOps"

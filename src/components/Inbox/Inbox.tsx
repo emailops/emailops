@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSenderNames } from '@/hooks/useSenderNames';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
 import { selectPageFailed } from '@/lib/listPaging';
@@ -71,6 +72,8 @@ interface InboxProps {
   onSearch?: (query: string) => void;
   /** Sync now, offered by the empty list of an account with no mail yet. */
   onSync?: () => void;
+  /** Column width in pixels for the split layout (resizable). Omitted: 384px. */
+  width?: number;
 }
 
 interface CategoryTabConfig {
@@ -178,6 +181,7 @@ export function Inbox({
   accountId,
   onSearch,
   onSync,
+  width,
 }: InboxProps) {
   const { t } = useTranslation(['inbox', 'common', 'chat', 'sidebar']);
   // Only render tabs for categories the active account is actually
@@ -237,7 +241,10 @@ export function Inbox({
   // min-content width and overflows (clipping its own toolbar buttons) rather
   // than narrowing when something else — e.g. the docked chat panel — takes
   // horizontal space.
-  const widthClass = fullWidth ? 'flex-1 min-w-0' : 'w-96';
+  // Split layout: a fixed column, resizable when the parent passes `width`.
+  // Like the old `w-96`, it may still shrink when the window is too narrow.
+  const widthClass = fullWidth ? 'flex-1 min-w-0' : width === undefined ? 'w-96' : '';
+  const widthStyle = !fullWidth && width !== undefined ? { width } : undefined;
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Unified ("All accounts") mode: rows get a colored per-account indicator,
@@ -249,19 +256,24 @@ export function Inbox({
   const activeFilter = useFilterStore((s) => s.activeFilter);
   // Search results mix every account, so they also get a readable chip.
   const showAccountChip = Boolean(searchQuery);
+  const accountEmailById = useMemo(() => new Map(allAccounts.map((a) => [a.id, a.email])), [allAccounts]);
   const getAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
-    const emailById = new Map(allAccounts.map((a) => [a.id, a.email]));
     return (email: Email) => ({
       colorClass: accountColorClass(allAccounts, email.accountId),
-      label: emailById.get(email.accountId) ?? email.accountId,
+      label: accountEmailById.get(email.accountId) ?? email.accountId,
       chip: showAccountChip,
     });
-  }, [isUnified, allAccounts, showAccountChip]);
+  }, [isUnified, allAccounts, accountEmailById, showAccountChip]);
+  // Each row is judged against its own account, never the active one: the
+  // unified view mixes rows from several.
+  const getOwnerEmail = useCallback((email: Email) => accountEmailById.get(email.accountId), [accountEmailById]);
 
   // A selection belongs to the list it was made in: switching account,
   // mailbox, filter or search clears it.
   const listScope = useEmailStore((s) => s.listScope);
+  // A search or smart filter replaces the Sent list with its own results.
+  const inSentView = listScope === 'sent' && !searchQuery && !activeFilter;
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const clearSelection = useSelectionStore((s) => s.clear);
   const hasSelection = useSelectionStore((s) => s.ids.size > 0);
@@ -280,14 +292,11 @@ export function Inbox({
     // Category filter is Gmail-specific; skip for IMAP and other non-Gmail accounts
     if (!showCategoryFilter) return emails;
     if (selectedCategories.size === 0) return emails;
-    const filtered = emails.filter((email) => selectedCategories.has(email.category));
-    // Edge case: during an initial sync the first batch may all be promotions/forums
-    // (categories typically unchecked). Showing "no emails" would be misleading — the
-    // first primary messages are still on their way. Only bypass the filter when it
-    // yields zero results *and* a sync is actively running.
-    if (isSyncing && filtered.length === 0 && emails.length > 0) return emails;
-    return filtered;
-  }, [emails, selectedCategories, activeFilter, navigationMode, showCategoryFilter, searchQuery, isSyncing]);
+    // An empty category stays empty, even during a sync: the empty state says
+    // the sync is running, and other categories' mail under the highlighted tab
+    // would misreport what it holds.
+    return emails.filter((email) => selectedCategories.has(email.category));
+  }, [emails, selectedCategories, activeFilter, navigationMode, showCategoryFilter, searchQuery]);
 
   // Junk removal is applied last and only when the user asked for it. It is a
   // view filter, nothing more: the message stays where the server put it and
@@ -301,6 +310,9 @@ export function Inbox({
     if (searchQuery || activeFilter) return filteredEmails;
     return filteredEmails.filter((email) => !isHiddenFromInbox(junkVerdicts[email.id], junkFlaggedAction));
   }, [filteredEmails, junkFlaggedAction, junkVerdicts, searchQuery, activeFilter]);
+  // Rows of the user's own messages name their recipients the way those
+  // people sign when they write in.
+  const nameOf = useSenderNames(visibleEmails);
 
   // Whether any of the loaded messages are flagged, regardless of the current
   // setting — the toggle only appears when it would do something.
@@ -469,7 +481,10 @@ export function Inbox({
 
   const showTabs = showCategoryFilter && visibleCategories.length > 0;
   return (
-    <div className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50 flex flex-col`}>
+    <div
+      className={`${widthClass} border-r border-gray-200 bg-gradient-to-b from-white to-gray-50 flex flex-col`}
+      style={widthStyle}
+    >
       <div className={`px-4 pt-4 ${showTabs ? '' : 'pb-4'} border-b border-gray-200 bg-white`}>
         {/* While rows are selected the bulk toolbar takes the header row's
             place (count, select-all, actions); the tabs stay below it. */}
@@ -628,6 +643,9 @@ export function Inbox({
         onChatAboutThread={onChatAboutThread}
         compact={fullWidth}
         getAccountBadge={getAccountBadge}
+        getOwnerEmail={getOwnerEmail}
+        nameOf={nameOf}
+        inSentView={inSentView}
       />
     </div>
   );

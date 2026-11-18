@@ -428,6 +428,7 @@ async fn sending_submits_over_smtp_and_files_a_seen_copy_in_sent() {
             Some("Test User"),
             &["friend@example.test".to_string()],
             &[],
+            &[],
             "Greetings",
             &body,
             &[],

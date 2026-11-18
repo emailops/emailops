@@ -92,7 +92,8 @@ export function readEmailDragPayload(dataTransfer: DataTransfer): EmailDragPaylo
 
 /** What the drag preview card shows. */
 export interface EmailDragPreview {
-  sender: string;
+  /** Who the row names: its sender, or "To: …" for a message the user sent. */
+  label: string;
   subject: string;
   /** How many emails move together (more than 1 shows a count badge). */
   count?: number;
@@ -104,7 +105,7 @@ const PREVIEW_MAX_CHARS = 40;
 /**
  * The card is plain DOM built during `dragstart`, so Tailwind classes cannot
  * style it (they are not generated for runtime-only markup); it uses the same
- * palette values instead: gray-900 text, gray-500 sender, primary-600 accent
+ * palette values instead: gray-900 text, gray-500 subject, primary-600 accent
  * (`primary` is the custom sky scale in tailwind.config.js).
  */
 const PALETTE = {
@@ -129,12 +130,12 @@ function clip(text: string): string {
  * Plain DOM, not React: `setDragImage` snapshots the element synchronously
  * during `dragstart`, and WebKit only renders it while it is attached to the
  * document. It is parked off-screen and removed on the next tick. Text is set
- * with `textContent`, so sender/subject can never inject markup.
+ * with `textContent`, so label/subject can never inject markup.
  */
 export function buildDragPreview(doc: Document, preview: EmailDragPreview): HTMLElement {
   doc.getElementById(PREVIEW_ID)?.remove();
-  // Compact, single line: sender in bold first (it tells emails apart at a
-  // glance), subject after it in grey. Small enough not to hide the sidebar
+  // Compact, single line: the label (sender or recipients) in bold first (it
+  // tells emails apart at a glance), subject after it in grey. Small enough not to hide the sidebar
   // folder the user is aiming at.
   const card = doc.createElement('div');
   card.id = PREVIEW_ID;
@@ -160,15 +161,15 @@ export function buildDragPreview(doc: Document, preview: EmailDragPreview): HTML
     zIndex: '2147483647',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  // The sender is short and is shown in full whenever possible; a long
+  // The label is short and is shown in full whenever possible; a long
   // subject gives way first.
-  const sender = doc.createElement('span');
-  sender.style.fontWeight = '600';
-  sender.style.overflow = 'hidden';
-  sender.style.textOverflow = 'ellipsis';
-  sender.style.flexShrink = '0';
-  sender.style.maxWidth = '60%';
-  sender.textContent = clip(preview.sender);
+  const label = doc.createElement('span');
+  label.style.fontWeight = '600';
+  label.style.overflow = 'hidden';
+  label.style.textOverflow = 'ellipsis';
+  label.style.flexShrink = '0';
+  label.style.maxWidth = '60%';
+  label.textContent = clip(preview.label);
 
   const subject = doc.createElement('span');
   subject.style.color = PALETTE.gray500;
@@ -197,7 +198,7 @@ export function buildDragPreview(doc: Document, preview: EmailDragPreview): HTML
     card.append(badge);
   }
 
-  card.append(sender, subject);
+  card.append(label, subject);
   doc.body.append(card);
   return card;
 }

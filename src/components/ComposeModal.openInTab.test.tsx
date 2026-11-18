@@ -17,6 +17,12 @@ vi.mock('@/components/shared/RichTextEditor', () => ({
 vi.mock('@/components/shared/TranslateComposeControl', () => ({ TranslateComposeControl: () => null }));
 vi.mock('@/components/shared/Select', () => ({ Select: () => null }));
 vi.mock('@/lib/api', () => ({
+  // A file is stored for the draft as it is attached.
+  storeDraftFile: vi.fn(async (_accountId: string, file: { filename: string; mimeType: string }) => ({
+    filePath: 'attachments/a1/drafts/0b1c.txt',
+    filename: file.filename,
+    mimeType: file.mimeType,
+  })),
   getPref: vi.fn(async () => null),
   autocompleteRecipients: vi.fn(async () => []),
   saveDraft: vi.fn(async () => ({ id: 'd1' })),
@@ -128,7 +134,7 @@ describe('ComposeModal "Open in tab"', () => {
     expect(onMaximize.mock.calls[0][0].draftId).toBe('d1');
   });
 
-  it('carries attached files', async () => {
+  it('carries the files stored for the draft', async () => {
     const onMaximize = vi.fn();
     await mount(onMaximize);
     const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -148,8 +154,8 @@ describe('ComposeModal "Open in tab"', () => {
 
     await clickOpenInTab();
 
-    expect(onMaximize.mock.calls[0][0].attachments).toEqual([
-      expect.objectContaining({ filename: 'notes.txt', mimeType: 'text/plain' }),
+    expect(onMaximize.mock.calls[0][0].draftFiles).toEqual([
+      { filePath: 'attachments/a1/drafts/0b1c.txt', filename: 'notes.txt', mimeType: 'text/plain' },
     ]);
   });
 });

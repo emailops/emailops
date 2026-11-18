@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::models::error::AppError;
-use crate::models::{Draft, DraftAttachment, SaveDraftRequest};
+use crate::models::{Draft, DraftAttachment, DraftAttachmentInput, SaveDraftRequest};
 use crate::services;
 use crate::services::emails;
 use crate::sync::provider::provider_supports_drafts;
@@ -79,6 +79,22 @@ pub async fn list_draft_attachments(
     state.db.list_draft_attachments(&draft_id)
 }
 
+/// Store a file attached in a composer so its draft keeps it (#274). The
+/// returned input goes into the draft's next save, which owns the file from
+/// then on; a file no save takes is swept at a later startup.
+#[tauri::command]
+pub async fn store_draft_file(
+    state: State<'_, AppState>,
+    account_id: String,
+    file: crate::sync::provider::EmailAttachment,
+) -> Result<DraftAttachmentInput, AppError> {
+    state
+        .db
+        .get_account(&account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
+    emails::store_composer_file(&state.db, &account_id, &file)
+}
+
 /// Save (create/upsert) a draft. When the account's provider supports
 /// server-side drafts, the draft is also pushed to the Drafts folder. If the
 /// provider can't be built (e.g. offline), the draft still saves locally,
@@ -109,6 +125,7 @@ pub async fn save_draft(state: State<'_, AppState>, app: AppHandle, req: SaveDra
         email_id: req.email_id,
         to: req.to_addresses,
         cc: req.cc_addresses,
+        bcc: req.bcc_addresses,
         subject: req.subject,
         body: req.body,
         body_html: req.body_html,

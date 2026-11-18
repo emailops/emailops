@@ -119,6 +119,9 @@ struct GraphMessage {
     to_recipients: Option<Vec<GraphRecipientWrapper>>,
     #[serde(rename = "ccRecipients")]
     cc_recipients: Option<Vec<GraphRecipientWrapper>>,
+    /// Only a draft or a sent copy has any.
+    #[serde(rename = "bccRecipients", default)]
+    bcc_recipients: Option<Vec<GraphRecipientWrapper>>,
     #[serde(rename = "receivedDateTime")]
     received_date_time: Option<String>,
     #[serde(rename = "isRead")]
@@ -491,6 +494,7 @@ impl OutlookClient {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         item_id: &str,
         subject: &str,
         body: &EmailBody,
@@ -519,6 +523,7 @@ impl OutlookClient {
             let payload = outlook_payload::build_reply_payload(&OutlookSendParams {
                 to_emails,
                 cc_emails,
+                bcc_emails,
                 subject,
                 body: &bare,
                 attachments: &[],
@@ -536,6 +541,7 @@ impl OutlookClient {
             crate::sync::outlook_payload::build_reply_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
                 cc_emails,
+                bcc_emails,
                 subject,
                 body,
                 attachments,
@@ -557,6 +563,7 @@ impl OutlookClient {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -566,7 +573,7 @@ impl OutlookClient {
         if !plan.single_request {
             // Too much for one request: a draft, filled, then sent.
             let draft_id = self
-                .create_bare_draft(to_emails, cc_emails, subject, body, "create draft to send")
+                .create_bare_draft(to_emails, cc_emails, bcc_emails, subject, body, "create draft to send")
                 .await?;
             return self.fill_and_send(&draft_id, &outgoing, &plan).await;
         }
@@ -575,6 +582,7 @@ impl OutlookClient {
             crate::sync::outlook_payload::build_send_mail_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
                 cc_emails,
+                bcc_emails,
                 subject,
                 body,
                 attachments,
@@ -596,6 +604,7 @@ impl OutlookClient {
         &self,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -604,7 +613,7 @@ impl OutlookClient {
         let plan = plan_outgoing(&outgoing)?;
         if !plan.single_request {
             let draft_id = self
-                .create_bare_draft(to_emails, cc_emails, subject, body, "create draft")
+                .create_bare_draft(to_emails, cc_emails, bcc_emails, subject, body, "create draft")
                 .await?;
             // A draft that could not be filled is not recorded by the caller,
             // which would create another one on the next save: remove it.
@@ -619,6 +628,7 @@ impl OutlookClient {
             crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
                 cc_emails,
+                bcc_emails,
                 subject,
                 body,
                 attachments,
@@ -635,6 +645,7 @@ impl OutlookClient {
         provider_draft_id: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -650,6 +661,7 @@ impl OutlookClient {
             crate::sync::outlook_payload::build_draft_payload(&crate::sync::outlook_payload::OutlookSendParams {
                 to_emails,
                 cc_emails,
+                bcc_emails,
                 subject,
                 body: &bare,
                 attachments: &[],
@@ -691,6 +703,7 @@ impl OutlookClient {
         &self,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         operation: &str,
@@ -699,6 +712,7 @@ impl OutlookClient {
         let payload = outlook_payload::build_draft_payload(&OutlookSendParams {
             to_emails,
             cc_emails,
+            bcc_emails,
             subject,
             body: &bare,
             attachments: &[],
@@ -1059,6 +1073,7 @@ impl OutlookClient {
                     continue;
                 }
             };
+            let bcc = flatten_recipients(msg.bcc_recipients.as_deref());
             let (email, _cat) = parse_message(msg);
             // Graph draft bodies are HTML; split so the composer renders the
             // rich source instead of escaping it as literal text.
@@ -1067,6 +1082,7 @@ impl OutlookClient {
                 provider_draft_id,
                 to_addresses: email.recipients,
                 cc_addresses: email.cc,
+                bcc_addresses: bcc,
                 subject: email.subject,
                 body,
                 body_html,
@@ -1669,11 +1685,18 @@ impl EmailProvider for OutlookClient {
     /// Move the message to Deleted Items (`Mail.ReadWrite`). Deliberately not
     /// `DELETE /me/messages/{id}`: the app's delete action is the reversible
     /// one, so the message stays recoverable from the account's own clients.
-    async fn trash_message(&self, message_id: &str, _message_id_header: Option<&str>) -> Result<()> {
+    ///
+    /// Graph re-keys the moved message too, but its new id is not followed
+    /// yet: `None` keeps the row under the old one.
+    async fn trash_message(
+        &self,
+        message_id: &str,
+        _message_id_header: Option<&str>,
+    ) -> Result<Option<provider::MessageLocation>> {
         let url = format!("{}/me/messages/{}/move", self.base_url, urlencoding::encode(message_id));
         let payload = serde_json::json!({ "destinationId": "deleteditems" });
         self.send_post_json_no_resend(&url, &payload, "trash message").await?;
-        Ok(())
+        Ok(None)
     }
 
     async fn list_mailbox_messages(
@@ -1757,6 +1780,7 @@ impl EmailProvider for OutlookClient {
         _from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         // Graph writes In-Reply-To/References itself from the message being
         // replied to, so the parent's RFC headers are not ours to send; only
         // the item id matters here.
@@ -1770,13 +1794,14 @@ impl EmailProvider for OutlookClient {
         // set In-Reply-To either, so the reply goes out unthreaded.
         if target.provider_message_id.is_empty() {
             return self
-                .send_new_email(from_email, to_emails, cc_emails, subject, body, attachments)
+                .send_new_email(from_email, to_emails, cc_emails, bcc_emails, subject, body, attachments)
                 .await;
         }
         self.send_reply(
             from_email,
             to_emails,
             cc_emails,
+            bcc_emails,
             target.provider_message_id,
             subject,
             body,
@@ -1791,11 +1816,12 @@ impl EmailProvider for OutlookClient {
         _from_name: Option<&str>,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
     ) -> Result<crate::sync::provider::SentMessageMeta> {
-        self.send_new_email(from_email, to_emails, cc_emails, subject, body, attachments)
+        self.send_new_email(from_email, to_emails, cc_emails, bcc_emails, subject, body, attachments)
             .await
     }
 
@@ -1808,6 +1834,7 @@ impl EmailProvider for OutlookClient {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
@@ -1816,7 +1843,7 @@ impl EmailProvider for OutlookClient {
         // drafts are therefore linked to their thread on this device only.
         _reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        self.create_draft(to_emails, cc_emails, subject, body, attachments)
+        self.create_draft(to_emails, cc_emails, bcc_emails, subject, body, attachments)
             .await
     }
 
@@ -1826,13 +1853,22 @@ impl EmailProvider for OutlookClient {
         _from_email: &str,
         to_emails: &[String],
         cc_emails: &[String],
+        bcc_emails: &[String],
         subject: &str,
         body: &EmailBody,
         attachments: &[EmailAttachment],
         _reply: Option<&crate::sync::provider::ReplyTarget<'_>>,
     ) -> Result<String> {
-        self.update_draft(provider_draft_id, to_emails, cc_emails, subject, body, attachments)
-            .await
+        self.update_draft(
+            provider_draft_id,
+            to_emails,
+            cc_emails,
+            bcc_emails,
+            subject,
+            body,
+            attachments,
+        )
+        .await
     }
 
     async fn delete_draft(&self, provider_draft_id: &str) -> Result<()> {
@@ -2512,6 +2548,7 @@ mod tests {
                 "me@example.com",
                 &["them@example.com".to_string()],
                 &[],
+                &[],
                 "hi",
                 &EmailBody::plain("body"),
                 &[],
@@ -2543,6 +2580,7 @@ mod tests {
             "me@example.com",
             None,
             &["them@example.com".to_string()],
+            &[],
             &[],
             &crate::sync::provider::ReplyTarget {
                 provider_message_id: "AQMkAD-item-id",
@@ -2582,6 +2620,7 @@ mod tests {
             None,
             &["them@example.com".to_string()],
             &[],
+            &[],
             &crate::sync::provider::ReplyTarget {
                 provider_message_id: "item-without-header",
                 thread_id: "conv-2",
@@ -2617,6 +2656,7 @@ mod tests {
             "me@example.com",
             None,
             &["them@example.com".to_string()],
+            &[],
             &[],
             &crate::sync::provider::ReplyTarget {
                 provider_message_id: "",
@@ -2658,6 +2698,7 @@ mod tests {
             .update_draft(
                 "gone-1",
                 &["dest@example.com".to_string()],
+                &[],
                 &[],
                 "Subject",
                 &EmailBody::plain("body"),
@@ -2753,6 +2794,23 @@ mod tests {
             .iter()
             .filter(|r| r.url.path().ends_with("/attachments"))
             .count()
+    }
+
+    /// The read-back after each push stores what the pull returns, so a pulled
+    /// draft without its blind copies would lose them (#270).
+    #[tokio::test]
+    async fn a_pulled_draft_keeps_its_blind_copies() {
+        let server = wiremock::MockServer::start().await;
+        let mut draft = draft_json("d-1", "ck-1", false, "<p>hi</p>");
+        draft["bccRecipients"] = serde_json::json!([{ "emailAddress": { "address": "hidden@example.com" } }]);
+        mount_drafts(&server, serde_json::json!([draft])).await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let pull = EmailProvider::list_drafts(&client, &std::collections::HashMap::new())
+            .await
+            .expect("pull");
+
+        assert_eq!(pull.changed[0].bcc_addresses, vec!["hidden@example.com".to_string()]);
     }
 
     #[tokio::test]
@@ -3049,6 +3107,7 @@ mod tests {
             from: None,
             to_recipients: None,
             cc_recipients: None,
+            bcc_recipients: None,
             received_date_time: Some("2025-01-02T15:04:05Z".to_string()),
             is_read: Some(true),
             has_attachments: Some(false),
@@ -3101,6 +3160,7 @@ mod tests {
             }),
             to_recipients: None,
             cc_recipients: None,
+            bcc_recipients: None,
             received_date_time: None,
             is_read: None,
             has_attachments: None,
@@ -3668,6 +3728,7 @@ mod tests {
                 "me@example.com",
                 &["them@example.com".to_string()],
                 &[],
+                &[],
                 "Files",
                 &EmailBody::plain("see attached"),
                 attachments,
@@ -3909,6 +3970,7 @@ mod tests {
             .create_draft(
                 &[],
                 &[],
+                &[],
                 "Files",
                 &EmailBody::plain("x"),
                 std::slice::from_ref(&too_large),
@@ -4029,6 +4091,7 @@ mod tests {
                     "me@example.com",
                     &["them@example.com".to_string()],
                     &[],
+                    &[],
                     "orig-1",
                     "Re: Files",
                     &EmailBody::plain("here it is"),
@@ -4102,6 +4165,7 @@ mod tests {
                 .create_draft(
                     &["them@example.com".to_string()],
                     &[],
+                    &[],
                     "Files",
                     &EmailBody::plain("draft").without_footer(),
                     &[file("video.bin", LARGE)],
@@ -4143,6 +4207,7 @@ mod tests {
 
             let result = client_for(&server)
                 .create_draft(
+                    &[],
                     &[],
                     &[],
                     "Files",
@@ -4189,6 +4254,7 @@ mod tests {
                 .update_draft(
                     "d1",
                     &["them@example.com".to_string()],
+                    &[],
                     &[],
                     "Files",
                     &EmailBody::plain("draft").without_footer(),
@@ -4257,6 +4323,7 @@ mod tests {
                     "d1",
                     &["them@example.com".to_string()],
                     &[],
+                    &[],
                     "Files",
                     &EmailBody::plain("draft").without_footer(),
                     &[file("note.txt", 1024)],
@@ -4311,6 +4378,7 @@ mod tests {
                 .update_draft(
                     "d1",
                     &["them@example.com".to_string()],
+                    &[],
                     &[],
                     "No files",
                     &EmailBody::plain("draft").without_footer(),

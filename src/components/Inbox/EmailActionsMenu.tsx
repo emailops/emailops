@@ -20,8 +20,18 @@ export interface RulePrefill {
   senderName: string;
 }
 
+/** The address the menu's filter items act on. A row for a message the user
+ *  sent names its recipients, so its menu acts on one of them. */
+export interface MenuParty {
+  address: string;
+  kind: 'sender' | 'recipient';
+}
+
 export interface EmailActionsMenuProps {
   email: Email;
+  /** Defaults to the sender; `null` hides the filter and block items (a note
+   *  to self, or a sent message with no visible recipient). */
+  actsOn?: MenuParty | null;
   onAddSenderFilter?: (senderEmail: string) => void;
   onHideSenderFromFilters?: (senderEmail: string) => void;
   onCreateAttachmentRule?: (prefill: RulePrefill) => void;
@@ -77,6 +87,7 @@ export function useMoveTargets(email: Email): {
  */
 export function EmailActionsMenu({
   email,
+  actsOn: actsOnProp,
   onAddSenderFilter,
   onHideSenderFromFilters,
   onCreateAttachmentRule,
@@ -99,6 +110,7 @@ export function EmailActionsMenu({
   const snoozed = useEmailStore((s) => isSnoozed(s.snoozes, email));
   const openSenderDialog = useSenderStore((s) => s.openDialog);
   const { moveTargets } = useMoveTargets(email);
+  const actsOn = actsOnProp === undefined ? { address: email.senderEmail, kind: 'sender' as const } : actsOnProp;
   const [menuOpen, setMenuOpen] = useState(false);
   useOverlay(menuOpen);
   /** 'move' shows the folder-picker page of the menu, 'snooze' the snooze
@@ -320,37 +332,44 @@ export function EmailActionsMenu({
                 />
                 <div className="border-t border-gray-100 my-1" />
                 {/* The sender items act on this address: shown once here rather
-                    than beside each label, where it squeezed them onto two lines. */}
-                <div
-                  data-testid="menu-sender"
-                  title={email.senderEmail}
-                  className="px-3 pt-1 pb-0.5 text-xs text-gray-400 truncate"
-                >
-                  {email.senderEmail}
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAddSenderFilter?.(email.senderEmail);
-                    setMenuOpen(false);
-                  }}
-                  className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
-                    />
-                  </svg>
-                  {t('inbox:emailRow.addSenderFilter')}
-                </button>
-                {onHideSenderFromFilters && (
+                    than beside each label, where it squeezed them onto two lines.
+                    On a message the user sent it is a recipient's. */}
+                {actsOn && (
+                  <div
+                    data-testid="menu-sender"
+                    title={actsOn.address}
+                    className="px-3 pt-1 pb-0.5 text-xs text-gray-400 truncate"
+                  >
+                    {actsOn.address}
+                  </div>
+                )}
+                {actsOn && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onHideSenderFromFilters(email.senderEmail);
+                      onAddSenderFilter?.(actsOn.address);
+                      setMenuOpen(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                      />
+                    </svg>
+                    {actsOn.kind === 'recipient'
+                      ? t('inbox:emailRow.addRecipientFilter')
+                      : t('inbox:emailRow.addSenderFilter')}
+                  </button>
+                )}
+                {actsOn && onHideSenderFromFilters && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onHideSenderFromFilters(actsOn.address);
                       setMenuOpen(false);
                     }}
                     className="w-full text-left px-3 py-2 text-sm whitespace-nowrap text-gray-700 hover:bg-gray-50 flex items-center gap-2"
@@ -366,7 +385,7 @@ export function EmailActionsMenu({
                     {t('inbox:emailRow.hideFromFilters')}
                   </button>
                 )}
-                {!email.isSent && (
+                {actsOn?.kind === 'sender' && !email.isSent && (
                   <button
                     data-testid="menu-block-sender"
                     onClick={(e) => {

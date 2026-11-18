@@ -23,7 +23,7 @@ import { useShortcutStore } from '@/stores/shortcutStore';
 import { useTagStore } from '@/stores/tagStore';
 import type { Account, Draft, Email, EmailAttachmentMeta } from '@/types';
 import { AttachmentLightbox } from './AttachmentLightbox';
-import { forwardQuote, forwardSubject, loadForwardTexts } from './forward';
+import { forwardQuote, loadForwardTexts } from './forward';
 import { ReplyCompose } from './ReplyCompose';
 import { ThreadEmailItem } from './ThreadEmailItem';
 
@@ -272,6 +272,25 @@ export function EmailView({
   const isReplyOpenRef = useRef(isReplyOpen);
   isReplyOpenRef.current = isReplyOpen;
   const isThread = threadEmails.length > 1;
+
+  // Where a reply to each message goes when it names a Reply-To. Read once
+  // per thread; until it arrives (or if it fails) replies go to the senders.
+  const [threadReplyTo, setThreadReplyTo] = useState<Record<string, string[]>>({});
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per thread, keyed on threadKey
+  useEffect(() => {
+    setThreadReplyTo({});
+    if (!latestEmailForEffect) return;
+    let current = true;
+    api
+      .getThreadReplyTo(latestEmailForEffect.accountId, latestEmailForEffect.threadId)
+      .then((map) => {
+        if (current) setThreadReplyTo(map);
+      })
+      .catch((err) => addLog('error', 'sync', `Could not read the thread's Reply-To addresses: ${errorText(err)}`));
+    return () => {
+      current = false;
+    };
+  }, [threadKey]);
 
   const threadSearchActive = threadSearchOpen && threadSearchQuery.trim().length > 0;
   const threadMatches = useMemo(
@@ -587,7 +606,7 @@ export function EmailView({
             skipped.push(meta.filename);
             continue;
           }
-          const data = await api.fetchEmailAttachmentBytes(email.accountId, email.id, meta.providerAttachmentId);
+          const data = await api.fetchEmailAttachmentBytes(email.accountId, meta.id);
           carried.push({ filename: meta.filename, mimeType: meta.mimeType, data });
           bytes += meta.fileSize;
         }
@@ -820,9 +839,11 @@ export function EmailView({
               accounts={accounts}
               defaultAccountId={activeAccountId || latestEmail.accountId}
               mode={replyMode}
+              replyTo={threadReplyTo}
               restoredDraft={replyMode === 'forward' ? null : threadDraft}
               adoptDraftId={replyMode === 'forward' ? undefined : chatDraftId}
-              onDraftSaved={setThreadDraft}
+              // A forward's draft is a new message, not this thread's reply.
+              onDraftSaved={replyMode === 'forward' ? undefined : setThreadDraft}
               initialBody={replyBody}
               initialAttachments={forwardAttachments}
               attachmentsLoading={forwardFilesLoading}
@@ -842,10 +863,13 @@ export function EmailView({
                 fromAccountId,
                 toEmails,
                 ccEmails,
+                bccEmails,
+                subject,
                 body: replyText,
                 bodyHtml,
                 inlineImages,
                 attachments,
+                draftHoldsFiles,
                 scheduleAt,
                 draftId,
               }) => {
@@ -858,8 +882,9 @@ export function EmailView({
                   replyToEmailId: isForward ? null : latestEmail.id,
                   to: toEmails,
                   cc: ccEmails,
-                  // A reply takes its parent's subject ("Re: …") backend-side.
-                  subject: isForward ? forwardSubject(latestEmail.subject) : '',
+                  bcc: bccEmails,
+                  // A reply's subject is normalized to "Re: …" backend-side.
+                  subject,
                   body: replyText,
                   bodyHtml: bodyHtml ?? null,
                   inlineImages: inlineImages ?? [],
@@ -879,8 +904,8 @@ export function EmailView({
                 await outbox.send(message, {
                   // A queued reply's draft leaves Drafts with the queueing.
                   draftId,
-                  // This panel does not hold the draft's file attachments.
-                  draftHoldsFiles: !!draftId && (threadDraft?.attachments?.length ?? 0) > 0,
+                  // The draft holds the files: queueing adds them to the message.
+                  draftHoldsFiles,
                   sendDirect: async () => {
                     addLog(
                       'info',
@@ -897,6 +922,7 @@ export function EmailView({
                         attachments,
                         bodyHtml,
                         inlineImages,
+                        bccEmails,
                       );
                     } else {
                       await api.sendReply(
@@ -908,6 +934,8 @@ export function EmailView({
                         bodyHtml,
                         inlineImages,
                         attachments,
+                        bccEmails,
+                        subject,
                       );
                     }
                     // The reply is out: its draft goes now, before the thread

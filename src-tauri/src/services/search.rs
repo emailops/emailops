@@ -407,10 +407,6 @@ fn dedupe_scored_results_by_thread(results: Vec<EmailWithScore>) -> Vec<EmailWit
     deduped
 }
 
-pub(crate) fn build_effective_query(parsed: &ParsedSearchQuery) -> String {
-    parsed.keywords.join(" ")
-}
-
 fn normalized_keyword_score(email: &Email, query_terms: &[String]) -> f32 {
     let haystack = normalize_for_search(&format!(
         "{} {} {} {} {}",

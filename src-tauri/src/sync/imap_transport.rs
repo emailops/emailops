@@ -72,17 +72,22 @@ impl NativeTlsTransport {
             .map_err(|e| imap::Error::Bad(format!("TLS init failed: {e}")))
     }
 
-    /// TCP connect (with timeout) + TLS handshake, with the IO timeout set on
-    /// the socket. Shared by [`MailTransport::open_imap`] and the IDLE session.
+    /// TCP connect (with timeout) + STARTTLS when the port needs it + TLS
+    /// handshake, with the IO timeout set on the socket. Tries each address
+    /// the host resolves to in turn (see
+    /// [`crate::sync::imap::connect_any_address`]). Shared by
+    /// [`MailTransport::open_imap`] and the IDLE session.
     pub fn open_tls(
         &self,
         creds: &ImapCredentials,
     ) -> std::result::Result<native_tls::TlsStream<std::net::TcpStream>, imap::Error> {
         use std::io;
         use std::net::ToSocketAddrs;
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
 
-        const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+        // Below `test_connection`'s 25 s, so "Test connection" shows what
+        // happened on each address rather than its own timeout.
+        const OVERALL_TIMEOUT: Duration = Duration::from_secs(20);
 
         let tls = self.tls_connector()?;
 
@@ -90,23 +95,18 @@ impl NativeTlsTransport {
             .to_socket_addrs()
             .map_err(imap::Error::Io)?
             .collect();
-        let mut tcp = connect_any(&addrs, CONNECT_TIMEOUT).map_err(|e| {
-            imap::Error::Io(io::Error::new(
-                e.kind(),
-                format!("Cannot reach {}:{}: {e}", creds.host, creds.port),
-            ))
-        })?;
-        tcp.set_read_timeout(Some(crate::sync::imap::IO_TIMEOUT))
-            .map_err(imap::Error::Io)?;
-        tcp.set_write_timeout(Some(crate::sync::imap::IO_TIMEOUT))
-            .map_err(imap::Error::Io)?;
-
-        if crate::sync::imap::ImapTlsMode::for_port(creds.port) == crate::sync::imap::ImapTlsMode::StartTls {
-            crate::sync::imap::negotiate_starttls(&mut tcp).map_err(imap::Error::Io)?;
+        if addrs.is_empty() {
+            return Err(imap::Error::Io(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("No addresses resolved for {}:{}", creds.host, creds.port),
+            )));
         }
 
-        tls.connect(creds.host.as_str(), tcp)
-            .map_err(|e| imap::Error::Bad(format!("TLS handshake failed: {e}")))
+        let deadline = Instant::now() + OVERALL_TIMEOUT;
+        crate::sync::imap::connect_any_address(&addrs, deadline, Instant::now, |addr, deadline| {
+            crate::sync::imap::ImapClient::open_on_address(&tls, creds, addr, deadline)
+        })
+        .map_err(imap::Error::Bad)
     }
 
     fn smtp_mailer(&self, creds: &ImapCredentials) -> Result<lettre::AsyncSmtpTransport<lettre::Tokio1Executor>> {
@@ -142,20 +142,6 @@ impl NativeTlsTransport {
 
         Ok(builder.credentials(login).port(creds.smtp_port).build())
     }
-}
-
-/// Connect to the first of `addrs` that accepts, each attempt bounded by
-/// `timeout`. A host often resolves to IPv6 and IPv4 addresses, and the
-/// server may listen on only one of them.
-fn connect_any(addrs: &[std::net::SocketAddr], timeout: std::time::Duration) -> std::io::Result<std::net::TcpStream> {
-    let mut last_error = std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "no addresses resolved");
-    for addr in addrs {
-        match std::net::TcpStream::connect_timeout(addr, timeout) {
-            Ok(stream) => return Ok(stream),
-            Err(e) => last_error = e,
-        }
-    }
-    Err(last_error)
 }
 
 #[async_trait]
@@ -204,42 +190,4 @@ fn test_ca_from_env() -> Option<Vec<u8>> {
 #[cfg(not(debug_assertions))]
 fn test_ca_from_env() -> Option<Vec<u8>> {
     None
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::{SocketAddr, TcpListener};
-    use std::time::Duration;
-
-    const TIMEOUT: Duration = Duration::from_secs(2);
-
-    /// An address nothing listens on: bound, then released.
-    fn refusing_address() -> SocketAddr {
-        TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap()
-    }
-
-    #[test]
-    fn an_address_that_refuses_falls_through_to_the_next() {
-        // `localhost` resolves to `::1` first; a server on 127.0.0.1 only
-        // must still be reached.
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let open = listener.local_addr().unwrap();
-
-        let stream = connect_any(&[refusing_address(), open], TIMEOUT).expect("reaches the second address");
-
-        assert_eq!(stream.peer_addr().unwrap(), open);
-    }
-
-    #[test]
-    fn every_address_refusing_reports_the_last_failure() {
-        let error = connect_any(&[refusing_address(), refusing_address()], TIMEOUT).unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
-    }
-
-    #[test]
-    fn no_address_is_an_error() {
-        let error = connect_any(&[], TIMEOUT).unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::AddrNotAvailable);
-    }
 }

@@ -23,6 +23,7 @@ use crate::sync::provider::{EmailAttachment, EmailBody};
 pub struct OutlookSendParams<'a> {
     pub to_emails: &'a [String],
     pub cc_emails: &'a [String],
+    pub bcc_emails: &'a [String],
     pub subject: &'a str,
     pub body: &'a EmailBody,
     pub attachments: &'a [EmailAttachment],
@@ -61,6 +62,7 @@ pub fn build_reply_payload(params: &OutlookSendParams<'_>) -> Value {
             "message": {
                 "toRecipients": build_recipients(params.to_emails),
                 "ccRecipients": build_recipients(params.cc_emails),
+                "bccRecipients": build_recipients(params.bcc_emails),
             }
         })
     }
@@ -72,6 +74,7 @@ fn build_message_object(params: &OutlookSendParams<'_>) -> Value {
         "body": build_body_object(params.body),
         "toRecipients": build_recipients(params.to_emails),
         "ccRecipients": build_recipients(params.cc_emails),
+        "bccRecipients": build_recipients(params.bcc_emails),
     });
 
     let mut atts: Vec<Value> = Vec::new();
@@ -175,9 +178,36 @@ mod tests {
         OutlookSendParams {
             to_emails: to,
             cc_emails: &[],
+            bcc_emails: &[],
             subject: "hello",
             body,
             attachments,
+        }
+    }
+
+    #[test]
+    fn every_payload_carries_the_blind_copies() {
+        let (to, bcc) = (
+            vec!["a@example.com".to_string()],
+            vec!["hidden@example.com".to_string()],
+        );
+        let body = body_plain("hi");
+        let with_bcc = OutlookSendParams {
+            bcc_emails: &bcc,
+            ..params(&body, &[], &to)
+        };
+        let send = build_send_mail_payload(&with_bcc);
+        let reply = build_reply_payload(&with_bcc);
+        let draft = build_draft_payload(&with_bcc);
+        for recipients in [
+            &send["message"]["bccRecipients"],
+            &reply["message"]["bccRecipients"],
+            &draft["bccRecipients"],
+        ] {
+            assert_eq!(
+                recipients[0]["emailAddress"]["address"], "hidden@example.com",
+                "{recipients}"
+            );
         }
     }
 

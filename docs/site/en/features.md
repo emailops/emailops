@@ -39,6 +39,20 @@ An **All accounts** view merges every enabled mailbox into one list, alongside t
 per-account views. Custom IMAP folders are synced too, and you can create, rename, delete
 and drag messages between folders from inside the app.
 
+## Replying
+
+<!-- claim:reading-pane-reply -->
+**Reply** answers the sender, or the address the message names in its *Reply-To* header, as a
+mailing list or a shop's no-reply address does. **Reply all** adds everyone else in the
+conversation. The subject of a reply or a forward can be edited before it goes, and a reply
+stays in its conversation. Every composer has **Cc** and **Bcc**: blind copies reach their
+recipients without the others seeing them, and a message can go to Cc or Bcc alone.
+
+<!-- claim:compose-drafts-keep-files -->
+What you write is saved as a draft as you type, attached files included, so closing a composer
+or the app keeps it; a forward is kept too. A message holds up to 32 files of at most 25 MB
+each.
+
 ## Forwarding
 
 <!-- claim:reading-pane-forward -->
@@ -62,6 +76,12 @@ change is made at your mail provider too, so Gmail or Outlook show the same thin
 for Gmail and Outlook accounts and in **All accounts**; an IMAP account archives into its own
 Archive folder, which appears with its other folders. Archived mail is only out of the inbox:
 search, the smart filters and the AI features still reach it.
+
+<!-- claim:feat-list-sent-rows -->
+In every list, a row for a message you sent names who it went to (“To: Ana, Luis +1”) instead
+of your own name, and its tooltip lists every recipient. A recipient's name comes from the
+message itself or from how that person signs when they write to you; failing that, the row
+shows the address.
 
 <!-- claim:feat-organize-3 -->
 Tick the box at the start of a row to select it. With one or more selected, a toolbar above the
@@ -141,6 +161,11 @@ In the plain-text version of a message, a signature that ends it is preceded by 
 `-- ` line, so other mail apps can recognise it. When the account has a signature for that kind
 of message, AI drafts leave your name and contact details out and let the signature sign.
 
+<!-- claim:feat-signatures-4 -->
+Below the signature, **Add "Sent with EmailOps" at the end of the messages I send** decides
+whether the messages you send end with that line. It is on by default and applies to every
+account; messages already sent keep their footer.
+
 ## Smart filters
 
 <!-- claim:feat-smart-filters-1 -->
@@ -170,7 +195,10 @@ switched off per account, along with the notification lead time, in **Settings �
 Every calendar on an account is synced, not just the primary one — so a calendar a
 colleague shared with you shows up here the same way it does in Google or Outlook. Each
 one is tinted with the colour its provider gives it, and the legend above the grid hides
-or shows individual calendars; the same switches live in **Settings → Calendar**.
+or shows individual calendars; the same switches live in **Settings → Calendar**. Meeting
+reminders come only from your own calendars: a calendar someone shared with you shows its
+meetings without reminding you of them. A meeting you are invited to still gets exactly one
+reminder.
 
 <!-- claim:feat-calendar-4 -->
 IMAP accounts get a calendar by subscribing to a published calendar link (ICS), for example
@@ -294,12 +322,21 @@ Searches can be narrowed with operators, on their own or next to free text:
 |---|---|
 | `from:ana` | sender address or name |
 | `to:ana` | recipient |
+| `cc:ana` | someone in Cc |
 | `subject:invoice` | subject line |
 | `before:2026-09-01` / `after:2026-09-01` | received date |
 | `id:<email id>` | one specific email |
 | `tag:newsletter` / `tag:intent=request` | a classifier tag, optionally within one facet |
 | `domain:example.com` | the sender's domain |
 | `ext:pdf` | an attachment of that file type |
+| `has:attachment` / `-has:attachment` | mail with / without attachments |
+
+<!-- claim:feat-search-3 -->
+In the free text, a quoted phrase finds its words in that order, `OR` between two words finds
+either, a `-` (or `NOT`) before a word leaves out the mail that has it, and brackets group:
+`(invoice OR receipt) -draft`. Words side by side must all match, and they group before `OR`:
+`invoice OR receipt march` means invoice, or receipt and march. Operators are written in
+capitals; a lowercase "or" is an ordinary word.
 
 ## Junk and bulk mail {#junk-and-bulk-mail}
 
@@ -377,8 +414,28 @@ design that is already dark is left as it is.
 on GitHub and **Sponsor the project ♥**, which opens the project's GitHub Sponsors page.
 
 <!-- claim:feat-interface-4 -->
-The compose toolbar has a **Font** and a **Font size** picker. Both follow the cursor, so they show
-the font and size of the text you are in.
+The compose toolbar has a **Font**, a **Font size** and a **Text colour** picker. All three follow
+the cursor, so they show the font, size and colour of the text you are in. Text pasted from another
+app keeps its colours only where they can be read: a colour too faint against its background, such
+as the white text of an app in dark mode, is dropped, so the message does not arrive with invisible
+text. **Clear formatting**, the button after them, turns the selected text back into normal text: it
+removes bold, italics, fonts, sizes and colours and turns a heading into a normal paragraph, but
+keeps links, lists and tables.
+
+<!-- claim:feat-interface-5 -->
+**Settings → Appearance → Sidebar density** offers **Compact**, the default, which makes the rows
+of the sidebar list shorter so more of them fit without scrolling, and **Comfortable**, with more
+room between them. Text, icons, and the top and bottom of the sidebar are the same in both, and the
+choice is kept across restarts.
+
+<!-- claim:feat-interface-6 -->
+The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the
+line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps),
+Home and End. Double-click the line to go back to the default width. A column stops growing
+before the reading pane gets narrower than 320 px, and the widths are kept across restarts. When
+the panel on the right (chat or calendar) opens or the window gets narrower, a widened column gives
+that width back, the list first, down to its default width, and gets it back when there is room
+again.
 
 ## Keyboard shortcuts {#keyboard-shortcuts}
 

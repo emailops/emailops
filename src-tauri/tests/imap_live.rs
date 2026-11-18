@@ -87,6 +87,7 @@ async fn sending_reaches_the_relay_and_files_a_copy_in_sent() {
             Some("Owner"),
             &["friend@example.test".to_string()],
             &[],
+            &[],
             &subject,
             &EmailBody::plain("Hello from the live test."),
             &[],

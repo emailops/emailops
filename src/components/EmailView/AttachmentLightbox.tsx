@@ -18,7 +18,7 @@ export function AttachmentLightbox({ meta, onClose }: AttachmentLightboxProps) {
 
   useEffect(() => {
     api
-      .fetchEmailAttachmentBytes(meta.accountId, meta.emailId, meta.providerAttachmentId)
+      .fetchEmailAttachmentBytes(meta.accountId, meta.id)
       .then((b64) => setDataUrl(`data:${meta.mimeType};base64,${b64}`))
       .catch(() => setError(true));
   }, [meta]);

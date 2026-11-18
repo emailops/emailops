@@ -22,6 +22,12 @@ const api = vi.hoisted(() => ({
   autocompleteRecipients: vi.fn(async () => []),
   saveDraft: vi.fn(async (req: { id?: string }) => ({ id: req.id ?? 'draft-new' })),
   deleteDraft: vi.fn(async () => {}),
+  // A forward's files are stored for its draft as they arrive.
+  storeDraftFile: vi.fn(async (_accountId: string, file: { filename: string; mimeType: string }) => ({
+    filePath: `attachments/a1/drafts/${file.filename}`,
+    filename: file.filename,
+    mimeType: file.mimeType,
+  })),
 }));
 vi.mock('@/lib/api', () => api);
 
