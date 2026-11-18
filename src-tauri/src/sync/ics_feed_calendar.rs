@@ -566,7 +566,7 @@ fn rrule_value(
     Some(parts.join(";"))
 }
 
-/// The `DTSTART`/`RRULE`/`RDATE`/`EXDATE` lines of a master, normalised for the
+/// The `DTSTART`/`RRULE`/`EXDATE` lines of a master, normalised for the
 /// `rrule` parser: all-day values become UTC midnights (it does not read
 /// `VALUE=DATE`), floating values get the feed's default zone.
 fn rrule_source(
@@ -577,7 +577,7 @@ fn rrule_source(
     recurrence_offset: Option<i32>,
 ) -> Option<String> {
     let mut lines = Vec::new();
-    for name in ["DTSTART", "RDATE", "EXDATE"] {
+    for name in ["DTSTART", "EXDATE"] {
         for prop in event.all(name) {
             let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
             let fixed_property = timezone_param(&params)
@@ -806,6 +806,22 @@ mod tests {
         expand_events(&parse_vcalendar(&vcal(events)), ws, we)
     }
 
+    /// `rrule` cannot read every RDATE form (a PERIOD, for one); such a value
+    /// must not cut the series down to its first occurrence.
+    #[test]
+    fn an_rdate_the_rule_parser_rejects_does_not_stop_the_series() {
+        let out = expand(
+            &["UID:p@x\nDTSTART;TZID=Europe/Madrid:20260324T100000\nDTEND;TZID=Europe/Madrid:20260324T110000\nRRULE:FREQ=WEEKLY;COUNT=3\nRDATE;VALUE=PERIOD:20260401T100000/PT1H\nSUMMARY:P"],
+            utc(2026, 3, 23, 0, 0),
+            utc(2026, 4, 30, 0, 0),
+        );
+        let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        assert_eq!(
+            starts,
+            vec![utc(2026, 3, 24, 9, 0), utc(2026, 3, 31, 8, 0), utc(2026, 4, 7, 8, 0)]
+        );
+    }
+
     const FIXED_ZONE: &str = "BEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nDTSTART:16010101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n";
 
     fn with_zones(events: &[&str], zones: &str) -> ParsedCalendar {
@@ -843,19 +859,15 @@ mod tests {
     }
 
     #[test]
-    fn fixed_zone_recurrence_keeps_wall_day_exdates_rdates_until_and_override_ids() {
+    fn fixed_zone_recurrence_keeps_wall_day_exdates_until_and_override_ids() {
         let calendar = with_zones(&[
-            "UID:fixed-series@x\nDTSTART;TZID=\"Example Fixed Time\":20260728T003000\nDTEND;TZID=\"Example Fixed Time\":20260728T013000\nRRULE:FREQ=WEEKLY;BYDAY=TU;BYHOUR=0;BYMINUTE=30;UNTIL=20260810T223000Z\nEXDATE;TZID=\"Example Fixed Time\":20260804T003000\nRDATE;TZID=\"Example Fixed Time\":20260806T003000",
+            "UID:fixed-series@x\nDTSTART;TZID=\"Example Fixed Time\":20260728T003000\nDTEND;TZID=\"Example Fixed Time\":20260728T013000\nRRULE:FREQ=WEEKLY;BYDAY=TU;BYHOUR=0;BYMINUTE=30;UNTIL=20260810T223000Z\nEXDATE;TZID=\"Example Fixed Time\":20260804T003000",
             "UID:fixed-series@x\nRECURRENCE-ID;TZID=\"Example Fixed Time\":20260811T003000\nDTSTART;TZID=\"Example Fixed Time\":20260811T020000\nDTEND;TZID=\"Example Fixed Time\":20260811T030000\nSUMMARY:Moved",
         ], FIXED_ZONE);
         let out = expand_events(&calendar, utc(2026, 7, 27, 0, 0), utc(2026, 8, 18, 0, 0));
         assert_eq!(
             out.iter().map(|event| event.start_time).collect::<Vec<_>>(),
-            vec![
-                utc(2026, 7, 27, 22, 30),
-                utc(2026, 8, 5, 22, 30),
-                utc(2026, 8, 11, 0, 0)
-            ]
+            vec![utc(2026, 7, 27, 22, 30), utc(2026, 8, 11, 0, 0)]
         );
         let moved = out.iter().find(|event| event.title == "Moved").unwrap();
         assert_eq!(moved.provider_event_id, "fixed-series@x_20260810T223000Z");
