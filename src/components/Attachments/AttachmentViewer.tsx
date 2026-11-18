@@ -6,8 +6,10 @@ import { useOpenAttachment } from '@/hooks/useOpenAttachment';
 import * as api from '@/lib/api';
 import { decodeDataUrlText } from '@/lib/download';
 import { errorText } from '@/lib/errors';
+import { isDocxAttachment } from '@/lib/mimeType';
 import { useLogStore } from '@/stores/logStore';
 import type { Attachment } from '@/types';
+import { DocxViewer } from './DocxViewer';
 import { PdfViewer } from './PdfViewer';
 
 interface AttachmentViewerProps {
@@ -94,6 +96,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
     attachment.mimeType === 'application/x-pdf' ||
     attachment.filename.toLowerCase().endsWith('.pdf');
   const isImage = attachment.mimeType.startsWith('image/');
+  const isDocx = isDocxAttachment(attachment.mimeType, attachment.filename);
   const isHtml =
     attachment.mimeType === 'text/html' ||
     attachment.filename.toLowerCase().endsWith('.html') ||
@@ -174,6 +177,14 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
         ) : isPdf ? (
           // Keyed by attachment so another PDF opens fitted to width again.
           <PdfViewer key={attachment.id} dataUrl={dataUrl} title={attachment.filename} />
+        ) : isDocx ? (
+          <DocxViewer
+            key={attachment.id}
+            dataUrl={dataUrl}
+            title={attachment.filename}
+            accountId={attachment.accountId}
+            senderEmail={attachment.senderEmail}
+          />
         ) : isHtml ? (
           <div className="h-full overflow-auto p-4">
             <EmailBody

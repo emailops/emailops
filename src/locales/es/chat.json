@@ -301,8 +301,8 @@
         "hint": "El chat responde desde otra cuenta, así que no puede leer este correo. Cambia de cuenta para preguntar por él.",
         "action": "Cambiar"
       },
-      "hintDocument": "Las respuestas usan el texto de este PDF. Quítalo para preguntar por tu bandeja.",
-      "restoreDocument": "Usar el PDF abierto como contexto"
+      "hintDocument": "Las respuestas usan el texto de este documento. Quítalo para preguntar por tu bandeja.",
+      "restoreDocument": "Usar el documento abierto como contexto"
     },
     "newChat": "Chat nuevo"
   },

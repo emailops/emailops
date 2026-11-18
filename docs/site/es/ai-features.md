@@ -167,10 +167,10 @@ aplica a una sola pregunta y nunca se guarda en la conversación, así que puede
 correos dentro de un mismo chat.
 
 <!-- claim:ai-chat-mailbox-16 -->
-Con un PDF abierto en una pestaña, o seleccionado en **Adjuntos**, el chip ofrece ese documento,
-y el chat responde a partir de su texto. Una conversación nueva sugiere entonces **Resumir este
-documento**, **Puntos clave, fechas e importes** y **Preguntar sobre este documento**. Un PDF
-demasiado largo para la ventana de contexto del modelo se lee por partes, y la respuesta se
+Con un PDF o un documento de Word (.docx) abierto en una pestaña, o seleccionado en **Adjuntos**,
+el chip ofrece ese documento, y el chat responde a partir de su texto. Una conversación nueva
+sugiere entonces **Resumir este documento**, **Puntos clave, fechas e importes** y **Preguntar
+sobre este documento**. Un documento demasiado largo para la ventana de contexto del modelo se lee por partes, y la respuesta se
 construye con notas de cada parte.
 
 <!-- claim:ai-chat-mailbox-17 -->

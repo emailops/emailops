@@ -51,6 +51,7 @@
     "@tiptap/starter-kit": "^3.32.0",
     "@tiptap/y-tiptap": "^3.0.10",
     "date-fns": "^4.4.0",
+    "docx-preview": "^0.4.1",
     "dompurify": "^3.4.17",
     "i18next": "^26.5.2",
     "mammoth": "^1.13.0",

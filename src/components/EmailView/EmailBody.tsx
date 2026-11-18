@@ -6,6 +6,7 @@ import * as api from '@/lib/api';
 import { plainTextToHtml } from '@/lib/composeHtml';
 import { type ParsedMailto, sanitizeEmailHtmlFull } from '@/lib/emailFormatting';
 import { errorText } from '@/lib/errors';
+import type { Scheme } from '@/lib/theme';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 
@@ -16,6 +17,7 @@ export function EmailBody({
   onMatchesReported,
   accountId,
   senderEmail,
+  colorScheme,
 }: {
   html: string;
   highlightQuery?: string | null;
@@ -23,6 +25,8 @@ export function EmailBody({
   onMatchesReported?: (count: number) => void;
   accountId: string;
   senderEmail: string;
+  /** Passed to the frame: render in this scheme whatever the app's theme. */
+  colorScheme?: Scheme;
 }) {
   const { t } = useTranslation(['inbox']);
   const addLog = useLogStore((s) => s.addLog);
@@ -112,6 +116,7 @@ export function EmailBody({
           onMatchesReported={onMatchesReported}
           className="email-body"
           onMailtoLink={handleMailtoLink}
+          colorScheme={colorScheme}
         />
       ) : (
         <div className="flex items-center gap-2 px-4 py-3 text-sm text-gray-400">

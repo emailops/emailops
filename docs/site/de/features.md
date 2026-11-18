@@ -245,6 +245,7 @@ Seitenleiste.
 
 <!-- claim:feat-attachments-view-9 -->
 Ein PDF öffnet sich in einem eigenen Tab, wo **Vergrößern** und **Verkleinern** seine Größe ändern.
+Ein Word-Dokument (.docx) öffnet sich ebenfalls in einem eigenen Tab, schreibgeschützt.
 
 <!-- claim:feat-attachments-view-2 -->
 Die Ansicht sammelt Anhänge über **Regeln** und ist daher anfangs leer. Klicken Sie auf **Regeln

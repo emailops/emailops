@@ -245,6 +245,7 @@ et téléchargement, au lieu de fouiller à nouveau les fils de discussion. Ouvr
 
 <!-- claim:feat-attachments-view-9 -->
 Un PDF s'ouvre dans son propre onglet, où **Zoom avant** et **Zoom arrière** changent sa taille.
+Un document Word (.docx) s'ouvre lui aussi dans son propre onglet, en lecture seule.
 
 <!-- claim:feat-attachments-view-2 -->
 La vue collecte les pièces jointes grâce à des **règles**, elle est donc vide au départ. Cliquez

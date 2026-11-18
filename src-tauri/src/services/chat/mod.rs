@@ -22,7 +22,7 @@ pub mod cancel;
 pub mod tools;
 
 mod conversations;
-// The PDF attachment the user has open, as per-turn context.
+// The PDF or Word attachment the user has open, as per-turn context.
 pub(crate) mod open_document;
 // "This answer is wrong" — the per-turn instruction that steers the retry.
 pub(crate) mod correction;

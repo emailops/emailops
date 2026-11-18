@@ -15,6 +15,10 @@ vi.mock('@/components/Attachments/PdfViewer', () => ({
   PdfViewer: ({ title }: { title: string }) => <div data-testid="pdf-viewer-stub">{title}</div>,
 }));
 
+vi.mock('@/components/Attachments/DocxViewer', () => ({
+  DocxViewer: ({ title }: { title: string }) => <div data-testid="docx-viewer-stub">{title}</div>,
+}));
+
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: vi.fn(async () => {}) }));
 
 vi.mock('@/lib/api', () => ({
@@ -72,6 +76,15 @@ describe('AttachmentTabView', () => {
   it('renders a pdf with the pdf.js viewer, not an iframe', () => {
     act(() => root.render(<AttachmentTabView tab={tab('application/pdf')} onClose={vi.fn()} />));
     expect(container.querySelector('[data-testid="pdf-viewer-stub"]')).not.toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
+  });
+
+  it.each([
+    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'minutes'],
+    ['application/octet-stream', 'Minutes.DOCX'],
+  ])('renders a Word file (%s, %s) with the docx viewer, not an iframe', (mimeType, filename) => {
+    act(() => root.render(<AttachmentTabView tab={{ ...tab(mimeType), filename }} onClose={vi.fn()} />));
+    expect(container.querySelector('[data-testid="docx-viewer-stub"]')?.textContent).toBe(filename);
     expect(container.querySelector('iframe')).toBeNull();
   });
 

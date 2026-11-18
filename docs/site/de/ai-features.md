@@ -171,10 +171,10 @@ Postfach. Dieser Kontext gilt für genau eine Frage und wird nie in der Unterhal
 gespeichert — Sie können sich also innerhalb eines Chats zwischen E-Mails bewegen.
 
 <!-- claim:ai-chat-mailbox-16 -->
-Ist ein PDF in einem Tab geöffnet oder unter **Anhänge** ausgewählt, bietet der Chip dieses
-Dokument an, und der Chat antwortet aus seinem Text. Eine neue Unterhaltung schlägt dann
-**Dieses Dokument zusammenfassen**, **Kernpunkte, Daten und Beträge** und **Frage zu diesem
-Dokument** vor. Ein PDF, das zu lang für das Kontextfenster des Modells ist, wird in Teilen
+Ist ein PDF oder ein Word-Dokument (.docx) in einem Tab geöffnet oder unter **Anhänge**
+ausgewählt, bietet der Chip dieses Dokument an, und der Chat antwortet aus seinem Text. Eine neue
+Unterhaltung schlägt dann **Dieses Dokument zusammenfassen**, **Kernpunkte, Daten und Beträge**
+und **Frage zu diesem Dokument** vor. Ein Dokument, das zu lang für das Kontextfenster des Modells ist, wird in Teilen
 gelesen, und die Antwort stützt sich auf Notizen zu jedem Teil.
 
 <!-- claim:ai-chat-mailbox-17 -->
