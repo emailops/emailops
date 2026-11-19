@@ -353,7 +353,7 @@ qui ne produit pas les vecteurs de 768 dimensions dont l'index a besoin est refu
 **Paramètres → IA : backend et modèles** affiche l’**Index des e-mails** : combien d’e-mails
 attendent encore d’être indexés, comptés avec les catégories et la limite d’âge de l’indexation,
 et, pendant l’indexation, environ combien elle en traite par minute, mesuré sur les deux dernières
-minutes.
+minutes. Le rythme apparaît après dix secondes d’indexation et baisse tant que rien n’est indexé.
 
 ## Traduction {#translation}
 

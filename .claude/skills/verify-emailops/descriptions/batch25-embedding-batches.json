@@ -14,7 +14,10 @@
     "src-tauri/src/services/embeddings.rs::emails_are_grouped_whole_up_to_the_chunks_one_request_takes": "Los correos se agrupan enteros hasta llenar N fragmentos; un correo con más fragmentos que N va solo.",
     "src-tauri/src/services/embeddings.rs::a_provider_that_takes_several_chunks_per_request_gets_them_across_emails": "Con 4 fragmentos por petición, 5 correos de un fragmento van en dos llamadas (4 y 1) y los 5 quedan indexados.",
     "src-tauri/src/services/embeddings.rs::one_chunk_per_request_keeps_embedding_chunk_by_chunk": "Con 1 fragmento por petición la indexación sigue pidiendo cada fragmento por separado, sin llamadas por lotes.",
-    "src-tauri/src/services/embeddings.rs::the_rate_counts_the_emails_indexed_after_the_first_sample_over_the_time_since_it": "El ritmo en correos por minuto se calcula sobre los dos últimos minutos; sin dos muestras distintas no se muestra.",
+    "src-tauri/src/services/embeddings.rs::the_rate_counts_the_emails_indexed_after_the_first_sample_up_to_now": "El ritmo en correos por minuto cuenta los correos guardados tras la primera muestra de los dos últimos minutos, hasta ahora; con menos de dos muestras o menos de 10 s medidos no se muestra.",
+    "src-tauri/src/services/embeddings.rs::a_short_burst_does_not_read_as_a_huge_pace": "Dos correos guardados con 31 ms de diferencia no se leen como 1935 por minuto: no hay ritmo hasta medir 10 s, y luego sale bajo.",
+    "src-tauri/src/services/embeddings.rs::the_pace_falls_while_nothing_is_indexed_and_then_disappears": "Si deja de indexarse, el ritmo baja con el tiempo (120 → 30 por minuto) y desaparece cuando las muestras salen de la ventana de dos minutos.",
+    "src-tauri/src/services/embeddings.rs::a_steady_run_reads_close_to_its_pace_between_batches": "20 correos cada 10 s se leen entre 110 y 120 por minuto en cualquier momento entre dos lotes.",
     "src-tauri/src/services/embeddings.rs::the_backlog_counts_only_what_the_pipeline_will_embed": "Los correos pendientes cuentan solo los que la indexación va a procesar: una categoría excluida no cuenta, y tras indexar queda en 0."
   },
   "vitest": {
@@ -23,7 +26,7 @@
     "src/components/Settings/AiSettings/IndexingStatus.test.tsx::shows the backlog and the emails indexed per minute": "La sección Índice de correo muestra los correos pendientes y los indexados por minuto.",
     "src/components/Settings/AiSettings/IndexingStatus.test.tsx::keeps one decimal for a slow rate, so it never reads as zero": "Un ritmo lento (medio correo por minuto) se muestra con un decimal, no como 0.",
     "src/components/Settings/AiSettings/IndexingStatus.test.tsx::says the index is up to date when nothing is waiting": "Sin correos pendientes, la sección dice que el índice está al día.",
-    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::says when emails are waiting but nothing is being indexed": "Con correos pendientes y sin ritmo reciente, la sección dice que ahora no se está indexando.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::shows only the backlog while no pace is measured": "Con correos pendientes y sin ritmo medido, la sección muestra solo los pendientes: nunca dice que no se está indexando, porque al empezar tampoco hay ritmo.",
     "src/components/Settings/AiSettings/IndexingStatus.test.tsx::refreshes while it is open": "Con Ajustes abierto, el estado del índice se vuelve a pedir cada 5 segundos.",
     "src/components/Settings/AiSettings/IndexingStatus.test.tsx::shows why the status could not be read": "Si no se puede leer el estado del índice, la sección muestra el error."
   }

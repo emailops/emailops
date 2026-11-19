@@ -4711,8 +4711,12 @@ provider for them in one call; with a provider at 1 it keeps embedding chunk by 
 in-app runtime, Ollama and OpenRouter (even beside a server chat) stay at one chunk per
 request. Settings → AI Backend & Models shows the **Email index**: the backlog, counted with
 the categories and age limit the pipeline uses (the old pending count ignored them, so it
-never reached zero), and the emails indexed per minute over the last two minutes, from
-samples the pipeline records in memory as it stores each group.
+never reached zero), and the emails indexed per minute, from samples the pipeline records in
+memory as it stores each group: the emails stored after the first sample of the last two
+minutes, over the time from that sample to now. Measured to now, the pace falls while nothing
+is stored; it is shown only once it covers 10 s, so a burst stored milliseconds apart does not
+read as thousands a minute. While no pace is shown the section lists the backlog alone, never
+"not indexing", because a run's first seconds have no pace either.
 **Context:** Embedding a large mailbox through a local server was slow because each chunk was
 its own request, and nothing showed how fast the index was filling (GitHub issue #305).
 **Rejected:** A default above 1, or trying the largest batch and shrinking on refusal — some
@@ -4721,4 +4725,5 @@ Remembering a refusal for the rest of the run — the acceptance asked for a per
 fallback, and a refusal logs once per batch so the user sees it. Batching OpenRouter too —
 its per-request cost is dominated by the network, and its settings have no place for it.
 Persisting throughput samples in the database — a rate over the last two minutes needs no
-history across restarts.
+history across restarts. Measuring to the last sample instead of now — a pace that stays put
+after indexing stops, and two emails 31 ms apart read as 1935 a minute.

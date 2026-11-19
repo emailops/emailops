@@ -1,7 +1,8 @@
 // How far the email index is from done, and how fast it is being filled.
 // The backend counts the backlog the way the indexing pipeline picks emails
-// and measures the pace over its last two minutes (`get_indexing_status`);
-// this only shows it, refreshed while Settings is open.
+// and measures the pace over its last two minutes, once there is enough to
+// measure (`get_indexing_status`); this only shows it, refreshed while
+// Settings is open.
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -47,11 +48,13 @@ export function IndexingStatus() {
       {status && status.backlog > 0 && (
         <>
           <p className="text-xs text-gray-600">{t('settings:ai.indexing.backlog', { count: status.backlog })}</p>
-          <p className="text-xs text-gray-600">
-            {status.messagesPerMinute != null
-              ? t('settings:ai.indexing.rate', { rate: rate(status.messagesPerMinute) })
-              : t('settings:ai.indexing.idle')}
-          </p>
+          {/* No pace in a run's first seconds either, so none is shown rather
+              than a claim that nothing is being indexed. */}
+          {status.messagesPerMinute != null && (
+            <p className="text-xs text-gray-600">
+              {t('settings:ai.indexing.rate', { rate: rate(status.messagesPerMinute) })}
+            </p>
+          )}
         </>
       )}
     </section>

@@ -64,15 +64,16 @@ describe('IndexingStatus', () => {
 
     expect(text()).toContain('settings:ai.indexing.upToDate');
     expect(text()).not.toContain('settings:ai.indexing.backlog');
-    expect(text()).not.toContain('settings:ai.indexing.idle');
   });
 
-  it('says when emails are waiting but nothing is being indexed', async () => {
+  // No pace is reported in a run's first seconds either, so its absence must
+  // not be shown as "not indexing".
+  it('shows only the backlog while no pace is measured', async () => {
     await mount({ backlog: 5, messagesPerMinute: null });
 
     expect(text()).toContain('settings:ai.indexing.backlog {"count":5}');
-    expect(text()).toContain('settings:ai.indexing.idle');
     expect(text()).not.toContain('settings:ai.indexing.rate');
+    expect(text()).not.toContain('settings:ai.indexing.idle');
   });
 
   it('refreshes while it is open', async () => {

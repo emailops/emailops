@@ -345,6 +345,8 @@ Vektoren liefert, die der Index braucht, wird abgelehnt.
 **Einstellungen → KI: Backend & Modelle** zeigt den **E-Mail-Index**: wie viele E-Mails noch auf
 die Indexierung warten, gezählt mit den Kategorien und der Altersgrenze der Indexierung, und
 während sie läuft, etwa wie viele sie pro Minute schafft, gemessen über die letzten zwei Minuten.
+Das Tempo erscheint, sobald die Indexierung zehn Sekunden läuft, und sinkt, solange nichts
+indexiert wird.
 
 ## Übersetzung {#translation}
 

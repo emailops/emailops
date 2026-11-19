@@ -17,7 +17,7 @@ progress asks first; a change of embedding model asks before re-indexing.
 - `ai.reindexConfirm` saving another embedding model asks before the index is rebuilt.
 - `ai.onboarding` the onboarding AI step offers the same OpenRouter fields, probe and recommended models.
 - `ai.embeddingBatch` OpenAI-compatible tab with **Email index (Embeddings)** on **This server**: **Chunks per Embeddings request** (1 to 64, default 1; other values are refused on Save). A request with several chunks that the server refuses (error status, unreadable answer, vectors not matching by `index`) is resent one chunk at a time, with a `warn` line from `embeddings` in Logs. Hidden for the in-app and OpenRouter index sources.
-- `ai.indexingStatus` **Email index** section, every backend: emails still waiting (counted with each account's categories and age limit), and emails per minute over the last two minutes while indexing runs (`Not indexing right now.` otherwise, `Every email that semantic search covers is indexed.` at zero). Refreshed every 5 s while the tab is open (`get_indexing_status`).
+- `ai.indexingStatus` **Email index** section, every backend: emails still waiting (counted with each account's categories and age limit), and emails per minute while indexing runs (the emails stored after the first sample of the last two minutes, over the time from that sample to now; shown once that covers 10 s, so the backlog line stands alone in a run's first seconds and after a stall). At zero it reads `Every email that semantic search covers is indexed.` Refreshed every 5 s while the tab is open (`get_indexing_status`).
 
 ## How to get to it (user POV)
 

@@ -155,7 +155,6 @@
       "backlog_other": "{{count}} correos pendientes de indexar",
       "upToDate": "Todos los correos que cubre la búsqueda semántica están indexados.",
       "rate": "Indexando unos {{rate}} correos por minuto",
-      "idle": "Ahora no se está indexando.",
       "loadFailed": "No se pudo leer el estado del índice: {{error}}"
     },
     "noModelsFound": "(no se encontraron modelos)",

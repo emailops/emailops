@@ -323,7 +323,8 @@ index needs is refused.
 <!-- claim:ai-semantic-search-progress -->
 **Settings → AI Backend & Models** shows the **Email index**: how many emails are still waiting to
 be indexed, counted with the categories and the age limit indexing uses, and, while indexing runs,
-about how many it gets through per minute, measured over the last two minutes.
+about how many it gets through per minute, measured over the last two minutes. The pace appears
+once indexing has run for ten seconds, and falls while nothing is being indexed.
 
 ## Translation {#translation}
 

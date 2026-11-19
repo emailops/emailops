@@ -636,6 +636,9 @@ pub fn count_pending_embeddings(db: &Arc<Database>, account_id: Option<&str>) ->
 
 /// How far back the indexing rate looks.
 const RATE_WINDOW_MS: u64 = 120_000;
+/// The least time a rate is measured over. Below it, a burst of emails
+/// stored milliseconds apart would read as thousands a minute.
+const MIN_RATE_SPAN_MS: u64 = 10_000;
 
 /// `emails` stored in the index at `at_ms`, on a monotonic clock.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -668,18 +671,19 @@ fn record_progress(emails: u32) {
 }
 
 /// Emails indexed per minute over the last [`RATE_WINDOW_MS`]: the ones
-/// stored after the window's first sample, over the time since that sample
-/// (the first sample's own emails were done before it, at an unknown pace).
-/// `None` when the window holds fewer than two samples, or only one instant:
-/// there is nothing to measure. Pure.
+/// stored after the window's first sample, over the time from that sample to
+/// now (the first sample's own emails were done before it, at an unknown
+/// pace). Measured to now, so it falls while nothing is stored. `None` when
+/// the window holds fewer than two samples, or covers less than
+/// [`MIN_RATE_SPAN_MS`]: too little to measure. Pure.
 fn messages_per_minute(samples: &[ProgressSample], now_ms: u64) -> Option<f64> {
     let recent: Vec<&ProgressSample> = samples
         .iter()
         .filter(|s| now_ms.saturating_sub(s.at_ms) <= RATE_WINDOW_MS)
         .collect();
-    let (first, last) = (recent.first()?, recent.last()?);
-    let span_ms = last.at_ms.saturating_sub(first.at_ms);
-    if span_ms == 0 {
+    let first = recent.first()?;
+    let span_ms = now_ms.saturating_sub(first.at_ms);
+    if recent.len() < 2 || span_ms < MIN_RATE_SPAN_MS {
         return None;
     }
     let emails: u32 = recent[1..].iter().map(|s| s.emails).sum();
@@ -692,8 +696,9 @@ fn messages_per_minute(samples: &[ProgressSample], now_ms: u64) -> Option<f64> {
 pub struct IndexingStatus {
     /// Emails the pipeline will still embed.
     pub backlog: i32,
-    /// Emails indexed per minute lately; `None` when nothing was indexed in
-    /// the last two minutes.
+    /// Emails indexed per minute lately; `None` until there is enough to
+    /// measure (see `messages_per_minute`), and once nothing has been indexed
+    /// for about two minutes.
     pub messages_per_minute: Option<f64>,
 }
 
@@ -1225,19 +1230,19 @@ mod tests {
         assert_eq!(embedded_emails(&db), 3);
     }
 
+    fn sample(at_ms: u64, emails: u32) -> ProgressSample {
+        ProgressSample { at_ms, emails }
+    }
+
     #[test]
-    fn the_rate_counts_the_emails_indexed_after_the_first_sample_over_the_time_since_it() {
-        let at = |at_ms: u64, emails: u32| ProgressSample { at_ms, emails };
-        let cases: [(&str, Vec<ProgressSample>, u64, Option<f64>); 8] = [
+    fn the_rate_counts_the_emails_indexed_after_the_first_sample_up_to_now() {
+        let at = sample;
+        let every_second: Vec<ProgressSample> = (0..=12).map(|s| at(s * 1_000, 1)).collect();
+        let cases: [(&str, Vec<ProgressSample>, u64, Option<f64>); 9] = [
             ("nothing indexed", vec![], 10_000, None),
             ("a single sample", vec![at(0, 1)], 10_000, None),
             ("one email a minute", vec![at(0, 1), at(60_000, 1)], 60_000, Some(1.0)),
-            (
-                "one email a second",
-                vec![at(0, 1), at(1_000, 1), at(2_000, 1)],
-                2_000,
-                Some(60.0),
-            ),
+            ("one email a second", every_second, 12_000, Some(60.0)),
             (
                 "batches of twenty every ten seconds",
                 vec![at(0, 20), at(10_000, 20)],
@@ -1257,9 +1262,52 @@ mod tests {
                 5_000,
                 None,
             ),
+            (
+                "less than ten seconds measured",
+                vec![at(0, 1), at(1_000, 1), at(2_000, 1)],
+                2_000,
+                None,
+            ),
         ];
         for (case, samples, now_ms, expected) in cases {
             assert_eq!(messages_per_minute(&samples, now_ms), expected, "{case}");
+        }
+    }
+
+    /// The bug this pins: two emails stored 31 ms apart read as 1935 a minute,
+    /// and kept reading so until they left the window.
+    #[test]
+    fn a_short_burst_does_not_read_as_a_huge_pace() {
+        let burst = [sample(0, 1), sample(31, 1)];
+
+        assert_eq!(messages_per_minute(&burst, 31), None);
+        assert_eq!(messages_per_minute(&burst, 5_031), None);
+        let later = messages_per_minute(&burst, 15_031);
+        assert!(later.is_some_and(|rate| rate < 5.0), "{later:?}");
+    }
+
+    #[test]
+    fn the_pace_falls_while_nothing_is_indexed_and_then_disappears() {
+        let run = [sample(0, 20), sample(10_000, 20)];
+
+        assert_eq!(messages_per_minute(&run, 10_000), Some(120.0));
+        assert_eq!(messages_per_minute(&run, 40_000), Some(30.0));
+        assert_eq!(
+            messages_per_minute(&run, 130_000),
+            None,
+            "the first batch left the window"
+        );
+    }
+
+    /// Measuring up to now drops the pace a little between two batches: 20
+    /// emails every 10 s reads between 110 and 120 a minute.
+    #[test]
+    fn a_steady_run_reads_close_to_its_pace_between_batches() {
+        let run: Vec<ProgressSample> = (0..=30).map(|i| sample(i * 10_000, 20)).collect();
+        for now_ms in [150_000, 152_500, 155_000, 159_999, 300_000] {
+            let stored = usize::try_from(now_ms / 10_000).unwrap();
+            let rate = messages_per_minute(&run[..=stored], now_ms).unwrap();
+            assert!((109.9..=120.0).contains(&rate), "at {now_ms} ms: {rate}");
         }
     }
 

@@ -337,7 +337,8 @@ dimensiones que necesita el índice.
 <!-- claim:ai-semantic-search-progress -->
 **Ajustes → IA: backend y modelos** muestra el **Índice de correo**: cuántos correos faltan por
 indexar, contados con las categorías y el límite de antigüedad que usa la indexación, y, mientras
-indexa, cuántos procesa por minuto, aproximadamente, medido en los dos últimos minutos.
+indexa, cuántos procesa por minuto, aproximadamente, medido en los dos últimos minutos. El ritmo
+aparece cuando la indexación lleva diez segundos y baja mientras no se indexa nada.
 
 ## Traducción {#translation}
 

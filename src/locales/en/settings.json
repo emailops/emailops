@@ -155,7 +155,6 @@
       "backlog_other": "{{count}} emails waiting to be indexed",
       "upToDate": "Every email that semantic search covers is indexed.",
       "rate": "Indexing about {{rate}} emails per minute",
-      "idle": "Not indexing right now.",
       "loadFailed": "Could not read the index status: {{error}}"
     },
     "noModelsFound": "(no models found)",

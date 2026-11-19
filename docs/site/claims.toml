@@ -1270,7 +1270,8 @@ checks = [
 [ai-semantic-search-progress]
 checks = [
   { tests = ['services::embeddings::tests::the_backlog_counts_only_what_the_pipeline_will_embed'], covers = ["how many emails are still waiting to be indexed, counted with the categories and the age limit indexing uses"] },
-  { tests = ['services::embeddings::tests::the_rate_counts_the_emails_indexed_after_the_first_sample_over_the_time_since_it'], covers = ["about how many it gets through per minute, measured over the last two minutes."] },
+  { tests = ['services::embeddings::tests::the_rate_counts_the_emails_indexed_after_the_first_sample_up_to_now', 'services::embeddings::tests::a_steady_run_reads_close_to_its_pace_between_batches'], covers = ["about how many it gets through per minute, measured over the last two minutes."] },
+  { tests = ['services::embeddings::tests::a_short_burst_does_not_read_as_a_huge_pace', 'services::embeddings::tests::the_pace_falls_while_nothing_is_indexed_and_then_disappears'], covers = ["The pace appears once indexing has run for ten seconds, and falls while nothing is being indexed."] },
   { manual = 'The section and its refresh are covered by IndexingStatus.test.tsx (vitest); no live UI check has run yet.', covers = ["Settings → AI Backend & Models shows the Email index"] },
 ]
 

@@ -155,7 +155,6 @@
       "backlog_other": "{{count}} e-mails en attente d’indexation",
       "upToDate": "Tous les e-mails couverts par la recherche sémantique sont indexés.",
       "rate": "Indexation d’environ {{rate}} e-mails par minute",
-      "idle": "Aucune indexation en cours.",
       "loadFailed": "Impossible de lire l’état de l’index : {{error}}"
     },
     "noModelsFound": "(aucun modèle trouvé)",
