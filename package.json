@@ -34,7 +34,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tanstack/react-virtual": "3.14.26",
+    "@tanstack/react-virtual": "3.14.13",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.4",
     "@tauri-apps/plugin-os": "^2.4.0",
@@ -56,7 +56,7 @@
     "i18next": "^26.5.2",
     "mammoth": "^1.13.0",
     "pdfjs-dist": "6.5.438",
-    "pdfmake": "0.3.14",
+    "pdfmake": "0.3.11",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-i18next": "^17.1.0",
