@@ -4796,3 +4796,27 @@ only, 18/11/2026) stopped following the server for good.
   the backend cannot tell an open from an edit.
 - *Only fixing the editor's spurious update*: the tab composer's autosave also ran on
   mount for any draft with content, so an unchanged draft was still saved.
+
+## 2026-11-19 — Release jobs build and sign one resolved commit; only real releases save Rust caches
+
+**Decision:** A `resolve` job in `release.yml` turns `tag_name` into a commit SHA once, and
+every later job checks out that SHA, without persisting the checkout token. The workflow
+token is read-only; `contents: write` goes only to the jobs that attach files to the draft
+(`linux-sign`, `windows-publish`), which never run `npm ci` or a build, so `linux-sign`
+now attaches the Linux installers too. Every rust-cache step saves only when the run is not
+a dry run. `scripts/tests/test_release_workflow.py` asserts these properties.
+**Context:** The signing jobs start after an owner approval, possibly hours after the
+build, and checked out `tag_name` again by name, so a moved tag or branch would have run
+other in-repo signing scripts with the Certum and GPG secrets. The Linux build job, which
+runs the npm and cargo dependency tree, held a persisted write token that could move that
+ref, and jobs without a `permissions` block got the repository default. The rust caches
+had no `save-if`, so a dry run of any ref could seed the dependency artifacts a later
+signed release restores. Both were security audit leads.
+**Rejected:**
+- *Commit SHA in the rust-cache key*: no run could reuse another commit's cache, so every
+  release would build cold (the CUDA leg passes 82 min cold).
+- *Turning off the npm cache on dry runs*: `npm ci` checks every tarball against the
+  lockfile's sha512, so a seeded npm cache cannot change what installs.
+- *A separate Linux publish job*: one more job for no gain, since `linux-sign` already held
+  the write token and runs nothing from the dependency tree.
+- *Requiring an existing tag for non-dry runs*: not needed to close either lead.
