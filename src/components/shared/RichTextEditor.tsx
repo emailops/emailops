@@ -111,9 +111,12 @@ export function RichTextEditor({
     }
   }, [editor, value]);
 
+  // Not an edit: Tiptap's `setEditable` emits `update` by default, which
+  // handed the parent the editor's re-serialised HTML on mount, so opening a
+  // draft looked like a change and was saved.
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(!disabled);
+    editor.setEditable(!disabled, false);
   }, [editor, disabled]);
 
   if (!editor) {

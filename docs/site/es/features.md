@@ -62,6 +62,14 @@ Lo que escribes se guarda como borrador mientras escribes, con los archivos adju
 cerrar el compositor o la aplicación lo conserva; un reenvío también se guarda. Un mensaje
 admite hasta 32 archivos de 25 MB como máximo cada uno.
 
+<!-- claim:compose-drafts-imap-folder -->
+En una cuenta IMAP, los borradores que otro programa de correo guardó en la carpeta de
+borradores de la cuenta también aparecen en **Borradores**, con sus destinatarios, asunto,
+texto o formato, archivos adjuntos y la conversación a la que responden, y siguen los cambios
+que se les hagan allí. EmailOps solo lee esa carpeta: un borrador que editas aquí guarda tus
+cambios en este ordenador, y uno que eliminas o envías aquí sigue en la carpeta para tus otros
+programas de correo.
+
 ## Reenviar
 
 <!-- claim:reading-pane-forward -->

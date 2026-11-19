@@ -4,7 +4,7 @@ use crate::models::error::AppError;
 use crate::models::{Draft, DraftAttachment, DraftAttachmentInput, SaveDraftRequest};
 use crate::services;
 use crate::services::emails;
-use crate::sync::provider::provider_supports_drafts;
+use crate::sync::provider::{provider_reads_drafts, provider_supports_drafts};
 use crate::AppState;
 
 #[tauri::command]
@@ -26,9 +26,10 @@ pub async fn get_draft(
     services::ownership::draft_in_account(&state.db, &account_id, &draft_id).map(Some)
 }
 
-/// Pull the provider's Drafts folder on demand, so a draft edited in Gmail
-/// shows up when the user opens the Drafts screen or a draft instead of only
-/// after the next account sync. Returns how many drafts were re-read.
+/// Pull the provider's Drafts folder on demand, so a draft edited in Gmail (or
+/// saved by another client in an IMAP Drafts folder) shows up when the user
+/// opens the Drafts screen or a draft instead of only after the next account
+/// sync. Returns how many drafts were re-read.
 ///
 /// Best-effort by design: an unreachable provider leaves the local drafts as
 /// they are and reports zero rather than failing the screen the user just
@@ -39,7 +40,7 @@ pub async fn refresh_drafts(state: State<'_, AppState>, app: AppHandle, account_
         .db
         .get_account(&account_id)?
         .ok_or_else(|| AppError::NotFound(format!("Account {account_id} not found")))?;
-    if !provider_supports_drafts(&account.provider) {
+    if !provider_reads_drafts(&account.provider) {
         return Ok(0);
     }
     let provider = match emails::build_provider(&account, Some(app)).await {

@@ -65,6 +65,14 @@ Was du schreibst, wird beim Tippen als Entwurf gespeichert, Anhänge eingeschlos
 das Verfassen-Fenster oder die App, bleibt es erhalten, auch bei einer Weiterleitung. Eine
 Nachricht fasst bis zu 32 Dateien mit je höchstens 25 MB.
 
+<!-- claim:compose-drafts-imap-folder -->
+Bei einem IMAP-Konto erscheinen Entwürfe, die ein anderes Mailprogramm im Entwürfe-Ordner des
+Kontos gespeichert hat, ebenfalls unter **Entwürfe**, mit Empfängern, Betreff, Text oder
+Formatierung, Anhängen und der Unterhaltung, auf die sie antworten, und sie übernehmen die
+Änderungen, die dort an ihnen vorgenommen werden. EmailOps liest diesen Ordner nur: Ein
+Entwurf, den du hier bearbeitest, behält deine Änderungen auf diesem Computer, und einer, den
+du hier löschst oder sendest, bleibt für deine anderen Mailprogramme im Ordner.
+
 ## Weiterleiten
 
 <!-- claim:reading-pane-forward -->

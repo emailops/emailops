@@ -87,6 +87,16 @@ export function buildSaveDraftRequest(s: ComposeDraftState): SaveDraftRequest {
 }
 
 /**
+ * What a save of this snapshot writes to the draft row, as one comparable
+ * value: every field of the save request except the draft id. Two snapshots
+ * with the same value save the same draft.
+ */
+export function savedDraftContent(s: ComposeDraftState): string {
+  const { id: _id, ...content } = buildSaveDraftRequest(s);
+  return JSON.stringify(content);
+}
+
+/**
  * `Re: <subject>`, never `Re: Re: <subject>` — the same rule the backend
  * applies when it builds the reply, so the draft shows the subject it will send.
  */
@@ -133,23 +143,34 @@ export interface DraftAutosaver {
  * sends `id=undefined` and the backend inserts a fresh row. Here we (a) chain
  * saves so only one runs at a time and (b) inject the freshest id at execution
  * time, so the second save always upserts the row the first created.
+ *
+ * It also saves only content the row does not hold yet (`savedDraftContent`):
+ * `opened` is the draft a composer opened, and each save after that. Every
+ * save marks the draft as edited here, and on Gmail and Outlook pushes it, so
+ * a draft that was only opened must not be saved.
  */
 export function createDraftAutosaver(
   saveDraft: SaveDraftFn,
   onError?: (err: unknown) => void,
   initialId?: string,
+  opened?: ComposeDraftState,
 ): DraftAutosaver {
   // Seed with an existing draft id when editing (e.g. opened from the Drafts
   // view) so the first save upserts that row instead of creating a duplicate.
   let currentId: string | undefined = initialId;
+  // What the row holds, as far as this composer knows.
+  let stored: string | undefined = opened ? savedDraftContent(opened) : undefined;
   let chain: Promise<void> = Promise.resolve();
 
   const save = (state: ComposeDraftState): Promise<void> => {
     chain = chain.then(async () => {
+      const content = savedDraftContent(state);
+      if (content === stored) return;
       try {
         // Read the id produced by any prior save, not the stale snapshot.
         const saved = await saveDraft(buildSaveDraftRequest({ ...state, draftId: currentId }));
         currentId = saved.id;
+        stored = content;
       } catch (err) {
         onError?.(err);
       }
@@ -164,6 +185,8 @@ export function createDraftAutosaver(
 
   const adopt = (id: string) => {
     currentId = id;
+    // Someone else wrote that row: its content is not known here.
+    stored = undefined;
   };
 
   return { save, currentId: () => currentId, adopt, flush };

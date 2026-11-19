@@ -66,6 +66,15 @@ Ce que vous écrivez est enregistré comme brouillon au fil de la saisie, pièce
 comprises : fermer la fenêtre de rédaction ou l'application le conserve, et un transfert est
 conservé aussi. Un message contient jusqu'à 32 fichiers de 25 Mo au plus chacun.
 
+<!-- claim:compose-drafts-imap-folder -->
+Sur un compte IMAP, les brouillons qu'un autre logiciel de messagerie a enregistrés dans le
+dossier des brouillons du compte apparaissent aussi dans **Brouillons**, avec leurs
+destinataires, leur objet, leur texte ou leur mise en forme, leurs pièces jointes et la
+conversation à laquelle ils répondent, et ils suivent les modifications qui y sont faites.
+EmailOps ne fait que lire ce dossier : un brouillon modifié ici garde vos changements sur cet
+ordinateur, et un brouillon supprimé ou envoyé ici reste dans le dossier pour vos autres
+logiciels de messagerie.
+
 ## Transférer
 
 <!-- claim:reading-pane-forward -->
