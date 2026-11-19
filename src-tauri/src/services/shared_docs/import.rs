@@ -1,4 +1,4 @@
-//! Import spreadsheets (.xlsx, .xlsm, .xls, .ods) into EO Docs sheets: one
+//! Import spreadsheets (.xlsx, .xlsm) into EO Docs sheets: one
 //! sheet per non-empty tab, cell values only. Word documents are converted in
 //! the webview (mammoth → the editor's own schema) and arrive as an ordinary
 //! edit; this module only handles the spreadsheet side, read with `calamine`
@@ -45,56 +45,64 @@ fn cell_text(cell: &Data) -> String {
     }
 }
 
-/// Pure: the tabs of a workbook with their values. A formula whose result the
-/// file does not store (written by a tool that never calculated it) is kept as
-/// its formula text. Empty tabs are left out.
+/// Pure: the tabs of a workbook with their values, laid out from A1 and cut to
+/// [`MAX_IMPORT_ROWS`] x [`MAX_IMPORT_COLS`]. A formula whose result the file
+/// does not store (written by a tool that never calculated it) is kept as its
+/// formula text. Empty tabs are left out.
+///
+/// Only `.xlsx` (and `.xlsm`) is read, cell by cell, keeping just the cells
+/// inside the caps. calamine reads an `.xls` or `.ods` into one dense range
+/// spanning its first and last used cells when it opens the file, so a few
+/// bytes naming a far cell would ask for gigabytes before any cap applies.
 pub fn read_workbook(bytes: &[u8]) -> Result<Vec<ImportedTab>> {
     if bytes.len() > MAX_IMPORT_BYTES {
         return Err(AppError::InvalidInput("The file is too large to import".into()));
     }
-    let mut book = calamine::open_workbook_auto_from_rs(Cursor::new(bytes))
-        .map_err(|_| AppError::InvalidInput("Not a spreadsheet EO Docs can import".into()))?;
+    let mut book: calamine::Xlsx<_> = calamine::Xlsx::new(Cursor::new(bytes)).map_err(|_| {
+        AppError::InvalidInput(
+            "EO Docs imports spreadsheets saved as .xlsx: save the file as .xlsx and try again".into(),
+        )
+    })?;
     let mut tabs = Vec::new();
     for name in book.sheet_names() {
-        let values = book
-            .worksheet_range(&name)
-            .map_err(|e| AppError::InvalidInput(format!("The sheet \"{name}\" could not be read: {e}")))?;
-        // Formulas are optional: a file without them, or a format that does
-        // not keep them, imports its values only.
-        let formulas = book.worksheet_formula(&name).ok();
-        let (height, width) = values.get_size();
-        let (height, width) = (height.min(MAX_IMPORT_ROWS), width.min(MAX_IMPORT_COLS));
-        let (row0, col0) = values.start().unwrap_or((0, 0));
-        let mut rows = vec![vec![String::new(); width]; height];
-        for (r, row) in rows.iter_mut().enumerate() {
-            for (c, slot) in row.iter_mut().enumerate() {
-                let at = (row0 + r as u32, col0 + c as u32);
-                let mut text = values.get_value(at).map(cell_text).unwrap_or_default();
-                if text.is_empty() {
-                    if let Some(f) = formulas.as_ref().and_then(|f| f.get_value(at)) {
-                        if !f.is_empty() {
-                            text = format!("={f}");
-                        }
-                    }
+        let unreadable =
+            |e: calamine::XlsxError| AppError::InvalidInput(format!("The sheet \"{name}\" could not be read: {e}"));
+        let mut cells = match book.worksheet_cells_reader(&name) {
+            Ok(cells) => cells,
+            // A chart sheet has no cells to import.
+            Err(calamine::XlsxError::NotAWorksheet(_)) => continue,
+            Err(e) => return Err(unreadable(e)),
+        };
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        let (mut height, mut width) = (0, 0);
+        while let Some(cell) = cells.next_cell_with_formula().map_err(unreadable)? {
+            let mut text = cell_text(&Data::from(cell.value));
+            if text.is_empty() {
+                if let Some(f) = cell.formula.filter(|f| !f.is_empty()) {
+                    text = format!("={f}");
                 }
-                *slot = text;
+            }
+            if text.is_empty() {
+                continue;
+            }
+            // A used cell past the caps still stretches the tab up to them.
+            let (r, c) = (cell.pos.0 as usize, cell.pos.1 as usize);
+            height = height.max((r + 1).min(MAX_IMPORT_ROWS));
+            width = width.max((c + 1).min(MAX_IMPORT_COLS));
+            if r < MAX_IMPORT_ROWS && c < MAX_IMPORT_COLS {
+                if rows.len() <= r {
+                    rows.resize_with(r + 1, Vec::new);
+                }
+                if rows[r].len() <= c {
+                    rows[r].resize(c + 1, String::new());
+                }
+                rows[r][c] = text;
             }
         }
-        // Rows and columns before the first used cell keep the tab's layout.
-        let lead_rows = vec![vec![String::new(); width + col0 as usize]; row0 as usize];
-        let rows: Vec<Vec<String>> = lead_rows
-            .into_iter()
-            .chain(rows.into_iter().map(|row| {
-                let mut padded = vec![String::new(); col0 as usize];
-                padded.extend(row);
-                padded
-            }))
-            .take(MAX_IMPORT_ROWS)
-            .map(|mut row| {
-                row.truncate(MAX_IMPORT_COLS);
-                row
-            })
-            .collect();
+        rows.resize_with(height, Vec::new);
+        for row in &mut rows {
+            row.resize(width, String::new());
+        }
         if rows.iter().flatten().any(|v| !v.is_empty()) {
             tabs.push(ImportedTab { name, rows });
         }
@@ -151,7 +159,7 @@ pub fn tab_title(filename: &str, tab: &str, tabs: usize) -> String {
 }
 
 /// Extensions EO Docs can import, for the file dialog's filter.
-pub const IMPORT_EXTENSIONS: &[&str] = &["docx", "xlsx", "xlsm", "xls", "ods"];
+pub const IMPORT_EXTENSIONS: &[&str] = &["docx", "xlsx", "xlsm"];
 
 /// A file the user picked to import, ready for the webview: Word files are
 /// converted there, spreadsheets come back to [`read_workbook`].
@@ -295,6 +303,55 @@ mod tests {
     fn a_file_that_is_not_a_spreadsheet_is_refused() {
         assert!(read_workbook(b"PK\x03\x04 not really").is_err());
         assert!(read_workbook(&vec![0u8; MAX_IMPORT_BYTES + 1]).is_err());
+    }
+
+    /// A1, B2 (a formula never calculated), and values in the last row out to
+    /// XFD1048576: a 2 KB file whose used range is the whole grid. calamine's
+    /// range for it asked for ~17 billion cells and took the app down.
+    const FAR_CELL: &[u8] = include_bytes!("../../../tests/fixtures/eodocs/far-cell.xlsx");
+
+    #[test]
+    fn a_far_cell_is_clipped_to_the_caps_without_building_the_whole_grid() {
+        let tabs = read_workbook(FAR_CELL).unwrap();
+        let rows = &tabs[0].rows;
+        assert_eq!(rows.len(), MAX_IMPORT_ROWS);
+        assert!(rows.iter().all(|row| row.len() == MAX_IMPORT_COLS));
+        assert_eq!(rows[0][0], "kept");
+        assert_eq!(rows[1][1], "=SUM(1,2)");
+    }
+
+    fn refusal(bytes: &[u8]) -> String {
+        match read_workbook(bytes) {
+            Err(AppError::InvalidInput(message)) => message,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    /// calamine reads an `.ods` or `.xls` whole when it opens the file, sized by
+    /// its first and last used cells, so only `.xlsx` is imported.
+    #[test]
+    fn an_ods_workbook_is_refused_with_a_hint_to_save_it_as_xlsx() {
+        let ods = include_bytes!("../../../tests/fixtures/eodocs/one-cell.ods");
+        assert!(refusal(ods).contains(".xlsx"));
+    }
+
+    #[test]
+    fn a_legacy_xls_workbook_is_refused_with_a_hint_to_save_it_as_xlsx() {
+        let mut xls = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        xls.resize(4096, 0);
+        assert!(refusal(&xls).contains(".xlsx"));
+    }
+
+    #[test]
+    fn a_picked_xls_or_ods_file_is_refused() {
+        let dir = std::env::temp_dir().join(format!("eodocs-pick-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["old.xls", "calc.ODS"] {
+            let path = dir.join(name);
+            std::fs::write(&path, b"cells").unwrap();
+            assert!(read_picked_file(&path).is_err(), "{name}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

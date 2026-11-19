@@ -36,16 +36,19 @@ function bodyOf(update: Uint8Array): string {
 
 describe('importKind', () => {
   it('knows Word and spreadsheet files by extension', () => {
-    expect(['a.docx', 'B.DOCX', 'c.xlsx', 'd.xlsm', 'e.xls', 'f.ods', 'g.pdf', 'h.doc'].map(importKind)).toEqual([
+    expect(['a.docx', 'B.DOCX', 'c.xlsx', 'd.xlsm', 'g.pdf', 'h.doc'].map(importKind)).toEqual([
       'doc',
       'doc',
-      'sheet',
-      'sheet',
       'sheet',
       'sheet',
       null,
       null,
     ]);
+  });
+
+  // The backend reads only .xlsx cell by cell; .xls and .ods are read whole.
+  it('does not offer to import .xls or .ods spreadsheets', () => {
+    expect(['e.xls', 'f.ODS'].map(importKind)).toEqual([null, null]);
   });
 });
 

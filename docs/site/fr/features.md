@@ -355,7 +355,7 @@ en PDF dans votre dossier Téléchargements. **Supprimer** demande d'abord confi
 supprimer un document partagé n'efface que votre copie, et les autres gardent la leur.
 
 <!-- claim:feat-eo-docs-7 -->
-**Importer** transforme un document Word (`.docx`) ou une feuille de calcul (`.xlsx`, `.xls`, `.ods`)
+**Importer** transforme un document Word (`.docx`) ou une feuille de calcul (`.xlsx`)
 en EO Docs, une feuille par onglet et les formules sous forme de valeurs ; **Ouvrir dans EO Docs**
 fait de même avec une pièce jointe. Dans l'éditeur d'e-mails, **Depuis EO Docs** joint un document,
 ce qui le partage avec les destinataires de l'e-mail.
