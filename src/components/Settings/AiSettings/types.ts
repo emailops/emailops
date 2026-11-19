@@ -7,6 +7,8 @@ export interface ServerState {
   embeddingSource: EmbeddingSource;
   /** Tokens; 0 reads it from the server. */
   contextWindow: number;
+  /** Chunks per embeddings request when the server computes the index. */
+  embeddingBatchSize: number;
   hasApiKey: boolean;
   /** The remote host whose disclosure the user confirmed last. */
   disclosedHost: string | null;

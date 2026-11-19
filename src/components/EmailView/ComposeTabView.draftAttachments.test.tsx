@@ -71,6 +71,17 @@ async function settle() {
   });
 }
 
+/** An edit, so the tab has something to save: opening a draft saves nothing. */
+async function editSubject() {
+  const input = container.querySelector<HTMLInputElement>('input[placeholder="compose:subjectPlaceholderLong"]');
+  if (!input) throw new Error('subject input not rendered');
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  await act(async () => {
+    setter?.call(input, 'Report, final');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 function lastSave() {
   const saves = vi.mocked(api.saveDraft).mock.calls;
   return saves[saves.length - 1][0];
@@ -81,6 +92,7 @@ describe('ComposeTabView with a draft file attachment', () => {
     await act(async () => {
       root.render(<ComposeTabView tab={tab} accounts={[account]} onClose={() => {}} />);
     });
+    await editSubject();
     await settle();
     expect(lastSave().attachments).toEqual([
       { filePath: attachment.filePath, filename: attachment.filename, mimeType: attachment.mimeType },
@@ -104,6 +116,7 @@ describe('ComposeTabView with a draft file attachment', () => {
     await act(async () => {
       root.render(<ComposeTabView tab={{ ...tab, attachments: undefined }} accounts={[account]} onClose={() => {}} />);
     });
+    await editSubject();
     await settle();
     expect(lastSave().attachments).toBeUndefined();
   });

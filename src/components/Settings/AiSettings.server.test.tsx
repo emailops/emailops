@@ -1,5 +1,6 @@
 // Settings → AI with an OpenAI-compatible server: the remote-server
-// disclosure, the save wiring (URL, key, embedding source, context size) and
+// disclosure, the save wiring (URL, key, embedding source, context size,
+// chunks per embedding request) and
 // the OpenRouter controls and warnings when OpenRouter computes the index.
 
 import { act } from 'react';
@@ -97,6 +98,7 @@ const api = vi.hoisted(() => ({
   setPref: vi.fn(() => Promise.resolve()),
   setAiConfig: vi.fn(() => Promise.resolve()),
   regenerateEmbeddings: vi.fn(() => Promise.resolve()),
+  getIndexingStatus: vi.fn(() => Promise.resolve({ backlog: 0, messagesPerMinute: null })),
   getAiProviderActivity: vi.fn(
     (): Promise<{ provider: string; items: unknown[] }> => Promise.resolve({ provider: 'openrouter', items: [] }),
   ),
@@ -131,6 +133,7 @@ function savedConfig(server: Record<string, unknown>, over: Record<string, unkno
       hasApiKey: false,
       embeddingSource: 'server',
       contextWindow: 0,
+      embeddingBatchSize: 1,
       disclosedHost: null,
       ...server,
     },
@@ -231,6 +234,7 @@ describe('AiSettings — OpenAI-compatible server', () => {
       clearApiKey: false,
       embeddingSource: 'server',
       contextWindow: 0,
+      embeddingBatchSize: 1,
       disclosureAcceptedHost: null,
     });
   });
@@ -291,6 +295,23 @@ describe('AiSettings — OpenAI-compatible server', () => {
     await click('common:actions.save');
 
     expect(savedServer()).toMatchObject({ contextWindow: 32768 });
+  });
+
+  it('saves the chunks per embedding request typed in', async () => {
+    await mount();
+    await type('settings:server.embeddingBatchSize', '16');
+    await click('common:actions.save');
+
+    expect(savedServer()).toMatchObject({ embeddingBatchSize: 16 });
+  });
+
+  it('asks for chunks per request only when the server computes the index', async () => {
+    await mount({ embeddingBatchSize: 8 });
+    expect(field('settings:server.embeddingBatchSize').value).toBe('8');
+
+    await chooseSource('openrouter');
+
+    expect(container.querySelector('input[aria-label="settings:server.embeddingBatchSize"]')).toBeNull();
   });
 
   it('offers the in-app model only where the embedded runtime runs', async () => {

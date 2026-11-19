@@ -36,6 +36,43 @@ fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
     bytes
 }
 
+/// The `FROM … WHERE …` of the emails still to embed, and its parameters.
+/// Spam/trash are never embedded — retrieval must never surface them, so
+/// embedding them is pure wasted compute. pending_sync = 0: optimistic sent
+/// copies awaiting reconciliation are deleted when the provider's real copy
+/// arrives, so they are skipped too.
+fn pending_embedding_filter(
+    account_id: Option<&str>,
+    categories: &[String],
+    min_timestamp: Option<i64>,
+) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut sql = String::from(
+        "FROM emails e
+         LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
+         WHERE ec.email_id IS NULL AND e.is_deleted = 0
+           AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0",
+    );
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(acc) = account_id {
+        params_vec.push(Box::new(acc.to_string()));
+        sql.push_str(&format!(" AND e.account_id = ?{}", params_vec.len()));
+    }
+    if !categories.is_empty() {
+        let placeholders: Vec<String> = (0..categories.len())
+            .map(|i| format!("?{}", params_vec.len() + i + 1))
+            .collect();
+        sql.push_str(&format!(" AND e.category IN ({})", placeholders.join(",")));
+        for c in categories {
+            params_vec.push(Box::new(c.clone()));
+        }
+    }
+    if let Some(ts) = min_timestamp {
+        params_vec.push(Box::new(ts));
+        sql.push_str(&format!(" AND e.timestamp >= ?{}", params_vec.len()));
+    }
+    (sql, params_vec)
+}
+
 impl Database {
     /// Store embedding chunks for an email (one or more chunks).
     /// Deletes any existing chunks for the email first.
@@ -271,34 +308,8 @@ impl Database {
     ) -> Result<Vec<String>> {
         let conn = self.reader();
 
-        let mut sql = String::from(
-            // Spam/trash are never embedded — retrieval must never surface
-            // them, so embedding them is pure wasted compute. pending_sync = 0:
-            // optimistic sent copies awaiting reconciliation are deleted when
-            // the provider's real copy arrives, so they are skipped too.
-            "SELECT e.id FROM emails e
-             LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
-             WHERE ec.email_id IS NULL AND e.is_deleted = 0
-               AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0",
-        );
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(acc) = account_id {
-            params_vec.push(Box::new(acc.to_string()));
-            sql.push_str(&format!(" AND e.account_id = ?{}", params_vec.len()));
-        }
-        if !categories.is_empty() {
-            let placeholders: Vec<String> = (0..categories.len())
-                .map(|i| format!("?{}", params_vec.len() + i + 1))
-                .collect();
-            sql.push_str(&format!(" AND e.category IN ({})", placeholders.join(",")));
-            for c in categories {
-                params_vec.push(Box::new(c.clone()));
-            }
-        }
-        if let Some(ts) = min_timestamp {
-            params_vec.push(Box::new(ts));
-            sql.push_str(&format!(" AND e.timestamp >= ?{}", params_vec.len()));
-        }
+        let (filter, mut params_vec) = pending_embedding_filter(account_id, categories, min_timestamp);
+        let mut sql = format!("SELECT e.id {filter}");
         // Newest first, so mail that just arrived is searchable before the
         // backlog is drained.
         params_vec.push(Box::new(limit));
@@ -320,33 +331,19 @@ impl Database {
         Ok(results)
     }
 
-    /// Count emails without embeddings
-    pub fn count_emails_without_embeddings(&self, account_id: Option<&str>) -> Result<i32> {
+    /// Count the emails [`Self::get_emails_without_embeddings`] would return
+    /// with no limit, so a pending count reaches zero when the embed loop
+    /// finishes.
+    pub fn count_emails_without_embeddings(
+        &self,
+        account_id: Option<&str>,
+        categories: &[String],
+        min_timestamp: Option<i64>,
+    ) -> Result<i32> {
         let conn = self.reader();
 
-        // Filters mirror get_emails_without_embeddings (deletion + mailbox) so
-        // the pending count reaches zero when the embed loop finishes.
-        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::ToSql>>) = match account_id {
-            Some(acc) => (
-                "SELECT COUNT(*) FROM emails e
-                 LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
-                 WHERE ec.email_id IS NULL AND e.is_deleted = 0
-                   AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0
-                   AND e.account_id = ?1"
-                    .to_string(),
-                vec![Box::new(acc.to_string())],
-            ),
-            None => (
-                "SELECT COUNT(*) FROM emails e
-                 LEFT JOIN embedding_chunks ec ON e.id = ec.email_id
-                 WHERE ec.email_id IS NULL AND e.is_deleted = 0
-                   AND e.mailbox NOT IN ('spam', 'trash') AND e.pending_sync = 0"
-                    .to_string(),
-                vec![],
-            ),
-        };
-
-        let mut stmt = conn.prepare(&sql)?;
+        let (filter, params_vec) = pending_embedding_filter(account_id, categories, min_timestamp);
+        let mut stmt = conn.prepare(&format!("SELECT COUNT(*) {filter}"))?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
 
         let count: i32 = stmt.query_row(params_refs.as_slice(), |row| row.get(0))?;
@@ -733,7 +730,7 @@ mod tests {
                 db.get_emails_without_embeddings(None, 10, &[], None).unwrap();
             }),
             ("count_emails_without_embeddings", |db| {
-                db.count_emails_without_embeddings(None).unwrap();
+                db.count_emails_without_embeddings(None, &[], None).unwrap();
             }),
             ("fts_search_filtered", |db| {
                 db.fts_search_filtered("invoice", None, None, None, 10).unwrap();
@@ -1110,7 +1107,7 @@ mod tests {
             "pending rows must be excluded, got {:?}",
             ids
         );
-        assert_eq!(db.count_emails_without_embeddings(Some("acc1")).unwrap(), 1);
+        assert_eq!(db.count_emails_without_embeddings(Some("acc1"), &[], None).unwrap(), 1);
     }
 
     // The pending count must mirror the fetcher's filters (mailbox + deletion)
@@ -1130,7 +1127,7 @@ mod tests {
         db.store_embedding_chunks("e-emb", "acc1", &[vec![0.1_f32; 768]], "test-model", "hash")
             .unwrap();
 
-        let count = db.count_emails_without_embeddings(Some("acc1")).unwrap();
+        let count = db.count_emails_without_embeddings(Some("acc1"), &[], None).unwrap();
         assert_eq!(count, 1, "only e-in is pending (spam/trash/deleted/embedded excluded)");
     }
 

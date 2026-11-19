@@ -8,6 +8,7 @@ import {
   createDraftAutosaver,
   findThreadReplyDraft,
   replySubject,
+  savedDraftContent,
   shouldAutosaveDraft,
 } from './composeDraft';
 
@@ -180,6 +181,103 @@ describe('createDraftAutosaver', () => {
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(saveDraft).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('savedDraftContent', () => {
+  const opened: ComposeDraftState = {
+    ...base,
+    draftId: 'd1',
+    emailId: 'e1',
+    toAddresses: ['a@example.test'],
+    subject: 'Plan',
+    plainBody: 'Line one',
+    bodyHtml: '<div>Line one</div>',
+    attachments: [{ filePath: 'attachments/a/drafts/x.pdf', filename: 'x.pdf', mimeType: 'application/pdf' }],
+  };
+
+  it('is the same for snapshots a save would write the same way', () => {
+    // The id and the sending flags are not draft content.
+    const same = { ...opened, draftId: undefined, isSending: true, sent: true };
+    expect(savedDraftContent(same)).toBe(savedDraftContent(opened));
+  });
+
+  it('changes with every field a save writes', () => {
+    const changes: Partial<ComposeDraftState>[] = [
+      { accountId: 'acct-2' },
+      { emailId: undefined },
+      { toAddresses: ['b@example.test'] },
+      { ccAddresses: ['c@example.test'] },
+      { bccAddresses: ['d@example.test'] },
+      { subject: 'Plan B' },
+      { plainBody: 'Line one!' },
+      { bodyHtml: '<p>Line one</p>' },
+      { attachments: [] },
+      { attachments: undefined },
+    ];
+    for (const change of changes) {
+      expect(savedDraftContent({ ...opened, ...change }), JSON.stringify(change)).not.toBe(savedDraftContent(opened));
+    }
+  });
+});
+
+describe('createDraftAutosaver opened on an existing draft', () => {
+  const opened: ComposeDraftState = {
+    ...base,
+    toAddresses: ['a@example.test'],
+    subject: 'Plan',
+    plainBody: 'Line one',
+    bodyHtml: '<div>Line one</div>',
+  };
+  const saver = () => {
+    const saveDraft = vi.fn(async (req) => ({ id: req.id ?? 'd-new' }));
+    return { saveDraft, autosaver: createDraftAutosaver(saveDraft, undefined, 'd1', opened) };
+  };
+
+  it('does not save the draft as it opened', async () => {
+    const { saveDraft, autosaver } = saver();
+    await autosaver.save({ ...opened });
+    expect(saveDraft).not.toHaveBeenCalled();
+    await expect(autosaver.flush()).resolves.toBe('d1');
+  });
+
+  it('saves an edit once', async () => {
+    const { saveDraft, autosaver } = saver();
+    const edited = { ...opened, subject: 'Plan B' };
+    await autosaver.save(edited);
+    await autosaver.save({ ...edited });
+    expect(saveDraft).toHaveBeenCalledTimes(1);
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ id: 'd1', subject: 'Plan B' }));
+  });
+
+  it('saves a return to the opened content after an edit', async () => {
+    // The row holds the edit by then, so going back is a change too.
+    const { saveDraft, autosaver } = saver();
+    await autosaver.save({ ...opened, subject: 'Plan B' });
+    await autosaver.save(opened);
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+    expect(saveDraft.mock.calls[1][0]).toMatchObject({ subject: 'Plan' });
+  });
+
+  it('saves again after a save that failed', async () => {
+    let call = 0;
+    const saveDraft = vi.fn(async (req) => {
+      call += 1;
+      if (call === 1) throw new Error('offline');
+      return { id: req.id ?? 'd-new' };
+    });
+    const autosaver = createDraftAutosaver(saveDraft, () => {}, 'd1', opened);
+    const edited = { ...opened, subject: 'Plan B' };
+    await autosaver.save(edited);
+    await autosaver.save(edited);
+    expect(saveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it('saves whatever it has into a draft it adopts', async () => {
+    const { saveDraft, autosaver } = saver();
+    autosaver.adopt('draft-chat');
+    await autosaver.save(opened);
+    expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ id: 'draft-chat' }));
   });
 });
 
