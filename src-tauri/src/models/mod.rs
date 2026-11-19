@@ -753,8 +753,10 @@ pub struct Draft {
     pub body_html: Option<String>,
     pub ai_generated: bool,
     pub status: String,
-    /// Id of the matching draft in the provider's Drafts folder (Gmail/Graph),
-    /// or `None` for a local-only draft (never pushed, or unsupported provider).
+    /// Id of the matching draft in the provider's Drafts folder (Gmail/Graph
+    /// draft id; for IMAP the draft's `Message-ID`, see
+    /// `sync::draft_plan::plan_imap_draft_listing`), or `None` for a local-only
+    /// draft (never pushed, or a provider that keeps drafts local).
     #[serde(default)]
     pub provider_draft_id: Option<String>,
     #[serde(default)]
@@ -834,7 +836,8 @@ pub struct ProviderDraft {
     pub updated_at: Option<i64>,
     /// Provider token that changes whenever the draft's content changes. Gmail
     /// mints a new message id on every draft save, so it doubles as an ETag;
-    /// Graph reports a `changeKey`. The pull pass stores it and skips the full
+    /// Graph reports a `changeKey`; IMAP uses `<UIDVALIDITY>:<UID>`, since a
+    /// save there is a new message. The pull pass stores it and skips the full
     /// read while it stays the same. `None` for providers that don't report one.
     #[serde(default)]
     pub provider_message_id: Option<String>,
