@@ -813,12 +813,11 @@ impl ImapClient {
         let Some(header) = header.map(str::trim).filter(|h| !h.is_empty()) else {
             return Ok(None);
         };
-        // Quotes inside a Message-ID would break the SEARCH syntax.
-        if header.contains('"') {
+        let Some(key) = imap_search::message_id_search_key(header) else {
             return Err(AppError::SyncError(
                 "This Message-ID cannot be searched for on an IMAP server".to_string(),
             ));
-        }
+        };
         // Custom folders count too: "not spam any more" often means "filed
         // somewhere". Bounded so a mailbox with many folders cannot turn one
         // lookup into a hundred SELECTs.
@@ -836,7 +835,7 @@ impl ImapClient {
             if !Self::select_folder_checked(session, &folder)? {
                 continue;
             }
-            let hits = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\""))?;
+            let hits = imap_search::uid_search(session, &key)?;
             if let Some(new_uid) = hits.into_iter().max() {
                 return Ok(Some((folder, new_uid)));
             }
@@ -919,7 +918,7 @@ impl ImapClient {
         session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
         source: &ImapFolder,
         uid: u32,
-        message_id_header: Option<&str>,
+        search_key: Option<&str>,
     ) -> Result<Option<u32>> {
         // Resolved before the source is selected: the legacy fallback probes
         // candidate names with SELECT.
@@ -930,8 +929,8 @@ impl ImapClient {
                 "IMAP source folder {source:?} not found on server"
             )));
         }
-        if let Some(header) = message_id_header {
-            let holds_it = imap_search::uid_search(session, &format!("UID {uid} HEADER Message-ID \"{header}\""))?;
+        if let Some(key) = search_key {
+            let holds_it = imap_search::uid_search(session, &format!("UID {uid} {key}"))?;
             if !holds_it.contains(&uid) {
                 return Err(AppError::SyncError(
                     "The message changed on the server since the last sync; sync the account and try again".to_string(),
@@ -940,9 +939,9 @@ impl ImapClient {
         }
         Self::move_uid_blocking(session, uid, &trash_path)?;
         let mut new_uid = None;
-        if let Some(header) = message_id_header {
+        if let Some(key) = search_key {
             if imap_search::select(session, &trash_path).is_ok() {
-                if let Ok(found) = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\"")) {
+                if let Ok(found) = imap_search::uid_search(session, key) {
                     new_uid = found.into_iter().max();
                 }
             }
@@ -956,7 +955,7 @@ impl ImapClient {
         session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
         source: &ImapFolder,
         uid: u32,
-        message_id_header: Option<&str>,
+        search_key: Option<&str>,
     ) -> Result<(String, Option<u32>)> {
         let entries = Self::list_entries_blocking(session)
             .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
@@ -969,8 +968,8 @@ impl ImapClient {
                 "IMAP source folder {source:?} not found on server"
             )));
         }
-        if let Some(header) = message_id_header {
-            let holds_it = imap_search::uid_search(session, &format!("UID {uid} HEADER Message-ID \"{header}\""))?;
+        if let Some(key) = search_key {
+            let holds_it = imap_search::uid_search(session, &format!("UID {uid} {key}"))?;
             if !holds_it.contains(&uid) {
                 return Err(AppError::SyncError(
                     "The message changed on the server since the last sync; sync the account and try again".to_string(),
@@ -979,9 +978,9 @@ impl ImapClient {
         }
         Self::move_uid_blocking(session, uid, &archive_path)?;
         let mut new_uid = None;
-        if let Some(header) = message_id_header {
+        if let Some(key) = search_key {
             if imap_search::select(session, &archive_path).is_ok() {
-                if let Ok(found) = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\"")) {
+                if let Ok(found) = imap_search::uid_search(session, key) {
                     new_uid = found.into_iter().max();
                 }
             }
@@ -996,7 +995,7 @@ impl ImapClient {
         session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
         source: &ImapFolder,
         uid: u32,
-        message_id_header: Option<&str>,
+        search_key: Option<&str>,
     ) -> Result<Option<u32>> {
         if *source == ImapFolder::Spam {
             return Ok(Some(uid));
@@ -1009,8 +1008,8 @@ impl ImapClient {
                 "IMAP source folder {source:?} not found on server"
             )));
         }
-        if let Some(header) = message_id_header {
-            let holds_it = imap_search::uid_search(session, &format!("UID {uid} HEADER Message-ID \"{header}\""))?;
+        if let Some(key) = search_key {
+            let holds_it = imap_search::uid_search(session, &format!("UID {uid} {key}"))?;
             if !holds_it.contains(&uid) {
                 return Err(AppError::SyncError(
                     "The message changed on the server since the last sync; sync the account and try again".to_string(),
@@ -1019,9 +1018,9 @@ impl ImapClient {
         }
         Self::move_uid_blocking(session, uid, &spam_path)?;
         let mut new_uid = None;
-        if let Some(header) = message_id_header {
+        if let Some(key) = search_key {
             if imap_search::select(session, &spam_path).is_ok() {
-                if let Ok(found) = imap_search::uid_search(session, &format!("HEADER Message-ID \"{header}\"")) {
+                if let Ok(found) = imap_search::uid_search(session, key) {
                     new_uid = found.into_iter().max();
                 }
             }
@@ -2388,18 +2387,13 @@ impl EmailProvider for ImapClient {
         let uid: u32 = uid_str
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
-        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
-        // don't occur in practice, so the check is skipped for them.
-        let header = message_id_header
-            .map(str::trim)
-            .filter(|h| !h.is_empty() && !h.contains('"'))
-            .map(str::to_string);
+        let key = message_id_key(message_id_header);
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
         let (archive_path, new_uid) = tokio::task::spawn_blocking(move || -> Result<(String, Option<u32>)> {
             let mut session = Self::checkout_session(&slot, &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-            let result = Self::archive_uid_blocking(&mut session, &source, uid, header.as_deref());
+            let result = Self::archive_uid_blocking(&mut session, &source, uid, key.as_deref());
             slot.checkin(session);
             result
         })
@@ -2427,16 +2421,13 @@ impl EmailProvider for ImapClient {
         let uid: u32 = uid_str
             .parse()
             .map_err(|_| AppError::SyncError(format!("Invalid IMAP UID: {uid_str}")))?;
-        let header = message_id_header
-            .map(str::trim)
-            .filter(|h| !h.is_empty() && !h.contains('"'))
-            .map(str::to_string);
+        let key = message_id_key(message_id_header);
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
         let new_uid = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
             let mut session = Self::checkout_session(&slot, &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-            let result = Self::spam_uid_blocking(&mut session, &source, uid, header.as_deref());
+            let result = Self::spam_uid_blocking(&mut session, &source, uid, key.as_deref());
             slot.checkin(session);
             result
         })
@@ -2472,18 +2463,13 @@ impl EmailProvider for ImapClient {
         if source == ImapFolder::Trash {
             return Ok(None);
         }
-        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
-        // don't occur in practice, so the check is skipped for them.
-        let header = message_id_header
-            .map(str::trim)
-            .filter(|h| !h.is_empty() && !h.contains('"'))
-            .map(str::to_string);
+        let key = message_id_key(message_id_header);
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
         let new_uid = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
             let mut session = Self::checkout_session(&slot, &creds)
                 .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
-            let result = Self::trash_uid_blocking(&mut session, &source, uid, header.as_deref());
+            let result = Self::trash_uid_blocking(&mut session, &source, uid, key.as_deref());
             slot.checkin(session);
             result
         })
@@ -2688,12 +2674,7 @@ impl EmailProvider for ImapClient {
 
         let creds = self.credentials.clone();
         let slot = Arc::clone(&self.session);
-        // Quotes inside a Message-ID would break the SEARCH syntax; such ids
-        // don't occur in practice, so we just skip UID resolution for them.
-        let header = message_id_header
-            .map(str::trim)
-            .filter(|h| !h.is_empty() && !h.contains('"'))
-            .map(str::to_string);
+        let key = message_id_key(message_id_header);
         let target_for_select = target_name.clone();
         let new_uid: Option<u32> = tokio::task::spawn_blocking(move || -> Result<Option<u32>> {
             let mut session = Self::checkout_session(&slot, &creds)
@@ -2711,9 +2692,9 @@ impl EmailProvider for ImapClient {
             // Resolve the message's UID in the target folder so the caller
             // can re-ingest it under its new id without a full folder resync.
             let mut new_uid = None;
-            if let Some(h) = header {
+            if let Some(key) = key {
                 if imap_search::select(&mut session, &target_for_select).is_ok() {
-                    if let Ok(found) = imap_search::uid_search(&mut session, &format!("HEADER Message-ID \"{h}\"")) {
+                    if let Ok(found) = imap_search::uid_search(&mut session, &key) {
                         new_uid = found.into_iter().max();
                     }
                 }
@@ -2893,6 +2874,16 @@ fn plain_expunge_is_safe(uid: u32, flagged_deleted: &[u32]) -> bool {
     flagged_deleted.iter().all(|&flagged| flagged == uid)
 }
 
+/// The search key a move checks its UID against, or `None` when the
+/// Message-ID is missing or cannot be searched for: the move then goes by UID
+/// alone, so a sender-controlled header cannot block the user's action. Pure.
+fn message_id_key(message_id_header: Option<&str>) -> Option<String> {
+    message_id_header
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .and_then(imap_search::message_id_search_key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3052,10 +3043,74 @@ mod tests {
         assert_eq!(found, Some((ImapFolder::Spam, 40)));
     }
 
+    /// A line break in the Message-ID would end the `UID SEARCH` line and run
+    /// the rest as a second command, so the value never goes out — and the
+    /// lookup says it could not finish rather than "not found".
     #[test]
     fn a_message_id_that_cannot_be_searched_is_not_a_not_found() {
-        let replies = [SELECTED, NO_HITS];
-        assert!(locate(&replies, Some("<\"quoted\"@example.com>")).is_err());
+        let replies: Vec<String> = NOT_FOUND_ANYWHERE.iter().map(|r| (*r).to_string()).collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+        let header = Some("<m@example.com>\r\nz1 EXPUNGE");
+
+        let result = ImapClient::locate_on_session(&mut session, &ImapFolder::Inbox, 7, header);
+
+        assert!(result.is_err(), "got {result:?}");
+        let written = String::from_utf8_lossy(&written.lock().unwrap()).into_owned();
+        let foreign: Vec<&str> = written
+            .split("\r\n")
+            .filter(|line| !line.is_empty() && !line.starts_with('a'))
+            .collect();
+        assert!(foreign.is_empty(), "lines the client did not tag: {foreign:?}");
+    }
+
+    #[test]
+    fn a_message_id_with_quotes_is_searched_escaped() {
+        let replies: Vec<String> = NOT_FOUND_ANYWHERE.iter().map(|r| (*r).to_string()).collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let result =
+            ImapClient::locate_on_session(&mut session, &ImapFolder::Inbox, 7, Some(r#"<"quoted"@example.com>"#));
+
+        assert!(matches!(result, Ok(None)), "got {result:?}");
+        let written = String::from_utf8_lossy(&written.lock().unwrap()).into_owned();
+        assert!(
+            written.contains(r#"UID SEARCH HEADER Message-ID "<\"quoted\"@example.com>""#),
+            "sent: {written}"
+        );
+    }
+
+    /// Trash, archive, spam and move check the UID against the Message-ID
+    /// first. One that cannot be searched for counts as unknown: the move goes
+    /// by UID alone, so a sender cannot block the user's action.
+    #[test]
+    fn a_move_checks_the_uid_only_against_a_searchable_message_id() {
+        for (header, key) in [
+            (None, None),
+            (Some("  "), None),
+            (Some("<m@example.com>\r\nz1 EXPUNGE"), None),
+            (
+                Some(" <m@example.com> "),
+                Some(r#"HEADER Message-ID "<m@example.com>""#),
+            ),
+            (
+                Some(r#"<"m"@example.com>"#),
+                Some(r#"HEADER Message-ID "<\"m\"@example.com>""#),
+            ),
+        ] {
+            assert_eq!(message_id_key(header).as_deref(), key, "{header:?}");
+        }
+    }
+
+    /// The open question behind the fix: an RFC 2047 encoded word in the
+    /// sender-controlled header decodes to a real CR LF in the stored value.
+    #[test]
+    fn a_message_id_that_decodes_to_a_line_break_has_no_search_key() {
+        let raw = "From: a@example.com\r\nMessage-ID: =?utf-8?q?<m@example.com>=0D=0Az1_EXPUNGE?=\r\n\r\nbody";
+        let (email, _) = ImapClient::parse_message(1, &fetched(raw, Some(NOW))).unwrap();
+        let stored = email.message_id.as_deref();
+
+        assert!(stored.is_some_and(|id| id.contains("\r\n")), "stored {stored:?}");
+        assert_eq!(message_id_key(stored), None);
     }
 
     #[test]
