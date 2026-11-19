@@ -210,26 +210,53 @@ pub fn split_draft_body(body: &str) -> (String, Option<String>) {
     }
 }
 
+/// Largest body that inlining `cid:` images may produce.
+pub const MAX_INLINED_BODY_BYTES: usize = 32 * 1024 * 1024;
+
 /// Replace every `cid:{content_id}` reference in `html` with `replacement`.
 ///
 /// A reference only matches when the id ends there — at a quote, paren, `>`,
 /// whitespace or the end of the text. A plain substring replace let `cid:img1`
 /// also rewrite the front of `cid:img10`, corrupting that image.
+///
+/// Each reference gets a full copy of the image, so a sender can repeat one
+/// reference until the body is gigabytes. Once inlining would take the body
+/// past [`MAX_INLINED_BODY_BYTES`], the remaining references stay links.
 pub fn replace_cid_reference(html: &str, content_id: &str, replacement: &str) -> String {
     let needle = format!("cid:{content_id}");
     let mut out = String::with_capacity(html.len());
     let mut rest = html;
+    // Length of the result if every reference left from here stays a link.
+    let mut projected = html.len();
+    let mut skipped = 0usize;
     while let Some(pos) = rest.find(&needle) {
         let after = &rest[pos + needle.len()..];
         let terminated = after
             .chars()
             .next()
             .is_none_or(|c| matches!(c, '"' | '\'' | ')' | '>') || c.is_whitespace());
+        let inlined = projected - needle.len() + replacement.len();
+        let fits = inlined <= MAX_INLINED_BODY_BYTES;
         out.push_str(&rest[..pos]);
-        out.push_str(if terminated { replacement } else { &needle });
+        if terminated && fits {
+            out.push_str(replacement);
+            projected = inlined;
+        } else {
+            out.push_str(&needle);
+            skipped += usize::from(terminated);
+        }
         rest = after;
     }
     out.push_str(rest);
+    if skipped > 0 {
+        crate::services::logger::log(
+            "debug",
+            "sync",
+            format!(
+                "{skipped} inline image reference(s) left as links: the body would pass {MAX_INLINED_BODY_BYTES} bytes"
+            ),
+        );
+    }
     out
 }
 
@@ -247,6 +274,40 @@ mod tests {
         let html = "<img src='cid:a'> url(cid:a) cid:a\n<img src=cid:a>cid:a";
         let out = super::replace_cid_reference(html, "a", "X");
         assert_eq!(out, "<img src='X'> url(X) X\n<img src=X>X");
+    }
+
+    fn data_uri_of(bytes: usize) -> String {
+        format!("data:image/png;base64,{}", "A".repeat(bytes))
+    }
+
+    /// A few KB of HTML repeating one `cid:` reference used to inline the
+    /// image once per occurrence: a body of gigabytes that SQLite refuses.
+    #[test]
+    fn many_references_to_one_image_stay_under_the_inlining_cap() {
+        let html = r#"<img src="cid:a">"#.repeat(10_000);
+        let out = super::replace_cid_reference(&html, "a", &data_uri_of(1024 * 1024));
+        assert!(out.len() <= super::MAX_INLINED_BODY_BYTES, "{} bytes", out.len());
+    }
+
+    #[test]
+    fn references_past_the_inlining_cap_stay_links() {
+        let html = r#"<img src="cid:a">"#.repeat(40);
+        let out = super::replace_cid_reference(&html, "a", &data_uri_of(1024 * 1024));
+        assert!(out.len() <= super::MAX_INLINED_BODY_BYTES, "{} bytes", out.len());
+        assert!(
+            out.starts_with(r#"<img src="data:image/png;base64,"#),
+            "the first ones still inline"
+        );
+        assert!(out.ends_with(r#"<img src="cid:a">"#), "the last ones stay links");
+    }
+
+    #[test]
+    fn distinct_images_that_fit_under_the_cap_are_all_inlined() {
+        let mut html = r#"<img src="cid:a"><img src="cid:b"><img src="cid:c">"#.to_string();
+        for cid in ["a", "b", "c"] {
+            html = super::replace_cid_reference(&html, cid, &data_uri_of(10 * 1024 * 1024));
+        }
+        assert!(!html.contains("cid:"), "every image inlined");
     }
     use super::*;
 

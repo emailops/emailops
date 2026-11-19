@@ -3816,6 +3816,33 @@ mod tests {
         );
     }
 
+    /// One small inline image referenced over and over must not grow the
+    /// stored body without bound: SQLite refused the insert and the account's
+    /// sync failed on that message every cycle.
+    #[test]
+    fn repeated_cid_references_keep_the_body_bounded() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let image = STANDARD.encode(vec![0u8; 1024 * 1024]);
+        let html = r#"<img src="cid:logo">"#.repeat(100);
+        let raw = format!(
+            "From: a@example.com\r\nMIME-Version: 1.0\r\n\
+             Content-Type: multipart/related; boundary=\"XX\"\r\n\r\n\
+             --XX\r\nContent-Type: text/html\r\n\r\n{html}\r\n\
+             --XX\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\nContent-Transfer-Encoding: base64\r\n\r\n{image}\r\n\
+             --XX--\r\n"
+        );
+        let (email, _) = ImapClient::parse_message(1, &fetched(&raw, Some(NOW))).unwrap();
+        assert!(
+            email.body.len() <= crate::util::html::MAX_INLINED_BODY_BYTES,
+            "{} bytes",
+            email.body.len()
+        );
+        assert!(
+            email.body.contains("data:image/png;base64,"),
+            "the first references still inline"
+        );
+    }
+
     #[test]
     fn address_list_respects_quoted_display_names() {
         assert_eq!(
