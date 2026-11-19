@@ -118,6 +118,13 @@ einen Hinweis mit **Rückgängig**. Ihr E-Mail-Anbieter erfährt erst davon, wen
 vorbei sind (oder früher, wenn Sie etwas anderes archivieren oder löschen oder eine andere
 Ansicht öffnen) — Rückgängig legt sie also einfach zurück.
 
+<!-- claim:feat-organize-undo-window -->
+**Einstellungen → Erscheinungsbild → Archivieren und Löschen rückgängig machen** legt diese
+Wartezeit fest: aus, 6, 10, 20 oder 30 Sekunden, standardmäßig 6. Ist sie aus, erreichen
+Archivieren und Löschen Ihren E-Mail-Anbieter sofort, ohne Rückgängig. Das Rückgängig nach dem
+Zurückstellen bleibt genauso lange verfügbar. **Senden rückgängig machen** ist eine eigene
+Einstellung.
+
 <!-- claim:feat-organize-5 -->
 Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,
 zurückgestellt oder in den Spam verschoben —, öffnet sich die nächste. **Einstellungen →

@@ -114,6 +114,12 @@ Archivar o eliminar quita las conversaciones de la lista al momento y muestra un
 (o antes, si archivas o eliminas otra cosa o abres otra vista), así que Deshacer simplemente las
 devuelve.
 
+<!-- claim:feat-organize-undo-window -->
+**Ajustes → Apariencia → Deshacer al archivar o eliminar** fija esa espera: desactivado, 6, 10, 20
+o 30 segundos, 6 por defecto. Desactivado, archivar y eliminar llegan a tu proveedor de correo al
+momento, sin Deshacer. El Deshacer que aparece tras posponer dura lo mismo. **Deshacer envío** es
+un ajuste aparte.
+
 <!-- claim:feat-organize-5 -->
 Cuando la conversación que estás leyendo sale de la lista — archivada, eliminada, pospuesta o
 movida a Spam —, se abre la siguiente. **Ajustes → Apariencia → Después de archivar o eliminar**

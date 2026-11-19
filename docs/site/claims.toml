@@ -817,6 +817,13 @@ checks = [
   { manual = 'The 6-second length and the early commit when another archive/delete starts or another view opens are covered by src/lib/pendingActions.test.ts and src/stores/emailStore tests (vitest), not by a check this harness runs.', covers = ["(or sooner, if you archive or delete something else or open another view)"] },
 ]
 
+[feat-organize-undo-window]
+checks = [
+  { app = true },
+  { manual = 'Off acting at once without Undo, and the snooze Undo lasting the same window, are covered by src/stores/emailStore.threadActions.test.ts and emailStore.snooze.test.ts (vitest), which the docs check does not run; the demo case only reads the setting.', covers = ["With it off, archiving and deleting reach your mail provider at once, without Undo.", "The Undo offered after a snooze lasts as long."] },
+  { manual = 'A statement about two controls side by side in Settings → Appearance; the app cases read both.', covers = ["Undo send is a separate setting."] },
+]
+
 [feat-organize-5]
 checks = [
   { app = true },

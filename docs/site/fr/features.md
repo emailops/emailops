@@ -121,6 +121,12 @@ Archiver ou supprimer retire aussitôt les conversations de la liste et affiche 
 secondes écoulées (ou plus tôt, si vous archivez ou supprimez autre chose ou ouvrez une autre
 vue) : Annuler se contente donc de les remettre en place.
 
+<!-- claim:feat-organize-undo-window -->
+**Paramètres → Apparence → Annuler l’archivage et la suppression** règle ce délai : désactivé, 6,
+10, 20 ou 30 secondes, 6 par défaut. Désactivé, l'archivage et la suppression parviennent aussitôt
+à votre fournisseur de messagerie, sans Annuler. L’annulation proposée après une mise en attente
+dure aussi longtemps. **Annuler l’envoi** est un réglage distinct.
+
 <!-- claim:feat-organize-5 -->
 Quand la conversation que vous lisez quitte la liste — archivée, supprimée, mise en attente ou
 déplacée dans les spams —, la suivante s'ouvre. **Paramètres → Apparence → Après l’archivage ou

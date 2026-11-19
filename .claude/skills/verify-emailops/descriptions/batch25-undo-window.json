@@ -1,0 +1,22 @@
+{
+  "rust": {},
+  "vitest": {
+    "src/lib/undoWindow.test.ts::defaults to 6 s when the preference is unset or not an offered window": "Sin preferencia guardada, o con un valor que Ajustes no ofrece, archivar y eliminar esperan 6 segundos.",
+    "src/lib/undoWindow.test.ts::reads off and every offered window": "La ventana de deshacer al archivar o eliminar admite desactivado y cada duración que ofrece Ajustes (6, 10, 20 y 30 segundos).",
+    "src/stores/undoWindowStore.test.ts::is 6 s until loaded": "Antes de leer la preferencia, archivar y eliminar usan la ventana de 6 segundos.",
+    "src/stores/undoWindowStore.test.ts::loads from SQLite, defaulting to 6 s": "La ventana de deshacer al archivar o eliminar se lee de las preferencias de SQLite; sin valor, son 6 segundos.",
+    "src/stores/undoWindowStore.test.ts::keeps the default and logs when the preference cannot be read": "Si la preferencia no se puede leer, se mantienen los 6 segundos y el error aparece en el panel de Logs.",
+    "src/stores/undoWindowStore.test.ts::saves, and keeps the old value when saving fails": "Elegir otra ventana la guarda en SQLite; si guardar falla, se mantiene la anterior.",
+    "src/lib/pendingActions.test.ts::each action waits the window it was scheduled with": "Cada acción pendiente espera la ventana con la que se lanzó, no una fija.",
+    "src/stores/emailStore.threadActions.test.ts::the window is 6 seconds by default": "Por defecto, archivar espera 6 segundos con el aviso de deshacer antes de llamar al proveedor.",
+    "src/stores/emailStore.threadActions.test.ts::a longer window from Settings holds the provider call and the Undo notice as long": "Con una ventana más larga en Ajustes, el aviso de deshacer y la llamada al proveedor esperan lo mismo.",
+    "src/stores/emailStore.threadActions.test.ts::with the window off, archive reaches the provider at once and offers no Undo": "Con la ventana desactivada, archivar llega al proveedor al momento y no aparece aviso de deshacer.",
+    "src/stores/emailStore.threadActions.test.ts::with the window off, a bulk delete that is refused in part puts those back with one error toast": "Con la ventana desactivada, si el proveedor rechaza parte de una eliminación en bloque, esas conversaciones vuelven con un solo aviso de error.",
+    "src/stores/emailStore.snooze.test.ts::the Undo lasts as long as the undo window set in Settings": "El deshacer de un pospuesto dura lo mismo que la ventana elegida en Ajustes.",
+    "src/stores/emailStore.snooze.test.ts::with the undo window off, the snooze notice offers no Undo": "Con la ventana desactivada, el aviso de pospuesto dice hasta cuándo, sin botón de deshacer.",
+    "src/components/Settings/UndoWindowSetting.test.tsx::offers off and 6 to 30 seconds, with 6 seconds as the default": "Ajustes → Apariencia ofrece desactivado, 6, 10, 20 y 30 segundos para deshacer al archivar o eliminar, con 6 por defecto.",
+    "src/components/Settings/UndoWindowSetting.test.tsx::shows the stored window": "El ajuste de deshacer al archivar o eliminar muestra la ventana guardada.",
+    "src/components/Settings/UndoWindowSetting.test.tsx::stores the choice, off included": "Elegir una ventana, incluso desactivarla, la guarda como preferencia.",
+    "src/components/Settings/UndoWindowSetting.test.tsx::shows and logs a failed save, keeping the old choice": "Si no se puede guardar, el ajuste muestra el error, lo registra en el panel de Logs y mantiene la elección anterior."
+  }
+}
