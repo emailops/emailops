@@ -8,6 +8,7 @@ const CHECKED_FILES = [
   'ai_config.rs',
   'ai_models.rs',
   'attachments.rs',
+  'backup.rs',
   'calendar.rs',
   'chat.rs',
   'classification.rs',

@@ -245,7 +245,7 @@ Betriebssystems:
 - **OAuth-Tokens und Passwörter** — der Schlüsselbund Ihres Systems, nie eine Klartextdatei. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-Um die Daten auf einem anderen Laufwerk aufzubewahren, wählen Sie **Einstellungen → Datenschutz & Sicherheit →
+Um die Daten auf einem anderen Laufwerk aufzubewahren, wählen Sie **Einstellungen → Daten & Sicherungen →
 Speicherort der Daten → Ändern…**. Für Tests oder ein zweites Profil setzen Sie stattdessen vor
 dem Start die Umgebungsvariable `EMAILOPS_DATA_DIR`. Die genauen Pfade je
 Plattform und was wo geschrieben wird, stehen unter

@@ -703,7 +703,9 @@
         "commands::security",
         "services::data_move",
         "commands::data_location",
-        "util::data_location"
+        "util::data_location",
+        "services::backup",
+        "commands::backup"
       ],
       "vitest": [
         "src/components/Settings",

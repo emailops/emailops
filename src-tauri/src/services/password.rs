@@ -79,8 +79,8 @@ pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool> {
 
 pub const MAIN_PASSWORD_KEY: &str = "security.main_password_hash";
 
-const FAILED_ATTEMPTS_KEY: &str = "security.main_password_failed_attempts";
-const LAST_FAILED_AT_KEY: &str = "security.main_password_last_failed_at";
+pub(crate) const FAILED_ATTEMPTS_KEY: &str = "security.main_password_failed_attempts";
+pub(crate) const LAST_FAILED_AT_KEY: &str = "security.main_password_last_failed_at";
 
 /// Wrong main passwords allowed before attempts start being delayed.
 const FREE_ATTEMPTS: u32 = 5;

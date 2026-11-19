@@ -33,7 +33,7 @@ const KEY_ID: &str = "openai_compatible_api_key";
 const KEY_ID_PREF: &str = "openai_compatible_api_key_id";
 /// Debug builds keep the key here instead of the keychain, like the OpenRouter
 /// key (see `AiService::use_dev_ai_keys`).
-const DEV_KEY_PREF: &str = "openai_compatible_api_key_dev";
+pub(crate) const DEV_KEY_PREF: &str = "openai_compatible_api_key_dev";
 
 /// Smallest context window a user may set: below it no chat prompt fits.
 const MIN_CONTEXT_WINDOW: u32 = 2_048;

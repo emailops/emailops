@@ -170,7 +170,7 @@ pub fn delete(db: &Database, account_id: &str, doc_id: &str, now: i64) -> Result
 // ── Folders, history and search ──────────────────────────────────────────────
 
 /// Refresh a document's entry in the search index from its current content.
-fn reindex(db: &Database, doc_id: &str) -> Result<()> {
+pub(crate) fn reindex(db: &Database, doc_id: &str) -> Result<()> {
     let doc = db
         .get_shared_doc(doc_id)?
         .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;

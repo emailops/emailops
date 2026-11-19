@@ -1432,6 +1432,18 @@ checks = [
   { app = true },
 ]
 
+[priv-where-data-8]
+checks = [
+  { app = true },
+  { tests = ['services::backup::schedule::tests::is_due_follows_the_frequency_the_hour_and_the_newest_copy', 'services::backup::tests::saving_fewer_copies_removes_the_oldest_full_copies_now', 'services::backup::tests::delete_full_removes_every_full_copy_and_leaves_a_copy_in_progress'], covers = ["Turn them off, make them weekly, keep up to three or delete them"] },
+]
+
+[priv-where-data-9]
+checks = [
+  { app = true },
+  { tests = ['services::backup::local::tests::every_backed_up_table_reaches_the_copy', 'services::backup::local::tests::the_copy_holds_nothing_from_the_tables_left_out', 'services::backup::local::tests::secret_preferences_and_detector_scores_stay_out_of_the_copy'], covers = ["small copies of what exists only on this computer: settings, accounts without their passwords, rules, memory, tasks, lenses and chats.", "Mail is not in them."] },
+]
+
 [priv-where-data-5]
 checks = [
   { app = true },

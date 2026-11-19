@@ -3,7 +3,7 @@ title: 'Privacidad y seguridad'
 description: 'Dónde se guarda tu correo, qué sale de tu máquina y los controles que te protegen del propio correo.'
 weight: 45
 nav:
-  where-your-data-is-stored: settings/privacy
+  where-your-data-is-stored: settings/data
   protection-from-the-mail-itself: settings/privacy
   locking-the-app: settings/privacy
 ---
@@ -28,13 +28,20 @@ Todo reside en el directorio de datos de aplicación de tu sistema:
 Dentro:
 
 - **Una base de datos SQLite** — mensajes, hilos, contactos, eventos de calendario, etiquetas
-  de clasificación, embeddings de búsqueda y la memoria de la IA. Es la única copia que
-  guarda EmailOps. <!-- claim:priv-where-data-3 -->
+  de clasificación, embeddings de búsqueda y la memoria de la IA. <!-- claim:priv-where-data-3 -->
 - **Una carpeta `models/`** — los modelos de IA que hayas descargado. <!-- claim:priv-where-data-4 -->
+- **Una carpeta `backups/`** — copias completas de la base de datos que EmailOps hace mientras está
+  abierta: por defecto una al día a las 03:00, conservando solo la más reciente. Time Machine se
+  salta esta carpeta. Desactívalas, hazlas semanales, conserva hasta tres o bórralas en **Ajustes →
+  Datos y copias de seguridad → Copias de seguridad**. <!-- claim:priv-where-data-8 -->
+- **Una carpeta `local-backups/`** — copias pequeñas de lo que solo existe en este ordenador:
+  ajustes, cuentas sin sus contraseñas, reglas, memoria, tareas, lentes y chats. El correo no va en
+  ellas. Por defecto una al día, conservando las siete más recientes; restaura una desde la misma
+  sección. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 Para guardarlo en otro sitio — un disco externo o un volumen cifrado — usa **Ajustes →
-Privacidad y seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
+Datos y copias de seguridad → Ubicación de los datos**, o el enlace al pie del primer paso de la bienvenida.
 EmailOps copia todo allí, se reinicia y deja la carpeta anterior para que la borres tú. Si ese
 disco no está conectado al arrancar, EmailOps lo avisa y se cierra en lugar de abrir un buzón
 vacío. Un modelo que añadiste con **Usar archivo existente…** no se copia: la carpeta nueva

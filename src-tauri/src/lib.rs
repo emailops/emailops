@@ -413,6 +413,10 @@ macro_rules! app_commands {
             commands::data_location::dismiss_previous_data_location,
             commands::data_location::pick_data_folder,
             commands::data_location::move_data_location,
+            commands::backup::get_backups,
+            commands::backup::set_backup_settings,
+            commands::backup::delete_full_backups,
+            commands::backup::restore_local_backup,
             commands::system::detect_ai_capability,
             commands::system::is_rosetta_translated,
             commands::system::get_gpu_runtime_notice,
@@ -445,19 +449,26 @@ macro_rules! app_commands {
     };
 }
 
-/// Copies of the database kept in `backups/`.
+/// Show what a backup check did in the Logs panel. A copy that was not due
+/// writes nothing.
 #[cfg(feature = "desktop")]
-const STARTUP_BACKUPS_KEPT: usize = 3;
-
-/// Show the outcome of the startup backup in the Logs panel.
-#[cfg(feature = "desktop")]
-fn report_startup_backup(outcome: models::error::Result<db::BackupPlan>) {
+fn report_backups(checked: models::error::Result<services::backup::Checked>) {
+    use services::backup::Ran;
     use services::logger::log;
     const GIB: u64 = 1024 * 1024 * 1024;
-    match outcome {
-        Ok(db::BackupPlan::Copy) => log("success", "system", "Database backup written"),
-        Ok(db::BackupPlan::Recent) => {}
-        Ok(db::BackupPlan::NoRoom { needed, free }) => log(
+    let checked = match checked {
+        Ok(checked) => checked,
+        Err(e) => return log("error", "system", format!("Backup check failed: {e}")),
+    };
+    match checked.local {
+        Ok(Ran::Written) => log("success", "system", "Local data backup written"),
+        Ok(Ran::NotDue | Ran::NoRoom { .. }) => {}
+        Err(e) => log("error", "system", format!("Local data backup failed: {e}")),
+    }
+    match checked.full {
+        Ok(Ran::Written) => log("success", "system", "Database backup written"),
+        Ok(Ran::NotDue) => {}
+        Ok(Ran::NoRoom { needed, free }) => log(
             "warn",
             "system",
             format!(
@@ -701,17 +712,19 @@ pub fn run() {
 
             let db = Arc::new(db);
 
-            // Back up in the background, once the window can show the result
-            // in the Logs panel.
+            // Back up in the background while the app is open: a first check
+            // once the window can show the result in the Logs panel, then one
+            // every few minutes, so a copy due at the chosen hour is made even
+            // by someone who never quits the app.
             {
                 let db_clone = db.clone();
-                let backup_dir = app_data_dir.join("backups");
+                let backup_data_dir = app_data_dir.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(30));
-                    report_startup_backup(db_clone.startup_backup(
-                        &backup_dir,
-                        STARTUP_BACKUPS_KEPT,
-                        services::clock::now_secs(),
+                    report_backups(services::backup::run_due(
+                        &db_clone,
+                        &backup_data_dir,
+                        &chrono::Local::now(),
                     ));
                     // Files a composer stored for a draft that was never saved.
                     match services::emails::sweep_abandoned_draft_files(&db_clone, services::clock::now_secs()) {
@@ -726,6 +739,14 @@ pub fn run() {
                             "system",
                             format!("Could not remove attached files no draft kept: {e}"),
                         ),
+                    }
+                    loop {
+                        std::thread::sleep(services::backup::CHECK_EVERY);
+                        report_backups(services::backup::run_due(
+                            &db_clone,
+                            &backup_data_dir,
+                            &chrono::Local::now(),
+                        ));
                     }
                 });
             }

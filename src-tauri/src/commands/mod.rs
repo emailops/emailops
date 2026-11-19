@@ -4,6 +4,7 @@ pub mod accounts;
 pub mod ai_config;
 pub mod ai_models;
 pub mod attachments;
+pub mod backup;
 pub mod calendar;
 pub mod chat;
 pub mod classification;
