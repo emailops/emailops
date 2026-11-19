@@ -33,6 +33,13 @@ vacío para enviar solo con la dirección. Las cuentas de Gmail empiezan con el 
 configuración «Enviar como» de Gmail, y las IMAP con el nombre visible que indicaste al
 conectarlas. El correo enviado por Outlook lleva el nombre que Microsoft tiene para el buzón.
 
+<!-- claim:feat-accounts-default-sender -->
+**Ajustes → Apariencia → Enviar mensajes nuevos desde** elige la cuenta con la que empieza un
+mensaje nuevo, sea cual sea la cuenta que muestra la barra lateral; con **Cuenta de la vista
+seleccionada**, un mensaje nuevo empieza desde la cuenta que estás viendo. Las respuestas y los
+reenvíos mantienen la cuenta de su mensaje, y los borradores la cuenta con la que se guardaron.
+Cada lista **De** pone primero la cuenta desde la que más correo envías, contado en tu equipo.
+
 ## Bandeja unificada {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
@@ -54,6 +61,14 @@ destinatarios las vea, y un mensaje puede ir solo en Cc o en Cco.
 Lo que escribes se guarda como borrador mientras escribes, con los archivos adjuntos, así que
 cerrar el compositor o la aplicación lo conserva; un reenvío también se guarda. Un mensaje
 admite hasta 32 archivos de 25 MB como máximo cada uno.
+
+<!-- claim:compose-drafts-imap-folder -->
+En una cuenta IMAP, los borradores que otro programa de correo guardó en la carpeta de
+borradores de la cuenta también aparecen en **Borradores**, con sus destinatarios, asunto,
+texto o formato, archivos adjuntos y la conversación a la que responden, y siguen los cambios
+que se les hagan allí. EmailOps solo lee esa carpeta: un borrador que editas aquí guarda tus
+cambios en este ordenador, y uno que eliminas o envías aquí sigue en la carpeta para tus otros
+programas de correo.
 
 ## Reenviar
 
@@ -98,6 +113,12 @@ Archivar o eliminar quita las conversaciones de la lista al momento y muestra un
 **Deshacer** durante 6 segundos. Tu proveedor de correo solo se entera cuando pasan esos segundos
 (o antes, si archivas o eliminas otra cosa o abres otra vista), así que Deshacer simplemente las
 devuelve.
+
+<!-- claim:feat-organize-undo-window -->
+**Ajustes → Apariencia → Deshacer al archivar o eliminar** fija esa espera: desactivado, 6, 10, 20
+o 30 segundos, 6 por defecto. Desactivado, archivar y eliminar llegan a tu proveedor de correo al
+momento, sin Deshacer. El Deshacer que aparece tras posponer dura lo mismo. **Deshacer envío** es
+un ajuste aparte.
 
 <!-- claim:feat-organize-5 -->
 Cuando la conversación que estás leyendo sale de la lista — archivada, eliminada, pospuesta o

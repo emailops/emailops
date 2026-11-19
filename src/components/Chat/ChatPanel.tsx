@@ -9,13 +9,16 @@ import {
   isConversationThreadBound,
   planChatContextOffer,
 } from '@/lib/chatContext';
+import { draftForTurn, planDraftOffer } from '@/lib/chatDraft';
 import { errorText } from '@/lib/errors';
 import { useChatStore } from '@/stores/chatStore';
+import { useDraftContextStore } from '@/stores/draftContextStore';
 import { useLogStore } from '@/stores/logStore';
 import { useChatViewContext } from '@/stores/viewContextStore';
 import { ChatAccountPicker } from './ChatAccountPicker';
 import { ChatInput } from './ChatInput';
 import { ChatStarters } from './ChatStarters';
+import { DraftContextChip } from './DraftContextChip';
 import { MessageList } from './MessageList';
 import { OtherAccountContextNotice } from './OtherAccountContextNotice';
 import { ThreadContextChip } from './ThreadContextChip';
@@ -73,6 +76,7 @@ export function ChatPanel({
     categoriesLoaded,
     inputPrefill,
     prefillInput,
+    researchMode,
   } = useChatStore();
   const addLog = useLogStore((s) => s.addLog);
   // What the user has on screen, sent with each turn so "esto" / "aquí"
@@ -98,6 +102,44 @@ export function ChatPanel({
   // grounding the rejected answer was produced with — retrying a thread-bound
   // answer against the whole mailbox would "fix" it by changing the question.
   const turnContext = chatTurnContext(offeredContext, contextActive);
+
+  // The draft on screen (a compose tab or an inline reply), offered as
+  // read-only context. Switched off per composer; a new composer offers it again.
+  const draftHandle = useDraftContextStore((s) => s.active);
+  const draftSubject = useDraftContextStore((s) => s.subject);
+  const draftHasText = useDraftContextStore((s) => s.hasUserText);
+  const [disabledDrafts, setDisabledDrafts] = useState<ReadonlySet<string>>(() => new Set());
+  const draftOffer = planDraftOffer({
+    kind: draftHandle?.kind ?? null,
+    hasUserText: draftHasText,
+    disabled: draftHandle !== null && disabledDrafts.has(draftHandle.instanceId),
+    sameAccount: draftHandle !== null && (accountId === null || draftHandle.accountId() === accountId),
+  });
+  // An active reply draft brings its own thread: the open one is not sent apart.
+  const threadGrounding = draftOffer.carriesThread ? null : turnContext;
+  // Read when the turn is sent, so it has what the user typed last. A composer
+  // open with its chip off still counts: the backend then refuses to write a
+  // draft that would replace it.
+  const draftTurn = () => ({
+    draft:
+      draftHandle && draftOffer.active
+        ? draftForTurn({
+            snapshot: draftHandle.snapshot(),
+            accountId: draftHandle.accountId(),
+            chatAccountId: accountId,
+            disabled: false,
+            research: researchMode,
+          })
+        : null,
+    composerOpen: draftHandle !== null,
+  });
+  const toggleDraft = (instanceId: string, on: boolean) =>
+    setDisabledDrafts((prev) => {
+      const next = new Set(prev);
+      if (on) next.delete(instanceId);
+      else next.add(instanceId);
+      return next;
+    });
 
   useEffect(() => {
     if (!categoriesLoaded) void loadCategoriesPref();
@@ -143,7 +185,8 @@ export function ChatPanel({
     // The thread's OWN account travels with it — in unified mode it differs
     // from the chat's account, and grounding looked the thread up under the
     // chat's account and found nothing.
-    const grounding = threadId ? { threadId, accountId } : turnContext;
+    const grounding = threadId ? { threadId, accountId } : threadGrounding;
+    const { draft, composerOpen } = draftTurn();
     await sendMessage(
       content,
       grounding?.threadId ?? null,
@@ -151,6 +194,8 @@ export function ChatPanel({
       viewContext,
       accountId,
       grounding?.attachmentId ?? null,
+      draft,
+      composerOpen,
     );
   };
 
@@ -230,7 +275,7 @@ export function ChatPanel({
             <p className="text-center text-sm leading-relaxed text-gray-500">{t('chat:panel.emptyHint')}</p>
             <ChatStarters
               accountId={accountId}
-              openContext={contextActive ? (offeredContext?.attachmentId ? 'document' : 'thread') : undefined}
+              openContext={threadGrounding ? (threadGrounding.attachmentId ? 'document' : 'thread') : undefined}
               compact
               disabled={isSending || streamingMessageId !== null}
               onSend={(prompt, threadId) => void handleSend(prompt, threadId)}
@@ -250,16 +295,19 @@ export function ChatPanel({
             accountId={accountId}
             onOpenEmail={onNavigateToInbox}
             onShowEmailsInList={onShowEmailsInList}
-            onRejectMessage={(messageId, reason) =>
+            onRejectMessage={(messageId, reason) => {
+              const { draft, composerOpen } = draftTurn();
               void retryWithCorrection(
                 messageId,
                 reason,
-                turnContext?.threadId ?? null,
-                turnContext?.accountId ?? null,
+                threadGrounding?.threadId ?? null,
+                threadGrounding?.accountId ?? null,
                 viewContext,
-                turnContext?.attachmentId ?? null,
-              )
-            }
+                threadGrounding?.attachmentId ?? null,
+                draft,
+                composerOpen,
+              );
+            }}
             rejectedMessageIds={rejectedMessageIds}
             isSending={isSending}
             onOpenAiSettings={onOpenAiSettings}
@@ -278,14 +326,27 @@ export function ChatPanel({
         disabled={isSending || streamingMessageId !== null}
         placeholder={streamingMessageId ? t('chat:input.waitingReply') : t('chat:input.placeholderEmails')}
         contextSlot={
-          contextOffer.kind === 'offered' ? (
-            <ThreadContextChip
-              context={contextOffer.context}
-              active={contextActive}
-              onToggle={(next) => setDismissedContextKey(next ? null : contextKey)}
-            />
-          ) : contextOffer.kind === 'otherAccount' ? (
-            <OtherAccountContextNotice context={contextOffer.context} onSwitchAccount={onAccountChange} />
+          draftOffer.shown || contextOffer.kind !== 'none' ? (
+            <>
+              {draftHandle && draftOffer.shown && (
+                <DraftContextChip
+                  subject={draftSubject}
+                  scope={draftOffer.scope}
+                  active={draftOffer.active}
+                  research={researchMode}
+                  onToggle={(on) => toggleDraft(draftHandle.instanceId, on)}
+                />
+              )}
+              {draftOffer.carriesThread ? null : contextOffer.kind === 'offered' ? (
+                <ThreadContextChip
+                  context={contextOffer.context}
+                  active={contextActive}
+                  onToggle={(next) => setDismissedContextKey(next ? null : contextKey)}
+                />
+              ) : contextOffer.kind === 'otherAccount' ? (
+                <OtherAccountContextNotice context={contextOffer.context} onSwitchAccount={onAccountChange} />
+              ) : null}
+            </>
           ) : undefined
         }
       />

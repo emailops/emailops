@@ -4,8 +4,8 @@ import { I18nextProvider } from 'react-i18next';
 
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary/ErrorBoundary';
-import { FALLBACK_LANGUAGE, i18n, initI18n, isSupportedLanguage } from './i18n';
-import { getPref, getSystemLocale } from './lib/api';
+import { FALLBACK_LANGUAGE, i18n, initI18n, isSupportedLanguage, setOsRegion } from './i18n';
+import { getPref, getSystemLocale, getSystemRegion } from './lib/api';
 import { useThemeStore } from './stores/themeStore';
 import './index.css';
 import { installFileDropGuard } from '@/hooks/useFileDrop';
@@ -34,11 +34,26 @@ async function resolveInitialLanguage(): Promise<string> {
   return FALLBACK_LANGUAGE;
 }
 
+// Dates are written in the UI language plus the OS region (an English UI on a
+// US system writes 08/12/2026, on a UK one 12/08/2026). Without it they follow
+// the UI language alone.
+async function loadOsRegion(): Promise<void> {
+  try {
+    setOsRegion(await getSystemRegion());
+  } catch (err) {
+    console.error('[i18n] failed to read OS region', err);
+  }
+}
+
 async function bootstrap() {
   // Language and theme are both read from SQLite before the first frame, so
   // the app never flashes English or the light theme on the way in. The theme
   // store never throws: a failed read logs and falls back to "system".
-  const [initialLanguage] = await Promise.all([resolveInitialLanguage(), useThemeStore.getState().init()]);
+  const [initialLanguage] = await Promise.all([
+    resolveInitialLanguage(),
+    useThemeStore.getState().init(),
+    loadOsRegion(),
+  ]);
   await initI18n(initialLanguage);
 
   const rootEl = document.getElementById('root');

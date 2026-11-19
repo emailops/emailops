@@ -16,6 +16,7 @@ import { AutoAdvanceSetting } from './AutoAdvanceSetting';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
+import { DefaultSenderSetting } from './DefaultSenderSetting';
 import { DocumentsSettings } from './DocumentsSettings';
 import { JunkSettings } from './JunkSettings';
 import { KeyboardShortcutsSetting } from './KeyboardShortcutsSetting';
@@ -29,6 +30,7 @@ import { SkillsSettings } from './SkillsSettings';
 import { TasksSettings } from './TasksSettings';
 import { ThemeSetting } from './ThemeSetting';
 import { UndoSendSetting } from './UndoSendSetting';
+import { UndoWindowSetting } from './UndoWindowSetting';
 
 export type SettingsTab =
   | 'appearance'
@@ -356,7 +358,9 @@ function AppearancePanel({
         </div>
       </section>
       <SidebarDensitySetting value={sidebarDensity} onChange={onChangeSidebarDensity} />
+      <DefaultSenderSetting />
       <UndoSendSetting />
+      <UndoWindowSetting />
       <AutoAdvanceSetting />
       <KeyboardShortcutsSetting />
     </div>

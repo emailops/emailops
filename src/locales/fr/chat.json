@@ -304,6 +304,14 @@
       "hintDocument": "Les réponses s'appuient sur le texte de ce document. Retirez-le pour interroger votre boîte.",
       "restoreDocument": "Utiliser le document ouvert comme contexte"
     },
+    "draft": {
+      "threadAndReply": "fil + votre réponse",
+      "reply": "votre réponse",
+      "newEmail": "nouvel e-mail",
+      "hint": "Les réponses s'appuient sur le brouillon que vous rédigez. Le chat ne le modifie jamais : copiez-y ce que vous voulez.",
+      "restore": "Utiliser le brouillon comme contexte",
+      "research": "Le mode recherche lit votre boîte : le chat ne voit pas ce brouillon."
+    },
     "newChat": "Nouveau chat"
   },
   "conversations": {

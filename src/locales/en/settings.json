@@ -63,6 +63,10 @@
     "undoSendHelp": "After you press Send, the message waits this long so you can take it back. EmailOps must stay open until it goes out.",
     "undoSendOff": "Off",
     "undoSendSeconds": "{{count}} seconds",
+    "undoArchive": "Undo archive and delete",
+    "undoArchiveHelp": "After you archive or delete, EmailOps waits this long before telling your mail server, so you can take it back. The Undo after a snooze lasts as long. Off acts at once, without Undo.",
+    "undoArchiveOff": "Off",
+    "undoArchiveSeconds": "{{count}} seconds",
     "keyboardShortcuts": "Keyboard shortcuts",
     "keyboardShortcutsHelp": "Navigate, act on conversations and compose from the keyboard. Press ? to see every shortcut.",
     "keyboardShortcutsShowList": "Show the list",
@@ -70,7 +74,10 @@
     "afterLeaveHelp": "When the open conversation leaves the list (archive, delete, snooze, block or junk), what to show next. Marking as unread always goes back to the list.",
     "afterLeaveNext": "Open the next conversation",
     "afterLeavePrevious": "Open the previous conversation",
-    "afterLeaveList": "Go back to the list"
+    "afterLeaveList": "Go back to the list",
+    "defaultSender": "Send new messages from",
+    "defaultSenderHelp": "The account a new message starts from. Replies, forwards and drafts keep their own account.",
+    "defaultSenderView": "Account of the selected view"
   },
   "dialog": {
     "closeTitle": "Close settings",

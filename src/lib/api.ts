@@ -6,6 +6,7 @@ import type {
   Account,
   AccountColor,
   AccountDashboard,
+  AccountSentCount,
   AccountSettings,
   AccountSignature,
   AiConfig,
@@ -25,6 +26,7 @@ import type {
   CalendarInvite,
   CatalogModel,
   ChatConversation,
+  ChatDraftContext,
   ChatMessage,
   ChatStarter,
   ClassificationConfig,
@@ -211,6 +213,11 @@ export async function reauthenticateAccount(accountId: string): Promise<void> {
 
 export async function reorderAccounts(accountIds: string[]): Promise<void> {
   return invoke('reorder_accounts', { accountIds });
+}
+
+/** Sent mail stored per account; Compose orders its From list by it. */
+export async function getSentCounts(): Promise<AccountSentCount[]> {
+  return invoke('get_sent_counts');
 }
 
 export async function setAccountEnabled(accountId: string, enabled: boolean): Promise<void> {
@@ -1538,6 +1545,13 @@ export async function getSystemLocale(): Promise<string> {
   return invoke('get_system_locale');
 }
 
+// Returns the region of the OS locale ("US", "GB", "419"), or null when it
+// names none. main.tsx reads it once at startup; dates pair it with the UI
+// language (`formattingLocale` in lib/intl.ts).
+export async function getSystemRegion(): Promise<string | null> {
+  return invoke('get_system_region');
+}
+
 // Host capability probe — used by the onboarding wizard to recommend "Use AI"
 // or "Plain email client". Keyed on RAM rather than on being a Mac, so a
 // well-specced Linux or Windows machine is recommended AI too.
@@ -1807,6 +1821,18 @@ export async function sendChatMessage(
    * the thread, for this turn only.
    */
   contextAttachmentId?: string | null,
+  /**
+   * The draft the user is writing in a compose tab or an inline reply, as
+   * read-only context for this turn: subject, To, Cc and their own text. The
+   * backend never cuts it, never saves it with the message and never logs it.
+   */
+  contextDraft?: ChatDraftContext | null,
+  /**
+   * A composer is open, whether or not its draft is sent (the chip may be
+   * off): the backend then refuses `generate_email_draft`, which would replace
+   * that draft's body.
+   */
+  composerOpen = false,
 ): Promise<SendChatResponse> {
   return invoke('send_chat_message', {
     conversationId,
@@ -1819,6 +1845,8 @@ export async function sendChatMessage(
     research,
     researchEstimateId: researchEstimateId ?? null,
     contextAttachmentId: contextAttachmentId ?? null,
+    contextDraft: contextDraft ?? null,
+    composerOpen,
   });
 }
 

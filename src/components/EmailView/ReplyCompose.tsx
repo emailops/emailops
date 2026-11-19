@@ -11,6 +11,7 @@ import { useComposerSignature } from '@/hooks/useComposerSignature';
 import { useDraftFiles } from '@/hooks/useDraftFiles';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useFormatters } from '@/hooks/useFormatters';
+import { useSenderOptions } from '@/hooks/useSenderOptions';
 import type { DraftSource, EmailAttachment, RecipientSuggestion } from '@/lib/api';
 import * as api from '@/lib/api';
 import {
@@ -29,6 +30,7 @@ import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
 import { hasSignature, insertSignature, replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
+import { useDraftContextSource } from '@/stores/draftContextStore';
 import { useLogStore } from '@/stores/logStore';
 import { useTranslationStore } from '@/stores/translationStore';
 import type { Account, Draft, Email } from '@/types';
@@ -234,6 +236,7 @@ export function ReplyCompose({
   const { t } = useTranslation(['compose', 'common']);
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(defaultAccountId);
+  const senderOptions = useSenderOptions(accounts);
   // Editor holds HTML. AI drafts and the initial empty state are plain text;
   // we wrap them in <p>...</p> so Tiptap renders them as one paragraph each.
   const [bodyHtml, setBodyHtml] = useState<string>(() =>
@@ -290,6 +293,17 @@ export function ReplyCompose({
 
   const [toRecipients, setToRecipients] = useState<string[]>(() => restoredDraft?.toAddresses ?? initialTo);
   const [ccRecipients, setCcRecipients] = useState<string[]>(() => restoredDraft?.ccAddresses ?? []);
+  // The chat panel reads this reply as the draft on screen. A forward never:
+  // its body carries someone else's message.
+  useDraftContextSource(mode !== 'forward', {
+    kind: mode === 'reply-all' ? 'replyAll' : 'reply',
+    accountId: email.accountId,
+    subject: restoredDraft?.subject ?? replySubject(email.subject),
+    to: toRecipients,
+    cc: ccRecipients,
+    bodyHtml,
+    replyToEmailId: email.id,
+  });
   const [showCc, setShowCc] = useState(() => (restoredDraft?.ccAddresses.length ?? 0) > 0);
   const [bccRecipients, setBccRecipients] = useState<string[]>(() => restoredDraft?.bccAddresses ?? []);
   const [showBcc, setShowBcc] = useState(() => (restoredDraft?.bccAddresses?.length ?? 0) > 0);
@@ -734,7 +748,7 @@ export function ReplyCompose({
           <Select
             value={fromAccountId}
             onChange={setFromAccountId}
-            options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
+            options={senderOptions}
             ariaLabel={t('compose:from')}
             fullWidth
           />

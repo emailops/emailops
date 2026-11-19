@@ -34,6 +34,14 @@ aus der Gmail-Einstellung „Senden als“, IMAP-Konten den Anzeigenamen, den Si
 angegeben haben. Über Outlook gesendete E-Mails tragen den Namen, den Microsoft für das
 Postfach hinterlegt hat.
 
+<!-- claim:feat-accounts-default-sender -->
+**Einstellungen → Erscheinungsbild → Neue Nachrichten senden von** legt fest, mit welchem Konto eine
+neue Nachricht beginnt, gleich welches Konto die Seitenleiste zeigt; mit **Konto der
+ausgewählten Ansicht** beginnt sie mit dem Konto, das Sie gerade ansehen. Antworten und
+Weiterleitungen behalten das Konto ihrer Nachricht, Entwürfe das Konto, unter dem sie
+gespeichert wurden. Jede **Von**-Liste zeigt zuerst das Konto, von dem Sie am meisten senden,
+gezählt auf Ihrem Computer.
+
 ## Vereinter Posteingang {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
@@ -56,6 +64,14 @@ gehen.
 Was du schreibst, wird beim Tippen als Entwurf gespeichert, Anhänge eingeschlossen: Schließt du
 das Verfassen-Fenster oder die App, bleibt es erhalten, auch bei einer Weiterleitung. Eine
 Nachricht fasst bis zu 32 Dateien mit je höchstens 25 MB.
+
+<!-- claim:compose-drafts-imap-folder -->
+Bei einem IMAP-Konto erscheinen Entwürfe, die ein anderes Mailprogramm im Entwürfe-Ordner des
+Kontos gespeichert hat, ebenfalls unter **Entwürfe**, mit Empfängern, Betreff, Text oder
+Formatierung, Anhängen und der Unterhaltung, auf die sie antworten, und sie übernehmen die
+Änderungen, die dort an ihnen vorgenommen werden. EmailOps liest diesen Ordner nur: Ein
+Entwurf, den du hier bearbeitest, behält deine Änderungen auf diesem Computer, und einer, den
+du hier löschst oder sendest, bleibt für deine anderen Mailprogramme im Ordner.
 
 ## Weiterleiten
 
@@ -101,6 +117,13 @@ Archivieren oder Löschen nimmt die Konversationen sofort aus der Liste und zeig
 einen Hinweis mit **Rückgängig**. Ihr E-Mail-Anbieter erfährt erst davon, wenn diese Sekunden
 vorbei sind (oder früher, wenn Sie etwas anderes archivieren oder löschen oder eine andere
 Ansicht öffnen) — Rückgängig legt sie also einfach zurück.
+
+<!-- claim:feat-organize-undo-window -->
+**Einstellungen → Erscheinungsbild → Archivieren und Löschen rückgängig machen** legt diese
+Wartezeit fest: aus, 6, 10, 20 oder 30 Sekunden, standardmäßig 6. Ist sie aus, erreichen
+Archivieren und Löschen Ihren E-Mail-Anbieter sofort, ohne Rückgängig. Das Rückgängig nach dem
+Zurückstellen bleibt genauso lange verfügbar. **Senden rückgängig machen** ist eine eigene
+Einstellung.
 
 <!-- claim:feat-organize-5 -->
 Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,

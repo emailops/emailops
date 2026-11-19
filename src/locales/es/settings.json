@@ -63,6 +63,10 @@
     "undoSendHelp": "Tras pulsar Enviar, el mensaje espera este tiempo para que puedas recuperarlo. EmailOps debe seguir abierto hasta que salga.",
     "undoSendOff": "Desactivado",
     "undoSendSeconds": "{{count}} segundos",
+    "undoArchive": "Deshacer al archivar o eliminar",
+    "undoArchiveHelp": "Tras archivar o eliminar, EmailOps espera este tiempo antes de avisar a tu servidor de correo, para que puedas deshacerlo. El Deshacer tras posponer dura lo mismo. Desactivado actúa al momento, sin Deshacer.",
+    "undoArchiveOff": "Desactivado",
+    "undoArchiveSeconds": "{{count}} segundos",
     "keyboardShortcuts": "Atajos de teclado",
     "keyboardShortcutsHelp": "Navega, actúa sobre las conversaciones y redacta desde el teclado. Pulsa ? para ver todos los atajos.",
     "keyboardShortcutsShowList": "Ver la lista",
@@ -70,7 +74,10 @@
     "afterLeaveHelp": "Qué mostrar cuando la conversación abierta sale de la lista (archivar, eliminar, posponer, bloquear o correo no deseado). Marcar como no leído siempre vuelve a la lista.",
     "afterLeaveNext": "Abrir la conversación siguiente",
     "afterLeavePrevious": "Abrir la conversación anterior",
-    "afterLeaveList": "Volver a la lista"
+    "afterLeaveList": "Volver a la lista",
+    "defaultSender": "Enviar mensajes nuevos desde",
+    "defaultSenderHelp": "La cuenta con la que empieza un mensaje nuevo. Las respuestas, los reenvíos y los borradores mantienen su propia cuenta.",
+    "defaultSenderView": "Cuenta de la vista seleccionada"
   },
   "dialog": {
     "closeTitle": "Cerrar ajustes",

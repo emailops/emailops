@@ -105,6 +105,29 @@ export function formatDateTime(
   return new Intl.DateTimeFormat(locale, options).format(new Date(unixSeconds * 1000));
 }
 
+/**
+ * The locale dates are written in: the UI language plus the OS region, so an
+ * English UI writes `08/12/2026` on a US system and `12/08/2026` on a UK or
+ * Spanish one. Without a region it is the UI language alone (`en` → US order).
+ */
+export function formattingLocale(language: string, region: string | null): string {
+  return region ? `${language}-${region}` : language;
+}
+
+/** The email list's date column: `HH:MM` (24h) for today's mail, otherwise the
+ *  locale's numeric date with a two-digit day and month so the rows line up
+ *  (`08/12/2026` in en-US, `12/08/2026` in en-GB, `12.08.2026` in de). */
+export function formatReceptionTime(unixSeconds: number, locale: string, nowMs: number): string {
+  const d = new Date(unixSeconds * 1000);
+  const now = new Date(nowMs);
+  const isToday =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (isToday) {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+}
+
 /** `DD/MM/YYYY HH:mm` in local time — fixed, whatever the UI locale, for
  *  tables where every row must line up (Lens run history). */
 export function formatDayMonthYearTime(unixSeconds: number | null | undefined): string {

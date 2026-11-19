@@ -538,6 +538,12 @@ checks = [
   { manual = "The Sender name field in account settings, and Outlook using Microsoft's own name, are not exercised." },
 ]
 
+[feat-accounts-default-sender]
+checks = [
+  { tests = ['db::accounts::sent_count_tests::sent_counts_count_each_accounts_stored_sent_mail_and_skip_deleted_rows'], covers = ["counted on your computer"] },
+  { manual = 'The setting, the new-message account and the From order are covered by src/components/Settings/DefaultSenderSetting.test.tsx, src/lib/composeSender.test.ts, src/hooks/useSenderOptions.test.tsx and src/components/ComposeModal.senders.test.tsx (vitest); no docs-check case drives them in the app yet.' },
+]
+
 [feat-unified-inbox-1]
 checks = [
   { app = true },
@@ -554,6 +560,14 @@ checks = [
 checks = [
   { tests = ['services::emails::draft_files::tests::a_file_attached_in_a_composer_is_kept_with_the_draft', 'services::emails::draft_files::tests::an_empty_or_oversized_file_is_refused'], covers = ["attached files included", "at most 25 MB each"] },
   { manual = 'The composer side (a reply or forward saved with its files, a forward kept as a draft, the 32-file limit) is covered by src/components/EmailView/ReplyCompose.files.test.tsx and src/lib/attachmentIntake.test.ts (vitest).' },
+]
+
+[compose-drafts-imap-folder]
+checks = [
+  { tests = ['services::emails::sync::extra_mailbox_window_tests::the_sync_pulls_the_drafts_folder_of_an_imap_account', 'services::emails::compose::tests::an_imap_draft_saved_by_another_client_is_pulled_without_writing_to_the_server', 'sync::imap::tests::the_drafts_listing_reads_the_special_use_folder_and_changes_nothing', 'sync::folder_plan::tests::the_special_use_drafts_folder_wins_over_a_folder_named_drafts', 'sync::imap::tests::a_plain_text_draft_reopens_with_its_recipients_subject_and_text', 'sync::imap::tests::an_html_draft_keeps_its_html_and_its_text', 'sync::imap::tests::a_reply_draft_keeps_the_message_it_answers', 'sync::imap::tests::a_draft_keeps_its_attachments_with_their_bytes', 'services::emails::draft_files::tests::an_imap_draft_keeps_the_attachment_its_message_carried'], covers = ["On an IMAP account, drafts another mail client saved in the account's Drafts folder appear in **Drafts** too", "with their recipients, subject, text or formatting, attached files and the conversation they answer"] },
+  { tests = ['services::emails::compose::tests::an_imap_draft_saved_again_elsewhere_is_updated_in_place', 'services::emails::compose::tests::an_imap_draft_removed_from_the_server_goes_unless_it_was_edited_here', 'services::emails::compose::tests::a_renumbered_imap_drafts_folder_leaves_no_duplicate_and_loses_no_edit'], covers = ["they follow the changes made to them there", "a draft you edit here keeps your changes on this computer"] },
+  { tests = ['services::emails::compose::tests::a_pulled_imap_draft_deleted_here_stays_deleted_and_the_server_copy_stays', 'services::emails::compose::tests::a_pulled_imap_draft_sent_here_does_not_come_back'], covers = ["EmailOps only reads that folder", "one you delete or send here stays in the folder for your other mail clients"] },
+  { manual = 'The demo accounts are offline, so no app run shows a server draft; the IMAP side runs against a scripted server in the tests.' },
 ]
 
 [reading-pane-forward]
@@ -801,6 +815,13 @@ checks = [
 checks = [
   { app = true },
   { manual = 'The 6-second length and the early commit when another archive/delete starts or another view opens are covered by src/lib/pendingActions.test.ts and src/stores/emailStore tests (vitest), not by a check this harness runs.', covers = ["(or sooner, if you archive or delete something else or open another view)"] },
+]
+
+[feat-organize-undo-window]
+checks = [
+  { app = true },
+  { manual = 'Off acting at once without Undo, and the snooze Undo lasting the same window, are covered by src/stores/emailStore.threadActions.test.ts and emailStore.snooze.test.ts (vitest), which the docs check does not run; the demo case only reads the setting.', covers = ["With it off, archiving and deleting reach your mail provider at once, without Undo.", "The Undo offered after a snooze lasts as long."] },
+  { manual = 'A statement about two controls side by side in Settings → Appearance; the app cases read both.', covers = ["Undo send is a separate setting."] },
 ]
 
 [feat-organize-5]
@@ -1100,6 +1121,14 @@ checks = [
 [ai-chat-mailbox-17]
 checks = [
   { manual = 'Covered by src/components/Chat/ChatStarters.test.tsx (mailbox starters, then "something else"); which starters appear depends on the mailbox, and the docs app check does not read them yet.' },
+]
+
+[ai-chat-mailbox-18]
+checks = [
+  { tests = ['services::chat::open_draft::tests::block_says_to_answer_from_the_draft_and_write_improvements_as_text', 'services::chat::turn::tests::a_new_email_draft_is_answered_from_the_screen_in_one_model_call'], covers = ['Ask "did I answer everything?" or "make it shorter" and chat answers from the draft; an improved version comes back as text in the answer, for you to copy into the draft.'] },
+  { tests = ['services::chat::turn::tests::an_open_composer_refuses_generate_email_draft_even_when_the_user_asks_for_one', 'services::chat::turn::tests::a_draft_call_refused_for_an_open_composer_leaves_no_draft_text_in_logs_or_trace'], covers = ["Chat never changes the draft, and while it is open it does not write another one."] },
+  { tests = ['services::chat::turn::tests::a_draft_too_long_for_the_window_gets_the_fixed_reply_without_a_model_call', 'services::chat::turn::tests::only_a_draft_that_is_what_overflows_gets_the_too_long_reply'], covers = ["A draft too long for the model's context window gets a note saying so, not a review of its start."] },
+  { manual = 'The draft chip is covered by src/components/Chat/ChatPanel.draftContext.test.tsx, src/components/EmailView/ComposeTabView.draftContext.test.tsx, src/components/EmailView/ReplyCompose.draftContext.test.tsx and src/lib/chatDraft.test.ts; the docs app check does not open a composer yet.', covers = ["While you write an email in a compose tab, or a reply or reply-all under the open email, the chip offers that draft instead: its subject, recipients and your own text, without the signature.", "Switch the chip off to ask about the thread alone."] },
 ]
 
 [ai-chat-mailbox-3]
@@ -1439,6 +1468,7 @@ checks = [
 [priv-what-emailops-1]
 checks = [
   { tests = ['services::emails::mailbox_state::tests::mark_read_updates_the_row_and_pushes_to_the_provider', 'services::emails::compose::tests::delete_draft_removes_local_and_provider_copies'], covers = ["Marking a message read or unread", "Saving a draft"] },
+  { tests = ['services::emails::compose::tests::compose_draft_stays_local_for_unsupported_provider', 'sync::provider::tests::every_shipped_provider_has_its_drafts_folder_read_and_only_imap_is_never_written'], covers = ["on an IMAP account it stays on this computer"] },
   { tests = ['services::emails::thread_actions::tests::not_spam_moves_the_spam_messages_to_the_inbox_and_records_not_junk', 'services::emails::thread_actions::tests::not_spam_records_not_junk_under_the_id_the_provider_gave_the_message'], covers = ["The message moves back to the account's inbox"] },
   { manual = 'Moves, Confirm junk and folder changes writing to the account need a real provider; the demo accounts are offline.' },
 ]

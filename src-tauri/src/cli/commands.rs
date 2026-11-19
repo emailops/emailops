@@ -148,6 +148,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
             fresh,
             thread,
             attachment,
+            draft,
             prewarm,
             research,
             estimate,
@@ -161,6 +162,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                     fresh,
                     thread,
                     attachment,
+                    draft,
                     prewarm,
                     research,
                     estimate,
@@ -713,10 +715,22 @@ struct ChatOptions {
     fresh: bool,
     thread: Option<String>,
     attachment: Option<String>,
+    /// `--draft`: a JSON file with the draft the user is writing.
+    draft: Option<std::path::PathBuf>,
     prewarm: bool,
     research: bool,
     /// With `research`: print the estimate and stop, reading nothing.
     estimate: bool,
+}
+
+/// The `--draft` file: a `ChatDraftContext` as JSON, checked like the one the
+/// app sends. A file that cannot be read or parsed is invalid input (exit 2).
+fn load_draft_file(path: &std::path::Path) -> Result<crate::models::ChatDraftContext> {
+    let invalid = |e: &dyn std::fmt::Display| AppError::InvalidInput(format!("--draft {}: {e}", path.display()));
+    let text = std::fs::read_to_string(path).map_err(|e| invalid(&e))?;
+    let draft: crate::models::ChatDraftContext = serde_json::from_str(&text).map_err(|e| invalid(&e))?;
+    draft.validate()?;
+    Ok(draft)
 }
 
 async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: ChatOptions) -> Result<()> {
@@ -726,10 +740,12 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
         fresh,
         thread,
         attachment,
+        draft,
         prewarm,
         research,
         estimate,
     } = options;
+    let draft = draft.as_deref().map(load_draft_file).transpose()?;
     let account_id = session.require_account()?;
     let model = session.model.clone();
 
@@ -870,6 +886,8 @@ async fn run_chat(session: &mut CliSession, questions: Vec<String>, options: Cha
                 ambient_account_id: ambient_account.clone(),
                 ambient_attachment_id: attachment.clone(),
                 research,
+                draft: draft.clone(),
+                composer_open: draft.is_some(),
                 ..Default::default()
             },
         )
@@ -1100,6 +1118,35 @@ mod tests {
     use super::super::session::CliSession;
     use super::super::OutputMode;
     use super::*;
+
+    #[test]
+    fn a_draft_file_is_read_and_validated_like_the_app_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("draft.json");
+        std::fs::write(
+            &path,
+            r#"{"kind":"reply","subject":"Re: Q3 report","to":["ana@example.com"],"cc":[],"body":"The report is attached.","replyToEmailId":"e1"}"#,
+        )
+        .unwrap();
+        let draft = load_draft_file(&path).expect("a valid draft");
+        assert_eq!(draft.reply_to_email_id.as_deref(), Some("e1"));
+    }
+
+    #[test]
+    fn an_unreadable_or_invalid_draft_file_is_invalid_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad_json = dir.path().join("bad.json");
+        std::fs::write(&bad_json, "{not json").unwrap();
+        let blank = dir.path().join("blank.json");
+        std::fs::write(&blank, r#"{"kind":"new","body":"  "}"#).unwrap();
+        for path in [bad_json, blank, dir.path().join("missing.json")] {
+            assert!(
+                matches!(load_draft_file(&path), Err(AppError::InvalidInput(_))),
+                "{}",
+                path.display()
+            );
+        }
+    }
 
     fn seed_account(db: &Arc<Database>, id: &str, email: &str, enabled: bool) {
         db.connection()

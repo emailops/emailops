@@ -106,7 +106,7 @@ que ves en todas partes:
 | Mover un mensaje a otra carpeta, o **Confirmar basura** | El mensaje también se mueve en la cuenta — Confirmar basura lo archiva en la carpeta de correo no deseado del proveedor |
 | **No es spam — mover a Recibidos**, o **No es basura** en un mensaje de **Spam** | El mensaje vuelve a la bandeja de entrada de la cuenta |
 | Crear, renombrar o eliminar una carpeta | La carpeta también cambia en la cuenta |
-| Guardar un borrador | El borrador se guarda en los Borradores de la cuenta |
+| Guardar un borrador | El borrador se guarda en los Borradores de la cuenta en Gmail y Outlook; en una cuenta IMAP se queda en este ordenador |
 
 <!-- claim:priv-what-emailops-2 -->
 EmailOps nunca borra un mensaje de forma permanente: las eliminaciones siempre van a la

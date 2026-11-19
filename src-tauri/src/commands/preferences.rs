@@ -117,6 +117,12 @@ pub(crate) fn validate_pref(key: &str, value: &str) -> Result<(), AppError> {
                 crate::models::outbox::UNDO_SEND_DELAYS
             )));
         }
+    } else if key == "ui.archive_delete_undo_secs" && !matches!(value, "0" | "6" | "10" | "20" | "30") {
+        // Archive/delete undo window (src/lib/undoWindow.ts): 0 (off) or one
+        // of the windows Settings offers, in seconds.
+        return Err(AppError::InvalidInput(format!(
+            "{key} must be 0, 6, 10, 20 or 30 seconds, got: {value}"
+        )));
     }
     Ok(())
 }
@@ -184,6 +190,16 @@ pub async fn get_system_locale() -> Result<String, AppError> {
     Ok(lang.as_code().to_string())
 }
 
+/// Return the region of the OS locale (`"US"`, `"GB"`, `"419"`), or `None`
+/// when the locale names none. The frontend reads it once at startup and
+/// writes dates in the UI language plus this region.
+#[tauri::command]
+pub async fn get_system_region() -> Result<Option<String>, AppError> {
+    Ok(sys_locale::get_locale()
+        .as_deref()
+        .and_then(crate::services::i18n::region_subtag))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +211,16 @@ mod tests {
         }
         for bad in ["7", "-5", "60", "ten", ""] {
             assert!(validate_pref("compose.undo_send_delay_secs", bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_archive_delete_undo_window_is_off_or_an_offered_window() {
+        for ok in ["0", "6", "10", "20", "30"] {
+            assert!(validate_pref("ui.archive_delete_undo_secs", ok).is_ok(), "{ok}");
+        }
+        for bad in ["5", "-6", "06", "60", "six", ""] {
+            assert!(validate_pref("ui.archive_delete_undo_secs", bad).is_err(), "{bad}");
         }
     }
 

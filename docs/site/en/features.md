@@ -32,6 +32,13 @@ the address only. Gmail accounts start with the name from Gmail's send-as settin
 accounts with the display name you gave when connecting them. Mail sent through Outlook
 carries the name Microsoft has for the mailbox.
 
+<!-- claim:feat-accounts-default-sender -->
+**Settings → Appearance → Send new messages from** picks the account a new message starts
+from, whichever account the sidebar shows; left at **Account of the selected view**, a new
+message starts from the account you are looking at. Replies and forwards keep the account of
+their message, and drafts the account they were saved in. Every **From** list puts the account
+you send the most mail from first, counted on your computer.
+
 ## Unified inbox {#unified-inbox}
 
 <!-- claim:feat-unified-inbox-1 -->
@@ -52,6 +59,13 @@ recipients without the others seeing them, and a message can go to Cc or Bcc alo
 What you write is saved as a draft as you type, attached files included, so closing a composer
 or the app keeps it; a forward is kept too. A message holds up to 32 files of at most 25 MB
 each.
+
+<!-- claim:compose-drafts-imap-folder -->
+On an IMAP account, drafts another mail client saved in the account's Drafts folder appear in
+**Drafts** too, with their recipients, subject, text or formatting, attached files and the
+conversation they answer, and they follow the changes made to them there. EmailOps only reads
+that folder: a draft you edit here keeps your changes on this computer, and one you delete or
+send here stays in the folder for your other mail clients.
 
 ## Forwarding
 
@@ -92,6 +106,11 @@ list acts on all of them at once — archive, snooze, delete, mark as read or un
 Archiving or deleting removes the conversations from the list at once and shows a notice with
 **Undo** for 6 seconds. Your mail provider is only told when those seconds are up (or sooner, if
 you archive or delete something else or open another view), so Undo simply puts them back.
+
+<!-- claim:feat-organize-undo-window -->
+**Settings → Appearance → Undo archive and delete** sets that wait: off, 6, 10, 20 or 30 seconds,
+6 by default. With it off, archiving and deleting reach your mail provider at once, without Undo.
+The Undo offered after a snooze lasts as long. **Undo send** is a separate setting.
 
 <!-- claim:feat-organize-5 -->
 When the conversation you are reading leaves the list — archived, deleted, snoozed, or moved to

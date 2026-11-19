@@ -63,6 +63,10 @@
     "undoSendHelp": "Nach dem Klick auf Senden wartet die Nachricht so lange, damit Sie sie zurückholen können. EmailOps muss geöffnet bleiben, bis sie gesendet ist.",
     "undoSendOff": "Aus",
     "undoSendSeconds": "{{count}} Sekunden",
+    "undoArchive": "Archivieren und Löschen rückgängig machen",
+    "undoArchiveHelp": "Nach dem Archivieren oder Löschen wartet EmailOps so lange, bevor es Ihren Mailserver informiert, damit Sie es rückgängig machen können. „Rückgängig“ nach dem Zurückstellen bleibt genauso lange verfügbar. „Aus“ handelt sofort, ohne „Rückgängig“.",
+    "undoArchiveOff": "Aus",
+    "undoArchiveSeconds": "{{count}} Sekunden",
     "keyboardShortcuts": "Tastenkombinationen",
     "keyboardShortcutsHelp": "Navigieren, Konversationen bearbeiten und Nachrichten verfassen per Tastatur. Drücken Sie ?, um alle Tastenkombinationen zu sehen.",
     "keyboardShortcutsShowList": "Liste anzeigen",
@@ -70,7 +74,10 @@
     "afterLeaveHelp": "Was angezeigt wird, wenn die geöffnete Konversation die Liste verlässt (archivieren, löschen, zurückstellen, blockieren oder als Spam melden). „Als ungelesen markieren“ kehrt immer zur Liste zurück.",
     "afterLeaveNext": "Nächste Konversation öffnen",
     "afterLeavePrevious": "Vorherige Konversation öffnen",
-    "afterLeaveList": "Zurück zur Liste"
+    "afterLeaveList": "Zurück zur Liste",
+    "defaultSender": "Neue Nachrichten senden von",
+    "defaultSenderHelp": "Das Konto, mit dem eine neue Nachricht beginnt. Antworten, Weiterleitungen und Entwürfe behalten ihr eigenes Konto.",
+    "defaultSenderView": "Konto der ausgewählten Ansicht"
   },
   "dialog": {
     "closeTitle": "Einstellungen schließen",

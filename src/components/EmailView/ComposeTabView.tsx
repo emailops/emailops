@@ -12,6 +12,7 @@ import { useComposerSendKey } from '@/hooks/useComposerSendKey';
 import { useComposerSignature } from '@/hooks/useComposerSignature';
 import { useDraftFiles } from '@/hooks/useDraftFiles';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { useSenderOptions } from '@/hooks/useSenderOptions';
 import type {
   DraftFailedEvent,
   DraftGeneratedEvent,
@@ -33,6 +34,7 @@ import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
+import { useDraftContextSource } from '@/stores/draftContextStore';
 import type { ComposeTab } from '@/stores/emailStore';
 import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
@@ -50,6 +52,9 @@ interface ComposeTabViewProps {
   accounts: Account[];
   onClose: () => void;
   ref?: Ref<ComposeTabHandle>;
+  /** The tab on screen. Inactive tabs stay mounted behind it, so only the
+   *  active one is offered to the chat as the draft being written. */
+  isActive?: boolean;
 }
 
 function getDomain(email: string): string {
@@ -62,12 +67,13 @@ function extractEmail(raw: string): string {
 }
 
 type RecipientField = 'to' | 'cc' | 'bcc';
-export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewProps) {
+export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }: ComposeTabViewProps) {
   const { t } = useTranslation(['compose', 'common']);
   const addLog = useLogStore((s) => s.addLog);
 
   const selfEmails = accounts.map((a) => a.email.toLowerCase());
   const [fromAccountId, setFromAccountId] = useState(tab.accountId);
+  const senderOptions = useSenderOptions(accounts);
   const [subject, setSubject] = useState(tab.subject);
   const [bodyHtml, setBodyHtml] = useState(tab.bodyHtml);
   // A tab opened on a new message gets the From account's signature; one
@@ -87,6 +93,16 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const [isDiscarding, setIsDiscarding] = useState(false);
   const [toRecipients, setToRecipients] = useState<string[]>(tab.toAddresses);
   const [ccRecipients, setCcRecipients] = useState<string[]>(tab.ccAddresses ?? []);
+  // The chat panel reads this tab's draft while it is the tab on screen.
+  useDraftContextSource(isActive && !sent, {
+    kind: tab.replyToEmailId ? 'reply' : 'new',
+    accountId: fromAccountId,
+    subject,
+    to: toRecipients,
+    cc: ccRecipients,
+    bodyHtml,
+    replyToEmailId: tab.replyToEmailId ?? null,
+  });
   const [showCc, setShowCc] = useState((tab.ccAddresses ?? []).length > 0);
   const [bccRecipients, setBccRecipients] = useState<string[]>(tab.bccAddresses ?? []);
   const [showBcc, setShowBcc] = useState((tab.bccAddresses ?? []).length > 0);
@@ -113,14 +129,34 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
   const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
+  /** The draft as the tab holds it now. */
+  const draftState = (): ComposeDraftState => ({
+    accountId: fromAccountId,
+    // A reopened reply keeps answering its message.
+    emailId: tab.replyToEmailId,
+    // A valid address still in the input box (typed, not tokenised) is a
+    // recipient the user means; the saved draft must not drop it.
+    toAddresses: mergePendingRecipient(toRecipients, toInput),
+    ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+    bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
+    subject,
+    plainBody: prepareOutgoingHtml(bodyHtml).plainText,
+    bodyHtml,
+    attachments: draftFiles.forSave,
+    // A save landing after Discard would bring the draft back.
+    isSending: isSending || isDiscarding,
+    sent,
+  });
   // Auto-save, seeded with this tab's backing draft id when editing an existing
-  // draft so saves upsert that row instead of spawning duplicates.
+  // draft so saves upsert that row instead of spawning duplicates. That draft,
+  // as it opened, is what the row holds: opening it is not an edit.
   const autosaverRef = useRef<DraftAutosaver | null>(null);
   if (autosaverRef.current === null) {
     autosaverRef.current = createDraftAutosaver(
       api.saveDraft,
       (err) => addLog('debug', 'system', `Draft auto-save failed: ${errorText(err)}`),
       tab.draftId,
+      tab.draftId ? draftState() : undefined,
     );
   }
 
@@ -157,25 +193,9 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
 
   // Debounced auto-save ~0.8s after the last edit. Upserts the backing draft
   // (and pushes to the provider's Drafts folder on Gmail/Outlook).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftState reads exactly these
   useEffect(() => {
-    const prepared = prepareOutgoingHtml(bodyHtml);
-    const state: ComposeDraftState = {
-      accountId: fromAccountId,
-      // A reopened reply keeps answering its message.
-      emailId: tab.replyToEmailId,
-      // A valid address still in the input box (typed, not tokenised) is a
-      // recipient the user means; the saved draft must not drop it.
-      toAddresses: mergePendingRecipient(toRecipients, toInput),
-      ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
-      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
-      subject,
-      plainBody: prepared.plainText,
-      bodyHtml,
-      attachments: draftFiles.forSave,
-      // A save landing after Discard would bring the draft back.
-      isSending: isSending || isDiscarding,
-      sent,
-    };
+    const state = draftState();
     // A body holding only the inserted signature is not something to save.
     const typed = { ...state, plainBody: prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText };
     if (!shouldAutosaveDraft(typed)) return;
@@ -568,7 +588,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref }: ComposeTabViewPr
             <Select
               value={fromAccountId}
               onChange={setFromAccountId}
-              options={accounts.filter((a) => a.enabled).map((a) => ({ value: a.id, label: a.email }))}
+              options={senderOptions}
               ariaLabel={t('compose:from')}
               fullWidth
             />
