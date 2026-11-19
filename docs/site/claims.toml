@@ -1035,6 +1035,14 @@ checks = [
   { manual = 'The selector, the OpenRouter controls it brings back and the re-index question are covered by AiSettings.server.test.tsx (vitest).' },
 ]
 
+[ai-openai-compatible-chunks]
+checks = [
+  { tests = ['services::ai_server::plan_tests::chunks_per_embedding_request_default_to_one_and_stay_within_bounds', 'services::ai_server::plan_tests::the_chunks_per_request_are_stored_and_a_bad_stored_value_reads_as_one', 'services::ai::server_provider_tests::the_saved_chunks_per_request_reach_the_server_embeddings_only'], covers = ["(1 to 64, default 1)"] },
+  { tests = ['ai::openrouter::embedding_tests::chunks_go_up_to_n_per_request_and_come_back_in_input_order', 'ai::openrouter::embedding_tests::one_chunk_per_request_is_the_default_and_sends_plain_strings', 'services::embeddings::tests::a_provider_that_takes_several_chunks_per_request_gets_them_across_emails'], covers = ["sets how many pieces of email text go in one request to the server, so a large mailbox is indexed in fewer requests."] },
+  { tests = ['ai::openrouter::embedding_tests::a_refused_batch_is_sent_again_one_chunk_at_a_time_and_logged', 'ai::openrouter::embedding_tests::a_batch_answered_with_the_wrong_number_of_vectors_is_sent_again_one_chunk_at_a_time'], covers = ["If the server refuses a request that carries several, its chunks are sent again one at a time and the Logs panel says so."] },
+  { manual = 'The field, shown only with This server, and its save are covered by AiSettings.server.test.tsx (vitest); the demo instance runs no OpenAI-compatible server.', covers = ["With This server, Chunks per Embeddings request"] },
+]
+
 [ai-openai-compatible-5]
 checks = [
   { tests = ['ai::openrouter::compatible_server_tests::the_context_window_comes_from_max_model_len', 'ai::openrouter::compatible_server_tests::a_configured_window_is_capped_by_the_one_the_server_loaded', 'ai::openrouter::compatible_server_tests::a_configured_window_stands_when_the_server_says_nothing', 'ai::openrouter::compatible_server_tests::the_loaded_window_comes_from_lm_studio_when_models_says_nothing', 'ai::openrouter::compatible_server_tests::the_window_comes_from_llama_server_props', 'services::ai::server_provider_tests::the_configured_context_window_reaches_the_provider', 'services::chat::research::tests::a_remote_model_with_an_unknown_window_gets_the_safe_default'] },
@@ -1272,6 +1280,14 @@ checks = [
   { tests = ['services::chat::retrieval::tests::no_embedding_is_requested_when_no_embedding_model_is_set_up', 'services::embeddings::tests::a_skipped_run_names_what_is_actually_wrong_for_each_provider'], covers = ["With none picked, semantic search is off and search is keyword-only."] },
   { tests = ['ai::openrouter::embedding_tests::a_model_of_another_size_is_refused_with_the_size_it_returned'], covers = ["one that does not produce the 768-dimension vectors the index needs is refused"] },
   { manual = 'OpenRouter is not configured on the demo instance and the checks never call its API: the selector and the check on save are covered by OpenRouterPanel.test.tsx and AiSettings.embedding.test.tsx, and what is sent by the request-shape tests, not by a live run.', covers = ["With the two local backends, embedding happens on your machine.", "the text of every email that gets indexed, and of every search and chat question, is then sent to OpenRouter", "The model is checked when you save"] },
+]
+
+[ai-semantic-search-progress]
+checks = [
+  { tests = ['services::embeddings::tests::the_backlog_counts_only_what_the_pipeline_will_embed'], covers = ["how many emails are still waiting to be indexed, counted with the categories and the age limit indexing uses"] },
+  { tests = ['services::embeddings::tests::the_rate_counts_the_emails_indexed_after_the_first_sample_up_to_now', 'services::embeddings::tests::a_steady_run_reads_close_to_its_pace_between_batches'], covers = ["about how many it gets through per minute, measured over the last two minutes."] },
+  { tests = ['services::embeddings::tests::a_short_burst_does_not_read_as_a_huge_pace', 'services::embeddings::tests::the_pace_falls_while_nothing_is_indexed_and_then_disappears'], covers = ["The pace appears once indexing has run for ten seconds, and falls while nothing is being indexed."] },
+  { manual = 'The section and its refresh are covered by IndexingStatus.test.tsx (vitest); no live UI check has run yet.', covers = ["Settings → AI Backend & Models shows the Email index"] },
 ]
 
 [ai-translation-1]

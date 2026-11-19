@@ -190,6 +190,13 @@ pub async fn get_pending_embeddings_count(
     services::embeddings::count_pending_embeddings(&state.db, account_id.as_deref())
 }
 
+/// The email index backlog and how fast it is being worked through, for
+/// Settings → AI.
+#[tauri::command]
+pub async fn get_indexing_status(state: State<'_, AppState>) -> Result<services::embeddings::IndexingStatus, AppError> {
+    services::embeddings::indexing_status(&state.db)
+}
+
 /// Delete all embeddings and regenerate them from scratch
 /// Use this when the embedding model or content extraction logic changes
 #[tauri::command]

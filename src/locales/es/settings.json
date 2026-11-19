@@ -152,6 +152,15 @@
       "reset": "Iniciar un periodo nuevo",
       "resetting": "Reiniciando…"
     },
+    "indexing": {
+      "title": "Índice de correo",
+      "backlog_one": "{{count}} correo pendiente de indexar",
+      "backlog_many": "{{count}} correos pendientes de indexar",
+      "backlog_other": "{{count}} correos pendientes de indexar",
+      "upToDate": "Todos los correos que cubre la búsqueda semántica están indexados.",
+      "rate": "Indexando unos {{rate}} correos por minuto",
+      "loadFailed": "No se pudo leer el estado del índice: {{error}}"
+    },
     "noModelsFound": "(no se encontraron modelos)",
     "noModelsAvailable": "(no hay modelos disponibles)",
     "noCatalog": "No hay catálogo de modelos en esta versión.",
@@ -254,6 +263,8 @@
     "embeddingSourceHelp": "Dónde calcula la búsqueda semántica los Embeddings de tus correos. Con este servidor, tu correo va a un único sitio.",
     "embeddingModelPlaceholder": "Id del modelo de Embeddings, o vacío para buscar por palabras clave",
     "embeddingModelHelp": "Se comprueba al guardar: se rechaza un modelo que no devuelve vectores que quepan en el índice de correo.",
+    "embeddingBatchSize": "Fragmentos por petición de Embeddings",
+    "embeddingBatchSizeHelp": "Cuántos fragmentos de texto de correo van en una petición al servidor, de 1 a 64. Más es más rápido en un servidor local que los acepte; 1 los envía uno a uno. Si el servidor rechaza una petición, sus fragmentos se reenvían de uno en uno y el panel de Logs lo indica.",
     "openRouterNeedsKey": "Guarda tu clave de API de OpenRouter en la pestaña OpenRouter para usar sus modelos de Embeddings.",
     "privacyNotice": "El contenido de los correos del chat, los borradores y las demás funciones de IA se envía a este servidor. EmailOps no puede ver qué conserva el servidor.",
     "disclosureTitle": "¿Enviar contenido de tus correos a otro ordenador?",

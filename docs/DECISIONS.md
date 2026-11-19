@@ -4745,6 +4745,37 @@ kept out of this change on purpose.
 - *Requiring the `\Draft` flag*: every message in the Drafts folder is a draft, and not
   every client sets the flag.
 
+## 2026-11-18 — Embeddings go up to N chunks per request on an OpenAI-compatible server; Settings shows the index pace
+
+**Decision:** With an OpenAI-compatible server computing the email index, **Chunks per
+Embeddings request** (1 to 64, default 1, refused outside that range on Save) sets how many
+chunks one `POST /embeddings` carries as an array `input`. At 1 nothing changes: one string
+per request, as before. Vectors are matched to their chunks by the answer's `index`, never by
+position; an error status, an answer that cannot be read, or vectors that do not match the
+chunks one for one count as a refused batch, which is logged (`warn`, `embeddings`) and sent
+again one chunk per request; a broken connection or a timeout is an error, not a refusal.
+The indexing pipeline groups whole emails until the group holds N chunks and asks the
+provider for them in one call; with a provider at 1 it keeps embedding chunk by chunk. The
+in-app runtime, Ollama and OpenRouter (even beside a server chat) stay at one chunk per
+request. Settings → AI Backend & Models shows the **Email index**: the backlog, counted with
+the categories and age limit the pipeline uses (the old pending count ignored them, so it
+never reached zero), and the emails indexed per minute, from samples the pipeline records in
+memory as it stores each group: the emails stored after the first sample of the last two
+minutes, over the time from that sample to now. Measured to now, the pace falls while nothing
+is stored; it is shown only once it covers 10 s, so a burst stored milliseconds apart does not
+read as thousands a minute. While no pace is shown the section lists the backlog alone, never
+"not indexing", because a run's first seconds have no pace either.
+**Context:** Embedding a large mailbox through a local server was slow because each chunk was
+its own request, and nothing showed how fast the index was filling (GitHub issue #305).
+**Rejected:** A default above 1, or trying the largest batch and shrinking on refusal — some
+servers take only a string, and the task asked for today's behaviour unless the user raises it.
+Remembering a refusal for the rest of the run — the acceptance asked for a per-batch
+fallback, and a refusal logs once per batch so the user sees it. Batching OpenRouter too —
+its per-request cost is dominated by the network, and its settings have no place for it.
+Persisting throughput samples in the database — a rate over the last two minutes needs no
+history across restarts. Measuring to the last sample instead of now — a pace that stays put
+after indexing stops, and two emails 31 ms apart read as 1935 a minute.
+
 ## 2026-11-19 — Opening a draft is not an edit: the composer saves only after the content differs from what it loaded
 
 **Decision:** A composer opened on an existing draft saves it only once what a save would

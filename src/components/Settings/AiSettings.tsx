@@ -23,6 +23,7 @@ import {
   embeddingModelForProvider,
   needsEmbeddingProbe,
 } from './AiSettings/helpers';
+import { IndexingStatus } from './AiSettings/IndexingStatus';
 import { OllamaPanel } from './AiSettings/OllamaPanel';
 import { OpenRouterPanel } from './AiSettings/OpenRouterPanel';
 import { ProviderTab } from './AiSettings/ProviderTab';
@@ -223,6 +224,7 @@ export function AiSettings() {
           baseUrl: cfg.server.baseUrl ?? '',
           embeddingSource: cfg.server.embeddingSource,
           contextWindow: cfg.server.contextWindow,
+          embeddingBatchSize: cfg.server.embeddingBatchSize,
           hasApiKey: cfg.server.hasApiKey,
           disclosedHost: cfg.server.disclosedHost,
         },
@@ -517,6 +519,7 @@ export function AiSettings() {
               clearApiKey: clearServerKey,
               embeddingSource: config.server.embeddingSource,
               contextWindow: config.server.contextWindow,
+              embeddingBatchSize: config.server.embeddingBatchSize,
               disclosureAcceptedHost: acceptedHostRef.current,
             }
           : undefined;
@@ -872,6 +875,9 @@ export function AiSettings() {
                 contextReport={serverContext?.key === contextKey(config) ? serverContext.report : null}
               />
             )}
+
+            {/* ── Email index backlog and pace, whatever the provider ────────── */}
+            <IndexingStatus />
 
             {/* ── Shared preferences (routing, keep-alive, age cutoff, language) ── */}
             <AiSharedPreferences

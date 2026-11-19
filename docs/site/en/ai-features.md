@@ -76,6 +76,12 @@ what that server keeps or trains on. It asks again whenever the URL moves to ano
 you save, and one that returns no vectors the index can hold is refused. Changing it rebuilds
 the index, after asking.
 
+<!-- claim:ai-openai-compatible-chunks -->
+With **This server**, **Chunks per Embeddings request** (1 to 64, default 1) sets how many pieces
+of email text go in one request to the server, so a large mailbox is indexed in fewer requests.
+If the server refuses a request that carries several, its chunks are sent again one at a time and
+the Logs panel says so.
+
 <!-- claim:ai-openai-compatible-5 -->
 **Context size (tokens)** tells EmailOps how much the model can read at once. Leave it at 0 to
 use what the server reports: vLLM, LM Studio and `llama-server` say how much context they loaded
@@ -313,6 +319,12 @@ indexed, and of every search and chat question, is then sent to OpenRouter and c
 the monthly budget. With none picked, semantic search is off and search is keyword-only. The
 model is checked when you save, and one that does not produce the 768-dimension vectors the
 index needs is refused.
+
+<!-- claim:ai-semantic-search-progress -->
+**Settings → AI Backend & Models** shows the **Email index**: how many emails are still waiting to
+be indexed, counted with the categories and the age limit indexing uses, and, while indexing runs,
+about how many it gets through per minute, measured over the last two minutes. The pace appears
+once indexing has run for ten seconds, and falls while nothing is being indexed.
 
 ## Translation {#translation}
 

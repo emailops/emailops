@@ -209,6 +209,7 @@ macro_rules! app_commands {
             commands::search::start_regenerate_embeddings,
             commands::search::rebuild_fts_index,
             commands::search::get_pending_embeddings_count,
+            commands::search::get_indexing_status,
             commands::search::list_ollama_models,
             commands::search::get_ai_model,
             commands::search::set_ai_model,

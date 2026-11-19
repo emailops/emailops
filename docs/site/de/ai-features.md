@@ -79,6 +79,12 @@ zurückkommen. Ein Embedding-Modell auf dem Server wird beim Speichern geprüft,
 keine passenden Vektoren für den Index liefert, wird abgelehnt. Eine Änderung baut den Index nach
 Rückfrage neu auf.
 
+<!-- claim:ai-openai-compatible-chunks -->
+Mit **Dieser Server** legt **Abschnitte pro Embeddings-Anfrage** (1 bis 64, Standard 1) fest, wie
+viele Textabschnitte aus E-Mails in eine Anfrage an den Server gehen, damit ein großes Postfach mit
+weniger Anfragen indexiert wird. Lehnt der Server eine Anfrage mit mehreren ab, werden ihre
+Abschnitte einzeln erneut gesendet, und das Logs-Panel meldet es.
+
 <!-- claim:ai-openai-compatible-5 -->
 **Kontextgröße (Tokens)** sagt EmailOps, wie viel das Modell auf einmal lesen kann. Lassen Sie
 0 stehen, um den Wert zu nutzen, den der Server meldet: vLLM, LM Studio und `llama-server` geben
@@ -334,6 +340,13 @@ indizierten E-Mail sowie jeder Suche und Chat-Frage wird dann an OpenRouter gese
 zum Monatsbudget. Ohne Modell ist die semantische Suche aus und es wird nur nach Stichwörtern
 gesucht. Das Modell wird beim Speichern geprüft; eines, das nicht die 768-dimensionalen
 Vektoren liefert, die der Index braucht, wird abgelehnt.
+
+<!-- claim:ai-semantic-search-progress -->
+**Einstellungen → KI: Backend & Modelle** zeigt den **E-Mail-Index**: wie viele E-Mails noch auf
+die Indexierung warten, gezählt mit den Kategorien und der Altersgrenze der Indexierung, und
+während sie läuft, etwa wie viele sie pro Minute schafft, gemessen über die letzten zwei Minuten.
+Das Tempo erscheint, sobald die Indexierung zehn Sekunden läuft, und sinkt, solange nichts
+indexiert wird.
 
 ## Übersetzung {#translation}
 
