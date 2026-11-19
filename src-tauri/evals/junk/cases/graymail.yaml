@@ -15,7 +15,7 @@
     List-Id: Retail Digest <list.retaildigest.example>
     List-Unsubscribe: <https://retaildigest.example/unsub/k2>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=retaildigest.example;
-        dkim=pass header.d=retaildigest.example; dmarc=pass
+        dkim=pass header.d=retaildigest.example; dmarc=pass header.from=retaildigest.example
     Subject: This week in retail
   body: |
     Store openings, closures and the week's numbers.
@@ -32,7 +32,7 @@
     From: "Gadget Store" <marketing@gadgetstore.example>
     List-Unsubscribe: <https://gadgetstore.example/unsub/p9>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=gadgetstore.example;
-        dkim=pass header.d=gadgetstore.example; dmarc=pass
+        dkim=pass header.d=gadgetstore.example; dmarc=pass header.from=gadgetstore.example
     Subject: New arrivals just landed
   body: |
     Browse the new season range.
@@ -51,7 +51,7 @@
     Precedence: bulk
     List-Unsubscribe: <https://platformco.example/unsub/t4>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=platformco.example;
-        dkim=pass header.d=platformco.example; dmarc=pass
+        dkim=pass header.d=platformco.example; dmarc=pass header.from=platformco.example
     Subject: Changes to our terms of service
   body: |
     We are updating our terms effective next month.
@@ -70,7 +70,7 @@
     List-Unsubscribe: <https://flyaway.example/unsub/z7>, <mailto:unsub@flyaway.example>
     List-Unsubscribe-Post: List-Unsubscribe=One-Click
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=flyaway.example;
-        dkim=pass header.d=flyaway.example; dmarc=pass
+        dkim=pass header.d=flyaway.example; dmarc=pass header.from=flyaway.example
     Subject: Weekend fares from your airport
   body: |
     Fares refreshed for the coming weekend.
@@ -90,7 +90,7 @@
     From: "Connectly" <notifications@connectly.example>
     List-Unsubscribe: <https://connectly.example/settings/email>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=connectly.example;
-        dkim=pass header.d=connectly.example; dmarc=pass
+        dkim=pass header.d=connectly.example; dmarc=pass header.from=connectly.example
     Subject: You have 4 new profile views
   body: |
     See who viewed your profile this week.
@@ -108,7 +108,7 @@
     From: "Toolchain Weekly" <digest@toolchain.example>
     List-Id: Toolchain Weekly <list.toolchain.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=toolchain.example;
-        dkim=pass header.d=toolchain.example; dmarc=pass
+        dkim=pass header.d=toolchain.example; dmarc=pass header.from=toolchain.example
     Subject: 12 releases you may have missed
   body: |
     A roundup of this month's releases across the ecosystem.
