@@ -3843,6 +3843,54 @@ mod tests {
         );
     }
 
+    /// A message whose body sits inside `layers` nested multiparts, with an
+    /// inline image and an attachment at the bottom so every walker reaches it.
+    /// The `x` keeps one boundary from being a prefix of another (`B1`, `B10`).
+    fn nested_message(layers: usize) -> String {
+        let mut raw = String::from("From: a@example.com\r\nMIME-Version: 1.0\r\n");
+        for layer in 0..layers {
+            raw.push_str(&format!(
+                "Content-Type: multipart/mixed; boundary=\"B{layer}x\"\r\n\r\n--B{layer}x\r\n"
+            ));
+        }
+        raw.push_str(
+            "Content-Type: multipart/related; boundary=\"LEAF\"\r\n\r\n\
+             --LEAF\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:logo\">\r\n\
+             --LEAF\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n\r\nPNG\r\n\
+             --LEAF\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"a.pdf\"\r\n\r\n%PDF\r\n\
+             --LEAF--\r\n",
+        );
+        for layer in (0..layers).rev() {
+            raw.push_str(&format!("--B{layer}x--\r\n"));
+        }
+        raw
+    }
+
+    /// mailparse refuses nesting past its recursion limit, which is what keeps
+    /// the recursive walkers below from overflowing the stack (an overflow
+    /// aborts the app; it cannot be caught like a panic).
+    const MAILPARSE_NESTING_LIMIT: usize = 99;
+
+    #[test]
+    fn a_message_nested_past_the_parser_limit_is_an_error_for_that_message() {
+        let raw = nested_message(MAILPARSE_NESTING_LIMIT + 1);
+        assert!(ImapClient::parse_message(1, &fetched(&raw, Some(NOW))).is_err());
+    }
+
+    #[test]
+    fn a_message_nested_at_the_parser_limit_is_read_on_a_small_stack() {
+        let raw = nested_message(MAILPARSE_NESTING_LIMIT);
+        let read = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || ImapClient::parse_message(1, &fetched(&raw, Some(NOW))))
+            .unwrap()
+            .join()
+            .unwrap();
+        let (email, attachments) = read.unwrap();
+        assert!(email.body.contains("data:image/png;base64,"), "{}", email.body);
+        assert!(attachments.iter().any(|a| a.filename == "a.pdf"), "{attachments:?}");
+    }
+
     #[test]
     fn address_list_respects_quoted_display_names() {
         assert_eq!(
