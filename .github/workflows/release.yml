@@ -140,8 +140,16 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      # Pinned, NOT the floating `stable`, in every job that builds. Rust
+      # 1.100 moved build-script output from build/<pkg>-<hash>/out to
+      # build/<pkg>/<hash>/out, and llama-cpp-sys-2 (0.1.161) finds the
+      # profile dir by walking three levels up from OUT_DIR, so with the
+      # dynamic-backends build it hard-links its libraries into a deps/ that
+      # does not exist and the build panics. Move the pin forward once the
+      # crate stops counting directories (see docs/DECISIONS.md).
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.99.1
           targets: x86_64-unknown-linux-gnu
 
       # Key includes the runner image, not just the platform: pinning the Linux
@@ -464,8 +472,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      # Same pinned release as the Linux job: see the comment there.
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.99.1
           targets: x86_64-pc-windows-msvc
 
       # Same keys as before the job split, so the warm caches carry over.
@@ -650,8 +660,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      # Same pinned release as the Linux job: see the comment there.
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.99.1
           targets: x86_64-pc-windows-msvc
 
       - run: npm ci

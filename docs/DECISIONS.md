@@ -4820,3 +4820,21 @@ signed release restores. Both were security audit leads.
 - *A separate Linux publish job*: one more job for no gain, since `linux-sign` already held
   the write token and runs nothing from the dependency tree.
 - *Requiring an existing tag for non-dry runs*: not needed to close either lead.
+
+## 2026-11-19 — Release builds pin the Rust toolchain
+
+**Decision:** Every job in `release.yml` that installs Rust pins one release (1.99.1)
+instead of the floating `stable`. The pin moves forward by hand, after a dry run on the new
+release.
+**Context:** Rust 1.100 (12/11/2026) moved build-script output from
+`build/<pkg>-<hash>/out` to `build/<pkg>/<hash>/out`. llama-cpp-sys-2 0.1.161, the latest
+release, locates the profile directory three levels above `OUT_DIR`, so the
+dynamic-backends build hard-links its libraries into a `deps/` that does not exist and
+panics. The first release run on 1.100 failed with no change on our side, the same way
+`ubuntu-latest` once raised the glibc floor; this workflow already pins runner images for
+that reason.
+**Rejected:**
+- *Patching llama-cpp-sys-2 through `[patch.crates-io]`*: a fork to maintain for a fix that
+  belongs upstream.
+- *A `rust-toolchain.toml` for the whole repo*: it would also pin local development and CI,
+  which do not build the dynamic-backends path that breaks.

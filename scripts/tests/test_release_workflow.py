@@ -7,6 +7,7 @@ npm/cargo dependency tree may hold a write token; and a dry run of an arbitrary
 ref must not seed the build caches a signed release later restores.
 """
 
+import re
 from pathlib import Path
 
 import yaml
@@ -93,6 +94,14 @@ def test_jobs_that_run_the_dependency_tree_cannot_write():
     assert builders, "no job runs npm ci or make build-: the workflow layout changed"
     writers = {name for name in builders if _contents_permission(name) == "write"}
     assert writers == set()
+
+
+def test_every_job_builds_with_one_pinned_rust_release():
+    # A floating `stable` broke the release when Rust 1.100 changed the
+    # OUT_DIR layout that llama-cpp-sys-2's build script walks up from.
+    toolchains = {step.get("with", {}).get("toolchain") for _, step in _steps("dtolnay/rust-toolchain@")}
+    assert len(toolchains) == 1
+    assert re.fullmatch(r"1\.\d+\.\d+", toolchains.pop() or "")
 
 
 def test_dry_runs_never_save_the_rust_cache():
