@@ -98,8 +98,14 @@ fn set_once(slot: &mut Option<String>, value: &str) {
 
 /// Extract the `authserv-id` — the leading token of an `Authentication-Results`
 /// value, before the first `;`.
-fn parse_authserv_id(value: &str) -> Option<String> {
+///
+/// `None` when that segment is already a `method=result` verdict: Exchange
+/// Online writes no authserv-id, and a token cannot contain `=`.
+pub(crate) fn parse_authserv_id(value: &str) -> Option<String> {
     let head = value.split(';').next()?.trim();
+    if head.contains('=') {
+        return None;
+    }
     // The authserv-id may be followed by a version number ("mx.example.com 1").
     let id = head.split_whitespace().next()?.trim();
     if id.is_empty() {
@@ -160,15 +166,68 @@ pub fn parse_header_block(raw: &str) -> Vec<(String, String)> {
 /// kept separately because impersonation lives there: `"Sam Okafor"
 /// <attacker@elsewhere.example>` is the whole BEC trick, and it is invisible if
 /// you only ever look at the address.
+///
+/// The address is the last `<…>` outside quoted strings and RFC 5322 comments,
+/// and comments are dropped. The receiving server checks DMARC against the
+/// address it parses, so a `<ceo@bank.example>` tucked into a comment or a
+/// quoted local part must not become the address we store and credit with that
+/// verdict. Without a complete `<…>` the whole value, minus comments, is the
+/// address.
 pub fn split_from_header(from: &str) -> (String, String) {
-    let from = from.trim();
-    match (from.rfind('<'), from.rfind('>')) {
-        (Some(open), Some(close)) if close > open => {
-            let addr = from[open + 1..close].trim().to_string();
-            let name = from[..open].trim().trim_matches('"').trim().to_string();
+    // `from` with its comments removed, plus the byte offsets of the last
+    // angle-addr in it.
+    let mut kept = String::with_capacity(from.len());
+    let mut in_quote = false;
+    let mut comment_depth = 0usize;
+    let mut escaped = false;
+    let mut open: Option<usize> = None;
+    let mut angle: Option<(usize, usize)> = None;
+
+    for c in from.chars() {
+        if comment_depth > 0 {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '(' => comment_depth += 1,
+                ')' => comment_depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        if in_quote {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_quote = false,
+                _ => {}
+            }
+            kept.push(c);
+            continue;
+        }
+        match c {
+            '(' => {
+                comment_depth = 1;
+                continue;
+            }
+            '"' => in_quote = true,
+            '<' => open = Some(kept.len()),
+            '>' => {
+                if let Some(start) = open.take() {
+                    angle = Some((start, kept.len()));
+                }
+            }
+            _ => {}
+        }
+        kept.push(c);
+    }
+
+    match angle {
+        Some((start, end)) => {
+            let addr = kept[start + 1..end].trim().to_string();
+            let name = kept[..start].trim().trim_matches('"').trim().to_string();
             (name, addr)
         }
-        _ => (String::new(), from.trim_matches('"').to_string()),
+        None => (String::new(), kept.trim().to_string()),
     }
 }
 
@@ -224,6 +283,17 @@ mod tests {
         // RFC 8601 allows "authserv-id version", e.g. "mx.example.com 1".
         let captured = capture(&pairs(&[("Authentication-Results", "mx.example.com 1; spf=pass")]));
         assert_eq!(captured.authserv_id.as_deref(), Some("mx.example.com"));
+    }
+
+    #[test]
+    fn a_stamp_that_opens_with_a_verdict_has_no_authserv_id() {
+        // Exchange Online writes no authserv-id; its first segment is a
+        // `method=result` pair, which a token never contains.
+        let captured = capture(&pairs(&[(
+            "Authentication-Results",
+            "spf=pass (sender IP is 192.0.2.1) smtp.mailfrom=x.example; dmarc=pass header.from=x.example",
+        )]));
+        assert_eq!(captured.authserv_id, None);
     }
 
     #[test]
@@ -354,6 +424,67 @@ mod tests {
         let (name, addr) = split_from_header("\"security@acme.example\" <bounce77@mailer-host.example>");
         assert_eq!(name, "security@acme.example");
         assert_eq!(addr, "bounce77@mailer-host.example");
+    }
+
+    #[test]
+    fn from_header_address_is_the_angle_addr_outside_comments_and_quotes() {
+        // The receiving server checks DMARC against the address it parses. A
+        // comment or a quoted local part that holds another `<addr>` must not
+        // make us store a different one: that would credit the attacker's
+        // passing verdict to an address the user trusts.
+        let cases = [
+            (
+                "Billing <billing@attacker.example> (<ceo@bank.example>)",
+                ("Billing", "billing@attacker.example"),
+            ),
+            (
+                "(see <ceo@bank.example>) Billing <billing@attacker.example>",
+                ("Billing", "billing@attacker.example"),
+            ),
+            (
+                "billing@attacker.example (<ceo@bank.example>)",
+                ("", "billing@attacker.example"),
+            ),
+            (
+                r#"Billing <"x<ceo@bank.example>"@attacker.example>"#,
+                ("Billing", r#""x<ceo@bank.example>"@attacker.example"#),
+            ),
+            (
+                r#"Billing <billing@attacker.example> (a (nested <ceo@bank.example>) \) <ceo@bank.example>)"#,
+                ("Billing", "billing@attacker.example"),
+            ),
+            (
+                r#""News >> Weekly" <news@example.com>"#,
+                ("News >> Weekly", "news@example.com"),
+            ),
+            (r#""a <b" <x@example.com>"#, ("a <b", "x@example.com")),
+            ("Jane Doe <jane@example.com>", ("Jane Doe", "jane@example.com")),
+            ("jane@example.com", ("", "jane@example.com")),
+        ];
+        for (from, (name, addr)) in cases {
+            assert_eq!(
+                split_from_header(from),
+                (name.to_string(), addr.to_string()),
+                "for {from:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_from_header_never_panics() {
+        for from in [
+            "> <",
+            "Name > x <",
+            "<",
+            ">",
+            "Name <unclosed@example.com",
+            "",
+            "(",
+            "\"",
+            "\\",
+        ] {
+            let _ = split_from_header(from);
+        }
     }
 
     #[test]

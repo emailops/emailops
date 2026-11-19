@@ -4797,6 +4797,23 @@ only, 18/11/2026) stopped following the server for good.
 - *Only fixing the editor's spurious update*: the tab composer's autosave also ran on
   mount for any draft with content, so an unchanged draft was still saved.
 
+## 2026-11-19 — EO Docs imports spreadsheets from .xlsx only
+
+**Decision:** Spreadsheet import into EO Docs accepts `.xlsx` and `.xlsm` only, read cell by
+cell (`calamine::Xlsx::worksheet_cells_reader`) and keeping just the cells inside the
+5 000 x 100 caps. `.xls` and `.ods` are refused with a message asking to save the file as
+`.xlsx`, and the webview no longer offers to import them.
+**Context:** An imported spreadsheet may be an email attachment, so its contents are
+sender-controlled. calamine 0.38 builds one dense range from a sheet's first to its last
+used cell, and for `.xls` and `.ods` it does so for every sheet when the file is opened,
+with no cell-by-cell API. A file of a few KB naming a far cell (XFD1048576) asked for
+billions of cells and took the app down before any cap applied.
+**Rejected:**
+- *Keeping `.xls`/`.ods` and recording the risk*: it leaves a one-click crash from any
+  attachment in place.
+- *Opening with `open_workbook_auto_from_rs`*: it tries the eager `.xls` parser first,
+  whatever the file's extension.
+
 ## 2026-11-19 — Release jobs build and sign one resolved commit; only real releases save Rust caches
 
 **Decision:** A `resolve` job in `release.yml` turns `tag_name` into a commit SHA once, and

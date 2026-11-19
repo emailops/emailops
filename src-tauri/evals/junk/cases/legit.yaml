@@ -16,7 +16,7 @@
     Reply-To: billing@northwind.example
     Return-Path: <bounces@northwind.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=northwind.example;
-        dkim=pass header.d=northwind.example; dmarc=pass
+        dkim=pass header.d=northwind.example; dmarc=pass header.from=northwind.example
     Subject: Invoice NW-2214 is ready
   body: |
     <p>Your invoice is available.</p>
@@ -38,7 +38,7 @@
     Reply-To: support@contoso-support.example
     Return-Path: <bounces@contoso.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=contoso.example;
-        dkim=pass header.d=contoso.example; dmarc=pass
+        dkim=pass header.d=contoso.example; dmarc=pass header.from=contoso.example
     Subject: Your order 88213 has shipped
   body: |
     Thanks for your order. Tracking: https://contoso.example/track/88213
@@ -57,7 +57,7 @@
     List-Unsubscribe: <https://systemsweekly.example/unsub/abc>
     List-Unsubscribe-Post: List-Unsubscribe=One-Click
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=systemsweekly.example;
-        dkim=pass header.d=systemsweekly.example; dmarc=pass
+        dkim=pass header.d=systemsweekly.example; dmarc=pass header.from=systemsweekly.example
     Subject: Issue 142 — write-ahead logs in practice
   body: |
     This week: how WAL checkpointing interacts with long-running readers.
@@ -75,7 +75,7 @@
   raw_headers: |
     From: "Dana Ruiz" <dana@brightpath.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=brightpath.example;
-        dkim=pass header.d=brightpath.example; dmarc=pass
+        dkim=pass header.d=brightpath.example; dmarc=pass header.from=brightpath.example
     Subject: Intro from the Tuesday meetup
   body: |
     We spoke briefly after your talk — would you be open to a short call next week?
@@ -89,7 +89,7 @@
   raw_headers: |
     From: "Acme Security" <security@acme.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=acme.example;
-        dkim=pass header.d=acme.example; dmarc=pass
+        dkim=pass header.d=acme.example; dmarc=pass header.from=acme.example
     Subject: Action required: confirm your password reset within 30 minutes
   body: |
     We received a request to reset your password. If this was not you, ignore this message.
@@ -109,7 +109,7 @@
     From: "Meridian Bank" <alerts@meridianbank.example>
     Return-Path: <bounces@meridianbank.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=meridianbank.example;
-        dkim=pass header.d=meridianbank.example; dmarc=pass
+        dkim=pass header.d=meridianbank.example; dmarc=pass header.from=meridianbank.example
     Subject: Your February statement is available
   body: |
     Sign in to view your statement: https://meridianbank.example/statements
@@ -127,7 +127,7 @@
     From: "Sam Okafor" <sam@partnerco.example>
     In-Reply-To: <thread-771@yourdomain.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=partnerco.example;
-        dkim=pass header.d=partnerco.example; dmarc=pass
+        dkim=pass header.d=partnerco.example; dmarc=pass header.from=partnerco.example
     Subject: Re: Q2 rollout dates
   body: |
     Works for us. Let's lock the 14th.
@@ -144,7 +144,7 @@
   raw_headers: |
     From: "Build Bot" <ci@builds.internal.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=builds.internal.example;
-        dkim=pass header.d=internal.example; dmarc=pass
+        dkim=pass header.d=internal.example; dmarc=pass header.from=builds.internal.example
     Subject: main is green (build 4471)
   body: |
     <a href="https://builds.internal.example/4471">Build</a>
@@ -165,7 +165,7 @@
     From: "Docs" <notify@docs.example>
     Reply-To: no-reply@docs.example
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=docs.example;
-        dkim=pass header.d=docs.example; dmarc=pass
+        dkim=pass header.d=docs.example; dmarc=pass header.from=docs.example
     Subject: Priya shared "Q3 planning" with you
   body: |
     Open the document: https://docs.example/d/91baf
@@ -182,7 +182,7 @@
     From: "Lena Fischer" <lena@partnerco.example>
     Content-Type: multipart/mixed; boundary="b1"
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=partnerco.example;
-        dkim=pass header.d=partnerco.example; dmarc=pass
+        dkim=pass header.d=partnerco.example; dmarc=pass header.from=partnerco.example
     Subject: Invitation: design review
   body: |
     Adding the review to your calendar.
@@ -199,7 +199,7 @@
   raw_headers: |
     From: "Toni Vargas" <toni@hiringpartners.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=hiringpartners.example;
-        dkim=pass header.d=hiringpartners.example; dmarc=pass
+        dkim=pass header.d=hiringpartners.example; dmarc=pass header.from=hiringpartners.example
     Subject: Staff engineer role — worth a chat?
   body: |
     I work with a team building storage infrastructure and thought of your background.
@@ -217,7 +217,7 @@
     Reply-To: billing@northwind.example
     Return-Path: <bounces@northwind.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=northwind.example;
-        dkim=pass header.d=northwind.example; dmarc=pass
+        dkim=pass header.d=northwind.example; dmarc=pass header.from=northwind.example
     Subject: Reminder: invoice NW-2201 due Friday
   body: |
     A friendly reminder that invoice NW-2201 is due on Friday. Bank details are unchanged
@@ -237,7 +237,7 @@
     From: "StorageConf" <tickets@storageconf.example>
     List-Unsubscribe: <https://storageconf.example/unsub/x9>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=storageconf.example;
-        dkim=pass header.d=storageconf.example; dmarc=pass
+        dkim=pass header.d=storageconf.example; dmarc=pass header.from=storageconf.example
     Subject: Your ticket for StorageConf
   body: |
     <img src="https://storageconf.example/qr/8812.png" alt="ticket">
@@ -271,7 +271,7 @@
     List-Id: Deals Weekly <list.dealsweekly.example>
     List-Unsubscribe: <https://dealsweekly.example/unsub/q1>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=dealsweekly.example;
-        dkim=pass header.d=dealsweekly.example; dmarc=pass
+        dkim=pass header.d=dealsweekly.example; dmarc=pass header.from=dealsweekly.example
     Subject: 40% off this week only
   body: |
     Our biggest sale of the season.
@@ -293,7 +293,7 @@
     X-Spam-Score: -2.1
     X-Spam-Bar: /
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=partnerco.example;
-        dkim=pass header.d=partnerco.example; dmarc=pass
+        dkim=pass header.d=partnerco.example; dmarc=pass header.from=partnerco.example
     Subject: Notes from Tuesday
   body: |
     Sending over the notes we discussed. Shout if anything looks off.
@@ -314,7 +314,7 @@
     X-Spam-Status: No, score=0.4 required=5.0
     X-Spam-Flag: NO
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=newvendor.example;
-        dkim=pass header.d=newvendor.example; dmarc=pass
+        dkim=pass header.d=newvendor.example; dmarc=pass header.from=newvendor.example
     Subject: Quote for the storage upgrade
   body: |
     Attaching our quote. Happy to walk through it whenever suits.
@@ -334,7 +334,7 @@
     X-Spam-Score: 10
     X-Spam-Bar: ++++++++++
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=northwind.example;
-        dkim=pass header.d=northwind.example; dmarc=pass
+        dkim=pass header.d=northwind.example; dmarc=pass header.from=northwind.example
     Subject: Invoice NW-3301
   body: |
     <p>Your invoice is ready. <a href="https://northwind.example/inv/3301">View</a></p>
@@ -356,7 +356,7 @@
     List-Unsubscribe: <https://marketplace.example/unsub/aa1>
     List-Unsubscribe-Post: List-Unsubscribe=One-Click
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=mail42.marketplace.example;
-        dkim=pass header.d=marketplace.example; dmarc=pass
+        dkim=pass header.d=marketplace.example; dmarc=pass header.from=marketplace.example
     Subject: Three listings that match your criteria
   body: |
     A short round-up of what came onto the marketplace this week.
@@ -380,7 +380,7 @@
     List-Id: Platform Weekly <list.platformweekly.example>
     List-Unsubscribe: <https://platformweekly.example/u/9f>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=bounce.mailer.example;
-        dkim=pass header.d=platformweekly.example; dmarc=pass
+        dkim=pass header.d=platformweekly.example; dmarc=pass header.from=platformweekly.example
     Subject: Issue 88 — platform teams and cognitive load
   body: |
     This week's reading on platform engineering.
@@ -401,7 +401,7 @@
     From: "Teamchat" <notify@teamchat.example>
     Return-Path: <bounces+9912@notifications.teamchat.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=notifications.teamchat.example;
-        dkim=pass header.d=teamchat.example; dmarc=pass
+        dkim=pass header.d=teamchat.example; dmarc=pass header.from=teamchat.example
     Subject: New messages in #general
   body: |
     You have unread mentions: https://teamchat.example/app
@@ -420,7 +420,7 @@
     From: "Work Marketplace" <notifications@workmarket.example>
     List-Unsubscribe: <https://workmarket.example/unsub/k1>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=workmarket.example;
-        dkim=pass header.d=workmarket.example; dmarc=pass
+        dkim=pass header.d=workmarket.example; dmarc=pass header.from=workmarket.example
     Subject: 3 new proposals on your project
   body: |
     <div style="display:none;font-size:0;color:#ffffff;max-height:0;overflow:hidden">
@@ -443,7 +443,7 @@
   raw_headers: |
     From: "Nuria Bastida" <nuria@consultores-red.example>
     Authentication-Results: mx.example.com; spf=softfail smtp.mailfrom=consultores-red.example;
-        dkim=pass header.d=consultores-red.example; dmarc=none
+        dkim=pass header.d=consultores-red.example; dmarc=none header.from=consultores-red.example
     X-Spam-Status: Yes, score=5.4 required=5.0
     X-Spam-Flag: YES
     X-Spam-Report: Spam detection software has identified this incoming email as possible spam.
@@ -475,7 +475,7 @@
   raw_headers: |
     From: "Tomás Iriarte" <tomas@obra-viva.example>
     Authentication-Results: mx.example.com; spf=softfail smtp.mailfrom=obra-viva.example;
-        dkim=pass header.d=obra-viva.example; dmarc=none
+        dkim=pass header.d=obra-viva.example; dmarc=none header.from=obra-viva.example
     X-Spam-Status: Yes, score=5.6
     X-Spam-Flag: YES
     X-Spam-Report: Content analysis details: (5.6 points, 5.0 required) pts rule name
@@ -501,7 +501,7 @@
     List-Unsubscribe: <https://talentpartners.example/u/aa>
     List-Unsubscribe-Post: List-Unsubscribe=One-Click
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=talentpartners.example;
-        dkim=pass header.d=talentpartners.example; dmarc=pass
+        dkim=pass header.d=talentpartners.example; dmarc=pass header.from=talentpartners.example
     Subject: Consultant Task — Senior Storage Architect, Copenhagen
   body: |
     <p>A client is looking for a storage architect for a six-month engagement.
@@ -530,7 +530,7 @@
     List-Unsubscribe: <https://talentpartners.example/u/bb>
     List-Unsubscribe-Post: List-Unsubscribe=One-Click
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=talentpartners.example;
-        dkim=pass header.d=talentpartners.example; dmarc=pass
+        dkim=pass header.d=talentpartners.example; dmarc=pass header.from=talentpartners.example
     Subject: This week's open roles
   body: |
     <p>Twelve new roles this week. <a href="https://talentpartners.example/weekly">Browse</a></p>
@@ -555,7 +555,7 @@
     List-Id: <weekly.mlweekly.example>
     List-Unsubscribe: <https://mlweekly.example/u>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=mlweekly.example;
-        dkim=pass header.d=mlweekly.example; dmarc=pass
+        dkim=pass header.d=mlweekly.example; dmarc=pass header.from=mlweekly.example
     Subject: How chat templates work
   body: |
     <p>ChatML wraps each turn in &lt;|im_start|&gt; and &lt;|im_end|&gt;.</p>

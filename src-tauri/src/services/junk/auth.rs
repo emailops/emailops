@@ -76,9 +76,27 @@ pub struct AuthAssessment {
     pub spf: Option<AuthResult>,
     pub dkim: Option<AuthResult>,
     pub dmarc: Option<AuthResult>,
+    /// The domain DMARC was evaluated for: the verdict's `header.from`,
+    /// lowercased.
+    pub dmarc_from: Option<String>,
+    /// The domain of the sender address we parsed and show.
+    pub sender_domain: Option<String>,
 }
 
 impl AuthAssessment {
+    /// Was DMARC evaluated for the sender's own domain? The receiving server
+    /// parses `From:` itself; where its parse and ours disagree, its verdict is
+    /// about an address we do not show.
+    fn dmarc_is_about_sender(&self) -> bool {
+        self.dmarc_from.is_some() && self.dmarc_from == self.sender_domain
+    }
+
+    /// A trusted DMARC verdict for a domain other than the sender's: the
+    /// address we show is not the one the server authenticated.
+    pub fn dmarc_names_another_domain(&self) -> bool {
+        self.trusted && self.dmarc_from.is_some() && !self.dmarc_is_about_sender()
+    }
+
     /// Did the message hard-fail the check that actually protects the visible
     /// `From:` domain?
     pub fn dmarc_hard_fail(&self) -> bool {
@@ -94,6 +112,7 @@ impl AuthAssessment {
     pub fn fully_aligned(&self) -> bool {
         self.trusted
             && self.dmarc == Some(AuthResult::Pass)
+            && self.dmarc_is_about_sender()
             && matches!(self.spf, Some(AuthResult::Pass) | None)
             && matches!(self.dkim, Some(AuthResult::Pass) | None)
     }
@@ -115,6 +134,12 @@ pub fn expected_authserv(provider: &str) -> Option<&'static str> {
         "outlook" => Some("protection.outlook.com"),
         _ => None,
     }
+}
+
+/// Exchange Online stamps `Authentication-Results` without an authserv-id, so
+/// on an Outlook account a bare topmost stamp is its own.
+fn stamps_without_authserv_id(expected: &str) -> bool {
+    expected.eq_ignore_ascii_case("protection.outlook.com")
 }
 
 /// Is `authserv_id` the MTA we expect?
@@ -293,8 +318,9 @@ fn extract_number(value: &str, key: &str) -> Option<f32> {
 /// Read the authentication verdicts out of captured headers.
 ///
 /// `trusted_authserv` is the MTA whose claims we accept; `None` means we cannot
-/// identify one, so nothing is trusted.
-pub fn assess(headers: Option<&RawHeaders>, trusted_authserv: Option<&str>) -> AuthAssessment {
+/// identify one, so nothing is trusted. `sender_email` is the address we parsed
+/// from `From:`, which the DMARC verdict must name to vouch for it.
+pub fn assess(headers: Option<&RawHeaders>, trusted_authserv: Option<&str>, sender_email: &str) -> AuthAssessment {
     let Some(headers) = headers else {
         return AuthAssessment::default();
     };
@@ -302,19 +328,25 @@ pub fn assess(headers: Option<&RawHeaders>, trusted_authserv: Option<&str>) -> A
         return AuthAssessment::default();
     };
 
-    let trusted = match (headers.authserv_id.as_deref(), trusted_authserv) {
+    // Read from the raw header rather than `headers.authserv_id`: rows stored
+    // before Exchange Online's bare stamp was understood hold its first verdict
+    // there.
+    let authserv_id = crate::sync::header_capture::parse_authserv_id(raw);
+    let trusted = match (authserv_id.as_deref(), trusted_authserv) {
         (Some(id), Some(expected)) => authserv_matches(id, expected),
+        (None, Some(expected)) => stamps_without_authserv_id(expected),
         _ => false,
     };
 
     let mut out = AuthAssessment {
         trusted,
+        sender_domain: crate::util::email_addr::extract_domain(sender_email),
         ..Default::default()
     };
 
-    // Skip the leading authserv-id segment; each remaining segment is
-    // "method=result" plus optional properties.
-    for segment in raw.split(';').skip(1) {
+    // Skip the leading authserv-id segment, if there is one; each remaining
+    // segment is "method=result" plus optional properties.
+    for segment in raw.split(';').skip(usize::from(authserv_id.is_some())) {
         let segment = segment.trim();
         let Some((method, rest)) = segment.split_once('=') else {
             continue;
@@ -322,14 +354,33 @@ pub fn assess(headers: Option<&RawHeaders>, trusted_authserv: Option<&str>) -> A
         // "spf=pass smtp.mailfrom=x.example" — the result is the first token.
         let result = AuthResult::parse(rest.split_whitespace().next().unwrap_or_default());
         match method.trim().to_lowercase().as_str() {
-            "spf" => out.spf.get_or_insert(result),
-            "dkim" => out.dkim.get_or_insert(result),
-            "dmarc" => out.dmarc.get_or_insert(result),
-            _ => continue,
-        };
+            "spf" => {
+                out.spf.get_or_insert(result);
+            }
+            "dkim" => {
+                out.dkim.get_or_insert(result);
+            }
+            "dmarc" if out.dmarc.is_none() => {
+                out.dmarc = Some(result);
+                out.dmarc_from = header_from(rest);
+            }
+            _ => {}
+        }
     }
 
     out
+}
+
+/// The `header.from=` property of a verdict's properties, lowercased.
+fn header_from(properties: &str) -> Option<String> {
+    properties
+        .split_whitespace()
+        .find_map(|token| {
+            let (key, value) = token.split_once('=')?;
+            key.eq_ignore_ascii_case("header.from").then_some(value)
+        })
+        .map(|value| value.trim_matches('"').trim_end_matches('.').to_ascii_lowercase())
+        .filter(|domain| !domain.is_empty())
 }
 
 #[cfg(test)]
@@ -342,10 +393,11 @@ mod tests {
     }
 
     const OURS: Option<&str> = Some("mx.example.com");
+    const SENDER: &str = "billing@acme.example";
 
     #[test]
     fn absent_headers_yield_an_unknown_assessment() {
-        let a = assess(None, OURS);
+        let a = assess(None, OURS, SENDER);
         assert!(a.is_unknown());
         assert!(!a.trusted);
         assert!(!a.dmarc_hard_fail());
@@ -353,7 +405,11 @@ mod tests {
 
     #[test]
     fn results_are_parsed_per_method() {
-        let a = assess(Some(&headers("mx.example.com; spf=fail; dkim=none; dmarc=fail")), OURS);
+        let a = assess(
+            Some(&headers("mx.example.com; spf=fail; dkim=none; dmarc=fail")),
+            OURS,
+            SENDER,
+        );
         assert!(a.trusted);
         assert_eq!(a.spf, Some(AuthResult::Fail));
         assert_eq!(a.dkim, Some(AuthResult::None));
@@ -365,6 +421,7 @@ mod tests {
         let a = assess(
             Some(&headers("mx.example.com; spf=pass smtp.mailfrom=acme.example")),
             OURS,
+            SENDER,
         );
         assert_eq!(a.spf, Some(AuthResult::Pass));
     }
@@ -374,7 +431,7 @@ mod tests {
         // The core defence. An attacker can write any Authentication-Results
         // they like into their own message; if we cannot attribute the topmost
         // instance to our own MTA, the honest output is "unknown".
-        let a = assess(Some(&headers("forged.example; spf=pass; dmarc=pass")), OURS);
+        let a = assess(Some(&headers("forged.example; spf=pass; dmarc=pass")), OURS, SENDER);
         assert!(!a.trusted);
         assert!(a.is_unknown());
         assert!(!a.fully_aligned(), "a forged pass must not read as aligned");
@@ -384,14 +441,14 @@ mod tests {
     fn an_untrusted_verdict_cannot_incriminate_either() {
         // Symmetry matters: an untrusted header must not be usable to frame a
         // message any more than to clear one.
-        let a = assess(Some(&headers("forged.example; spf=fail; dmarc=fail")), OURS);
+        let a = assess(Some(&headers("forged.example; spf=fail; dmarc=fail")), OURS, SENDER);
         assert!(!a.dmarc_hard_fail());
         assert!(!a.spf_hard_fail());
     }
 
     #[test]
     fn an_account_with_no_known_mta_trusts_nothing() {
-        let a = assess(Some(&headers("mx.example.com; spf=pass; dmarc=pass")), None);
+        let a = assess(Some(&headers("mx.example.com; spf=pass; dmarc=pass")), None, SENDER);
         assert!(!a.trusted);
         assert!(a.is_unknown());
     }
@@ -402,20 +459,79 @@ mod tests {
         // senders publish no DMARC at all. Treating those as guilt is the
         // fastest route to a false positive on real mail.
         for token in ["softfail", "neutral", "none", "temperror", "permerror"] {
-            let a = assess(Some(&headers(&format!("mx.example.com; dmarc={token}"))), OURS);
+            let a = assess(Some(&headers(&format!("mx.example.com; dmarc={token}"))), OURS, SENDER);
             assert!(!a.dmarc_hard_fail(), "{token} must not be a hard fail");
         }
-        let a = assess(Some(&headers("mx.example.com; dmarc=fail")), OURS);
+        let a = assess(Some(&headers("mx.example.com; dmarc=fail")), OURS, SENDER);
         assert!(a.dmarc_hard_fail());
     }
 
     #[test]
     fn full_alignment_requires_a_trusted_dmarc_pass() {
-        let aligned = assess(Some(&headers("mx.example.com; spf=pass; dkim=pass; dmarc=pass")), OURS);
+        let aligned = assess(
+            Some(&headers(
+                "mx.example.com; spf=pass; dkim=pass; dmarc=pass header.from=acme.example",
+            )),
+            OURS,
+            SENDER,
+        );
         assert!(aligned.fully_aligned());
 
-        let no_dmarc = assess(Some(&headers("mx.example.com; spf=pass; dkim=pass")), OURS);
+        let no_dmarc = assess(Some(&headers("mx.example.com; spf=pass; dkim=pass")), OURS, SENDER);
         assert!(!no_dmarc.fully_aligned(), "SPF+DKIM without DMARC is not alignment");
+    }
+
+    #[test]
+    fn a_dmarc_pass_vouches_only_for_the_domain_it_names() {
+        // The server checked DMARC for the domain in `header.from`. If the
+        // sender we parsed is on another domain, the pass is about someone
+        // else: crediting it would let a parser disagreement clear a spoof.
+        let cases = [
+            (
+                "dmarc=pass header.from=acme.example",
+                "billing@acme.example",
+                true,
+                false,
+            ),
+            (
+                "dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=acme.example",
+                "billing@acme.example",
+                true,
+                false,
+            ),
+            (
+                "dmarc=pass header.from=Acme.Example",
+                "Billing@ACME.example",
+                true,
+                false,
+            ),
+            (
+                "dmarc=pass header.from=attacker.example",
+                "ceo@bank.example",
+                false,
+                true,
+            ),
+            ("dmarc=pass", "billing@acme.example", false, false),
+        ];
+        for (verdict, sender, aligned, names_another) in cases {
+            let a = assess(Some(&headers(&format!("mx.example.com; {verdict}"))), OURS, sender);
+            assert_eq!(a.fully_aligned(), aligned, "aligned: {verdict} / {sender}");
+            assert_eq!(
+                a.dmarc_names_another_domain(),
+                names_another,
+                "names another: {verdict} / {sender}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_untrusted_verdict_naming_another_domain_proves_nothing() {
+        let a = assess(
+            Some(&headers("forged.example; dmarc=pass header.from=attacker.example")),
+            OURS,
+            "ceo@bank.example",
+        );
+        assert!(!a.dmarc_names_another_domain());
     }
 
     #[test]
@@ -427,8 +543,10 @@ mod tests {
         assert!(authserv_matches("mx.google.com", "mx.google.com"));
     }
 
-    // The two shapes below are synthetic: no real Exchange Online header backs
-    // them, so they record what the parser does today, not what it should do.
+    // Exchange Online stamps its verdict without an authserv-id
+    // ("spf=pass (sender IP is …) smtp.mailfrom=…; dkim=…; dmarc=… header.from=…;
+    // compauth=…", per Microsoft's anti-spam header reference). The shapes below
+    // are synthetic copies of that format.
     #[test]
     fn an_outlook_verdict_naming_its_server_is_attributed() {
         let named = headers(
@@ -436,7 +554,7 @@ mod tests {
              dkim=none header.d=none; dmarc=fail action=none header.from=example.com",
         );
 
-        let a = assess(Some(&named), expected_authserv("outlook"));
+        let a = assess(Some(&named), expected_authserv("outlook"), SENDER);
 
         assert!(a.trusted);
         assert_eq!(a.spf, Some(AuthResult::Fail));
@@ -444,26 +562,45 @@ mod tests {
         assert!(a.dmarc_hard_fail());
     }
 
+    const EXCHANGE_BARE: &str = "spf=fail (sender IP is 192.0.2.1) smtp.mailfrom=example.com; \
+         dkim=none (message not signed) header.d=none;\
+         dmarc=fail action=none header.from=example.com;compauth=fail reason=000";
+
     #[test]
-    fn an_outlook_verdict_with_no_authserv_id_is_not_attributed() {
-        let bare = headers(
-            "spf=fail (sender IP is 192.0.2.1) smtp.mailfrom=example.com; \
-             dkim=none (message not signed) header.d=none;\
-             dmarc=fail action=none header.from=example.com;compauth=fail reason=000",
-        );
+    fn an_outlook_verdict_with_no_authserv_id_is_attributed() {
+        // Capture keeps only the topmost instance, which on an Outlook account
+        // is the one Exchange Online prepended — the same trust Gmail's named
+        // stamp gets.
+        let a = assess(Some(&headers(EXCHANGE_BARE)), expected_authserv("outlook"), SENDER);
+
+        assert!(a.trusted);
         assert_eq!(
-            bare.authserv_id.as_deref(),
-            Some("spf=fail"),
-            "the first verdict is taken for the authserv-id"
+            a.spf,
+            Some(AuthResult::Fail),
+            "the first segment is a verdict, not an id"
         );
-
-        let a = assess(Some(&bare), expected_authserv("outlook"));
-
-        assert!(!a.trusted);
-        assert_eq!(a.spf, None, "the first segment is skipped as the authserv-id");
         assert_eq!(a.dmarc, Some(AuthResult::Fail));
+        assert!(a.dmarc_hard_fail());
+    }
+
+    #[test]
+    fn a_stamp_without_an_authserv_id_is_never_gmails() {
+        let a = assess(Some(&headers(EXCHANGE_BARE)), expected_authserv("gmail"), SENDER);
+        assert!(!a.trusted);
         assert!(a.is_unknown());
-        assert!(!a.dmarc_hard_fail());
+    }
+
+    #[test]
+    fn a_row_stored_with_the_old_misread_authserv_id_is_read_from_the_raw_header() {
+        // Rows synced before the fix stored the first verdict ("spf=fail") as
+        // the authserv-id; the raw header is what counts.
+        let mut stored = headers(EXCHANGE_BARE);
+        stored.authserv_id = Some("spf=fail".to_string());
+
+        let a = assess(Some(&stored), expected_authserv("outlook"), SENDER);
+
+        assert!(a.trusted);
+        assert_eq!(a.spf, Some(AuthResult::Fail));
     }
 
     #[test]
@@ -617,11 +754,16 @@ mod tests {
     }
     #[test]
     fn a_trusted_spf_fail_is_a_hard_spf_failure() {
-        let a = assess(Some(&headers("mx.example.com; spf=fail; dkim=pass; dmarc=pass")), OURS);
+        let a = assess(
+            Some(&headers("mx.example.com; spf=fail; dkim=pass; dmarc=pass")),
+            OURS,
+            SENDER,
+        );
         assert!(a.spf_hard_fail());
         let a = assess(
             Some(&headers("mx.example.com; spf=softfail; dkim=pass; dmarc=pass")),
             OURS,
+            SENDER,
         );
         assert!(!a.spf_hard_fail());
     }
@@ -633,7 +775,7 @@ mod tests {
             "mx.example.com; dkim=pass",
             "mx.example.com; dmarc=pass",
         ] {
-            assert!(!assess(Some(&headers(auth)), OURS).is_unknown(), "{auth}");
+            assert!(!assess(Some(&headers(auth)), OURS, SENDER).is_unknown(), "{auth}");
         }
     }
 
