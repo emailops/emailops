@@ -98,8 +98,14 @@ fn set_once(slot: &mut Option<String>, value: &str) {
 
 /// Extract the `authserv-id` — the leading token of an `Authentication-Results`
 /// value, before the first `;`.
-fn parse_authserv_id(value: &str) -> Option<String> {
+///
+/// `None` when that segment is already a `method=result` verdict: Exchange
+/// Online writes no authserv-id, and a token cannot contain `=`.
+pub(crate) fn parse_authserv_id(value: &str) -> Option<String> {
     let head = value.split(';').next()?.trim();
+    if head.contains('=') {
+        return None;
+    }
     // The authserv-id may be followed by a version number ("mx.example.com 1").
     let id = head.split_whitespace().next()?.trim();
     if id.is_empty() {
@@ -277,6 +283,17 @@ mod tests {
         // RFC 8601 allows "authserv-id version", e.g. "mx.example.com 1".
         let captured = capture(&pairs(&[("Authentication-Results", "mx.example.com 1; spf=pass")]));
         assert_eq!(captured.authserv_id.as_deref(), Some("mx.example.com"));
+    }
+
+    #[test]
+    fn a_stamp_that_opens_with_a_verdict_has_no_authserv_id() {
+        // Exchange Online writes no authserv-id; its first segment is a
+        // `method=result` pair, which a token never contains.
+        let captured = capture(&pairs(&[(
+            "Authentication-Results",
+            "spf=pass (sender IP is 192.0.2.1) smtp.mailfrom=x.example; dmarc=pass header.from=x.example",
+        )]));
+        assert_eq!(captured.authserv_id, None);
     }
 
     #[test]

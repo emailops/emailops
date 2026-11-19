@@ -12,7 +12,7 @@
     Reply-To: ap.acme@mail-secure.example
     Return-Path: <bounce@mail-secure.example>
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=mail-secure.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=acme-payments.example
     Subject: Updated bank details for invoice 4471
   body: |
     Please note our remittance account has changed. Use the details below for the
@@ -30,7 +30,7 @@
     From: "Sam Okafor" <s.okafor.work@freemail-host.example>
     Reply-To: s.okafor.work@freemail-host.example
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=freemail-host.example;
-        dkim=pass header.d=freemail-host.example; dmarc=pass
+        dkim=pass header.d=freemail-host.example; dmarc=pass header.from=freemail-host.example
     Subject: quick favour
   body: |
     Are you at your desk? I need you to handle a payment for me before the end of day.
@@ -51,7 +51,7 @@
   raw_headers: |
     From: "Meridian Bank" <alerts@xn--meridinbank-9db.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=xn--meridinbank-9db.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=xn--meridinbank-9db.example
     Subject: Verify your account details
   body: |
     We could not verify your recent sign-in. Confirm your details to avoid suspension.
@@ -62,13 +62,33 @@
     graymail: clean
     reasons_include: [punycode_domain, lookalike_domain, dmarc_fail]
 
+# Parser confusion: the contact's real address sits in a comment after the
+# attacker's angle-addr. The server ran DMARC for the attacker's own domain, which
+# passes; reading the comment as the sender would credit that pass to a domain the
+# user corresponds with and clear the message.
+- id: phish-from-comment-names-a-known-contact
+  tier: smoke
+  raw_headers: |
+    From: "Sam Okafor" <s.okafor.work@freemail-host.example> (<sam@partnerco.example>)
+    Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=freemail-host.example;
+        dkim=pass header.d=freemail-host.example; dmarc=pass header.from=freemail-host.example
+    Subject: quick favour
+  body: |
+    Are you at your desk? I need you to handle a payment for me before the end of day.
+    I am in meetings so email only.
+  known_contact_domains: [partnerco.example]
+  known_contact_names: ["Sam Okafor"]
+  expect:
+    phishing: junk
+    reasons_include: [display_name_impersonation]
+
 - id: phish-dangerous-html-attachment
   tier: smoke
   raw_headers: |
     From: "Document Delivery" <docs@file-transfer-svc.example>
     Return-Path: <noreply@bulk-sender.example>
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=bulk-sender.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=file-transfer-svc.example
     Subject: Scanned document for your review
   body: |
     Open the attached document to view the scan.
@@ -86,7 +106,7 @@
     Return-Path: <relay@offshore-mailer.example>
     Reply-To: cfo.private@offshore-mailer.example
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=offshore-mailer.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=yourdomain.example
     Subject: Wire transfer — confidential
   body: |
     I need a transfer processed today for an acquisition we have not announced.
@@ -104,7 +124,7 @@
   raw_headers: |
     From: "security@acme.example" <bounce7712@mailer-host.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=mailer-host.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=mailer-host.example
     Subject: Unusual sign-in blocked
   body: |
     Confirm it was you: https://acme-verify.example/confirm
@@ -121,7 +141,7 @@
   tier: smoke
   raw_headers: |
     From: "IT Helpdesk" <helpdesk@corp-it-support.example>
-    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=fail
+    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=fail header.from=corp-it-support.example
     Subject: Mailbox quota exceeded — action required
   body: |
     Your mailbox is full and incoming mail is being rejected.
@@ -141,7 +161,7 @@
     From: "Payments Team" <payments@acme-billing-secure.example>
     Reply-To: payments@mail-relay-host.example
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=mail-relay-host.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=acme-billing-secure.example
     Subject: Remittance update
   body: |
     Please update the account on file before the next run.
@@ -166,7 +186,7 @@
   raw_headers: |
     From: "Billing Desk" <billing@vendor-desk.example>
     Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=vendor-desk.example;
-        dkim=pass header.d=vendor-desk.example; dmarc=pass
+        dkim=pass header.d=vendor-desk.example; dmarc=pass header.from=vendor-desk.example
     Subject: Q4 vendor invoice reminder
   body: |
     <p>Your Q4 invoice of 1,240 EUR is due on 15/11.</p>

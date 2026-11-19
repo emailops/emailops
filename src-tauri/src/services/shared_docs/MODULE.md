@@ -49,9 +49,10 @@ email as the only transport: no server, no cloud.
    editor ignores it.
 3. `ingest_arrivals` first refuses a message whose sender fails the
    provider's authentication (`planner::sender_rejection` over
-   `junk::auth::assess`: DMARC fail, or SPF fail with no DMARC policy and no
-   valid DKIM; only Gmail and Outlook verdicts can be attributed, so IMAP is
-   not covered). Then it merges each envelope, records the sender's state vector,
+   `junk::auth::assess`: a DMARC verdict whose `header.from` is not the
+   sender's domain, DMARC fail, or SPF fail with no DMARC policy and no valid
+   DKIM; only Gmail and Outlook verdicts can be attributed, so IMAP is not
+   covered). Then it merges each envelope, records the sender's state vector,
    and marks the document dirty when the sender lacks something or this
    install is missing a dependency — so the next flush catches the other side
    up. A lost message is made good this way; duplicates are harmless.

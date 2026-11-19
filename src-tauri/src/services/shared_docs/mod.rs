@@ -869,6 +869,7 @@ pub async fn ingest_arrivals(
             let auth = crate::services::junk::auth::assess(
                 email.headers.as_ref(),
                 crate::services::junk::auth::expected_authserv(&account.provider),
+                &email.sender_email,
             );
             if let Some(reason) = planner::sender_rejection(&auth) {
                 logger::log(

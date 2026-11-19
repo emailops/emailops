@@ -10,7 +10,7 @@
     From: "Winner Notification" <promo@lucky-draw-intl.example>
     X-Spam-Flag: YES
     X-Spam-Status: Yes, score=9.8 required=5.0 tests=BAYES_99,HTML_IMAGE_ONLY
-    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=none
+    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=none header.from=lucky-draw-intl.example
     Subject: You have been selected
   body: |
     Claim your prize within 24 hours.
@@ -25,7 +25,7 @@
   raw_headers: |
     From: "DEALS" <blast@offer-network.example>
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=offer-network.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=offer-network.example
     Subject: LIMITED TIME!!! ACT NOW BEFORE IT IS TOO LATE
   body: |
     CLICK HERE NOW: https://shrt.example/a1 https://shrt.example/b2 https://shrt.example/c3
@@ -40,7 +40,7 @@
   raw_headers: |
     From: "Delivery Service" <notice@parcel-alerts.example>
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=parcel-alerts.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=parcel-alerts.example
     Subject: Your parcel could not be delivered
   body: |
     Reschedule delivery: http://203.0.113.77/redelivery?id=8812
@@ -61,7 +61,7 @@
   raw_headers: |
     From: "Affiliate Network" <mail@click-partners.example>
     Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=click-partners.example;
-        dkim=none; dmarc=fail
+        dkim=none; dmarc=fail header.from=click-partners.example
     Subject: Top offers this week
   body: |
     <a href="https://a1.example/x">one</a> <a href="https://b2.example/x">two</a>
@@ -77,7 +77,7 @@
   tier: smoke
   raw_headers: |
     From: "Account Services" <svc@billing-notices.example>
-    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=fail
+    Authentication-Results: mx.example.com; spf=none; dkim=none; dmarc=fail header.from=billing-notices.example
     Subject: Subscription renewal
   body: |
     <a href="https://collector-host.example/track/9f">https://meridianbank.example/account</a>
