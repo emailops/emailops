@@ -50,7 +50,7 @@ pre-commit:
     scripts-tests:
       glob:
         - "scripts/{docs_*,check_docs*,check-docs*,disk_clean,privacy_scan}.py"
-        - "scripts/{build_target,ensure_demo_db}.sh"
+        - "scripts/{build_target,ensure_demo_db,update_security_audit_skill}.sh"
         - "scripts/tests/*.py"
       run: uv run --no-project --with pytest pytest -q scripts/tests
     # typecheck, clippy and rustfmt-check run single gates from
