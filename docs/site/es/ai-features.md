@@ -76,6 +76,12 @@ u **OpenRouter**, que recupera para él el presupuesto mensual y **Solo retenci�
 modelo de embeddings del servidor se comprueba al guardar, y se rechaza uno que no devuelve
 vectores que quepan en el índice. Cambiarlo reconstruye el índice, tras preguntar.
 
+<!-- claim:ai-openai-compatible-chunks -->
+Con **Este servidor**, **Fragmentos por petición de Embeddings** (de 1 a 64, 1 por defecto) fija
+cuántos fragmentos de texto de correo van en una petición al servidor, así un buzón grande se
+indexa con menos peticiones. Si el servidor rechaza una petición con varios, sus fragmentos se
+reenvían de uno en uno y el panel de Logs lo indica.
+
 <!-- claim:ai-openai-compatible-5 -->
 **Tamaño de contexto (tokens)** le dice a EmailOps cuánto puede leer el modelo de una vez. Déjalo
 en 0 para usar lo que informa el servidor: vLLM, LM Studio y `llama-server` dicen con cuánto
@@ -327,6 +333,11 @@ cada búsqueda y pregunta del chat, se envía entonces a OpenRouter y cuenta par
 mensual. Sin ninguno, la búsqueda semántica está desactivada y solo se busca por palabras
 clave. El modelo se comprueba al guardar, y se rechaza el que no genere los vectores de 768
 dimensiones que necesita el índice.
+
+<!-- claim:ai-semantic-search-progress -->
+**Ajustes → IA: backend y modelos** muestra el **Índice de correo**: cuántos correos faltan por
+indexar, contados con las categorías y el límite de antigüedad que usa la indexación, y, mientras
+indexa, cuántos procesa por minuto, aproximadamente, medido en los dos últimos minutos.
 
 ## Traducción {#translation}
 

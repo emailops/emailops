@@ -4696,3 +4696,29 @@ database at all.
   thread or need combined variants.
 - *Sending the draft only when a classifier says the question is about it*: that
   classifier was rejected before; the chip lets the user control the cost, as with the PDF.
+
+## 2026-11-18 — Embeddings go up to N chunks per request on an OpenAI-compatible server; Settings shows the index pace
+
+**Decision:** With an OpenAI-compatible server computing the email index, **Chunks per
+Embeddings request** (1 to 64, default 1, refused outside that range on Save) sets how many
+chunks one `POST /embeddings` carries as an array `input`. At 1 nothing changes: one string
+per request, as before. Vectors are matched to their chunks by the answer's `index`, never by
+position; an error status, an answer that cannot be read, or vectors that do not match the
+chunks one for one count as a refused batch, which is logged (`warn`, `embeddings`) and sent
+again one chunk per request; a broken connection or a timeout is an error, not a refusal.
+The indexing pipeline groups whole emails until the group holds N chunks and asks the
+provider for them in one call; with a provider at 1 it keeps embedding chunk by chunk. The
+in-app runtime, Ollama and OpenRouter (even beside a server chat) stay at one chunk per
+request. Settings → AI Backend & Models shows the **Email index**: the backlog, counted with
+the categories and age limit the pipeline uses (the old pending count ignored them, so it
+never reached zero), and the emails indexed per minute over the last two minutes, from
+samples the pipeline records in memory as it stores each group.
+**Context:** Embedding a large mailbox through a local server was slow because each chunk was
+its own request, and nothing showed how fast the index was filling (GitHub issue #305).
+**Rejected:** A default above 1, or trying the largest batch and shrinking on refusal — some
+servers take only a string, and the task asked for today's behaviour unless the user raises it.
+Remembering a refusal for the rest of the run — the acceptance asked for a per-batch
+fallback, and a refusal logs once per batch so the user sees it. Batching OpenRouter too —
+its per-request cost is dominated by the network, and its settings have no place for it.
+Persisting throughput samples in the database — a rate over the last two minutes needs no
+history across restarts.

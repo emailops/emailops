@@ -16,6 +16,8 @@ progress asks first; a change of embedding model asks before re-indexing.
 - `ai.workInProgress` changing provider or model while Embeddings/classification/extraction work is queued opens the stop-or-wait dialog; stopping is cooperative (each task ends at its next email).
 - `ai.reindexConfirm` saving another embedding model asks before the index is rebuilt.
 - `ai.onboarding` the onboarding AI step offers the same OpenRouter fields, probe and recommended models.
+- `ai.embeddingBatch` OpenAI-compatible tab with **Email index (Embeddings)** on **This server**: **Chunks per Embeddings request** (1 to 64, default 1; other values are refused on Save). A request with several chunks that the server refuses (error status, unreadable answer, vectors not matching by `index`) is resent one chunk at a time, with a `warn` line from `embeddings` in Logs. Hidden for the in-app and OpenRouter index sources.
+- `ai.indexingStatus` **Email index** section, every backend: emails still waiting (counted with each account's categories and age limit), and emails per minute over the last two minutes while indexing runs (`Not indexing right now.` otherwise, `Every email that semantic search covers is indexed.` at zero). Refreshed every 5 s while the tab is open (`get_indexing_status`).
 
 ## How to get to it (user POV)
 
@@ -31,6 +33,8 @@ Preconditions: baseline. `verify.sh launch` starts the instance with `OPENROUTER
 - In-app tab → click the button starting with `In-app` → `Keep model loaded (minutes)` is back, `Context budget` gone; `select value from user_preferences where key='ai_provider'` still prints `llamacpp` (nothing was saved).
 - Status bar → `$V wd text '[data-testid="ai-backend"]'` prints `Embedded`; its parent holds one `select` (`aria-label="AI Model"`) and no provider options.
 - Never click **Save** with OpenRouter selected, **Test**, or pick an embedding model there: those reach the remote provider.
+- Email index → in the same dialog, the `h3` with text `Email index` is followed by the backlog line; on the demo DB with its index built it reads `Every email that semantic search covers is indexed.` Cross-check the number with `$V wd js '(async()=>(await window.__TAURI_INTERNALS__.invoke("get_indexing_status")))()'` (`backlog`, `messagesPerMinute`). Not driven live yet (added 18/11/2026 without a launch).
+- Chunks per request → the OpenAI-compatible tab needs a server; the demo has none, so the field is covered by vitest only. Do not point the instance at a real server from the sweep.
 
 ## Gotchas
 
@@ -42,8 +46,10 @@ Preconditions: baseline. `verify.sh launch` starts the instance with `OPENROUTER
 |---|---|
 | provider clients: streaming, tool calls, cost, context window, data policy, timeouts | unit (`ai::openrouter*`, `ai::ollama`, `ai::llama_cpp::*`, `ai::utf8_stream`, `ai::prompt_guard`) |
 | config, per-provider model memory, embedding probe, budget | unit on an in-memory DB (`services::ai::*`) |
+| chunks per embeddings request: bounds, storage, array `input`, mapping by `index`, fallback to one chunk per request | unit (`services::ai_server::plan_tests`, `services::ai::server_provider_tests`, `ai::openrouter::embedding_tests` on wiremock) |
+| grouping chunks across emails, backlog count, emails-per-minute rate | unit (`services::embeddings::tests`) |
 | work list and cooperative stop | unit on a real queue (`services::ai_activity`, `services::task_queue`) |
-| settings panels, selector options, dialogs, status bar, onboarding step | vitest (`AiSettings*`, `OpenRouterPanel`, `AiWorkInProgressDialog`, `aiProviderWork`, `backgroundActivity`, `LogPanel/*`, `StepAiBackend.*`) |
+| settings panels, selector options, dialogs, status bar, onboarding step, Email index section | vitest (`AiSettings*`, `OpenRouterPanel`, `IndexingStatus`, `AiWorkInProgressDialog`, `aiProviderWork`, `backgroundActivity`, `LogPanel/*`, `StepAiBackend.*`) |
 | command arguments and response shapes (`get_ai_config`, `get_ai_provider_activity`, `cancel_ai_provider_work`, `validate_openrouter_embedding_model`, `list_ai_embedding_models`) | contract (`src/lib/apiContract/ia.api.test.ts`, `ai::json_shape`) |
 | OpenRouter tab, In-app tab, Logs bar | e2e (`IA/*` in `sweep.mjs`) |
 | integration (`tests/integration.rs`) | n/a: the cross-module behaviour (config ↔ preferences ↔ queue ↔ Embeddings run) is tested inside the crate on a real in-memory DB and queue, because its seams (`generate_with_service`, the probe preferences, the fake provider's hooks) are crate-private; from outside only `AiService::new` is reachable and it builds a real provider |

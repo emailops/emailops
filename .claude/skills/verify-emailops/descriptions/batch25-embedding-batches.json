@@ -1,0 +1,30 @@
+{
+  "rust": {
+    "src-tauri/src/ai/openrouter.rs::a_batch_request_sends_its_texts_as_an_array_and_a_single_one_as_a_string": "Una petición de Embeddings con varios fragmentos manda `input` como lista; con uno solo, como texto, igual que antes.",
+    "src-tauri/src/ai/openrouter.rs::vectors_map_back_to_their_inputs_by_index_not_by_position": "Cada vector vuelve a su fragmento por el `index` de la respuesta; si faltan, sobran, se repiten o no traen índice, la respuesta no vale.",
+    "src-tauri/src/ai/openrouter.rs::one_chunk_per_request_is_the_default_and_sends_plain_strings": "Por defecto se manda un fragmento por petición, como texto: el comportamiento de siempre no cambia.",
+    "src-tauri/src/ai/openrouter.rs::chunks_go_up_to_n_per_request_and_come_back_in_input_order": "Con N fragmentos por petición, 5 fragmentos van en peticiones de 3 y 2, y los vectores vuelven en el orden de entrada aunque el servidor los liste al revés.",
+    "src-tauri/src/ai/openrouter.rs::a_refused_batch_is_sent_again_one_chunk_at_a_time_and_logged": "Si el servidor rechaza una petición con varios fragmentos, se reenvían de uno en uno y el panel de Logs muestra un aviso con el estado HTTP.",
+    "src-tauri/src/ai/openrouter.rs::a_batch_answered_with_the_wrong_number_of_vectors_is_sent_again_one_chunk_at_a_time": "Una respuesta con menos vectores que fragmentos cuenta como rechazo: los fragmentos se reenvían de uno en uno.",
+    "src-tauri/src/ai/openrouter.rs::the_client_reports_how_many_chunks_it_sends_per_request": "El cliente dice cuántos fragmentos manda por petición: 1 salvo que se configure otro valor.",
+    "src-tauri/src/services/ai_server.rs::chunks_per_embedding_request_default_to_one_and_stay_within_bounds": "Fragmentos por petición vale 1 si no se indica, admite de 1 a 64 y rechaza 0, 65 o más al guardar.",
+    "src-tauri/src/services/ai_server.rs::the_chunks_per_request_are_stored_and_a_bad_stored_value_reads_as_one": "El valor guardado se lee igual; uno fuera de rango en la base de datos se lee como 1.",
+    "src-tauri/src/services/ai.rs::the_saved_chunks_per_request_reach_the_server_embeddings_only": "Los fragmentos por petición guardados llegan al servidor cuando calcula el índice; con OpenRouter como origen se sigue mandando uno.",
+    "src-tauri/src/ai/provider.rs::split_provider_sends_as_many_chunks_per_request_as_its_embedding_backend": "Con chat y Embeddings en backends distintos, manda el tamaño de lote del backend de Embeddings; por defecto es 1.",
+    "src-tauri/src/services/embeddings.rs::emails_are_grouped_whole_up_to_the_chunks_one_request_takes": "Los correos se agrupan enteros hasta llenar N fragmentos; un correo con más fragmentos que N va solo.",
+    "src-tauri/src/services/embeddings.rs::a_provider_that_takes_several_chunks_per_request_gets_them_across_emails": "Con 4 fragmentos por petición, 5 correos de un fragmento van en dos llamadas (4 y 1) y los 5 quedan indexados.",
+    "src-tauri/src/services/embeddings.rs::one_chunk_per_request_keeps_embedding_chunk_by_chunk": "Con 1 fragmento por petición la indexación sigue pidiendo cada fragmento por separado, sin llamadas por lotes.",
+    "src-tauri/src/services/embeddings.rs::the_rate_counts_the_emails_indexed_after_the_first_sample_over_the_time_since_it": "El ritmo en correos por minuto se calcula sobre los dos últimos minutos; sin dos muestras distintas no se muestra.",
+    "src-tauri/src/services/embeddings.rs::the_backlog_counts_only_what_the_pipeline_will_embed": "Los correos pendientes cuentan solo los que la indexación va a procesar: una categoría excluida no cuenta, y tras indexar queda en 0."
+  },
+  "vitest": {
+    "src/components/Settings/AiSettings.server.test.tsx::saves the chunks per embedding request typed in": "El valor escrito en Fragmentos por petición de Embeddings se manda al guardar el servidor.",
+    "src/components/Settings/AiSettings.server.test.tsx::asks for chunks per request only when the server computes the index": "El campo de fragmentos por petición solo aparece cuando el índice lo calcula el propio servidor.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::shows the backlog and the emails indexed per minute": "La sección Índice de correo muestra los correos pendientes y los indexados por minuto.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::keeps one decimal for a slow rate, so it never reads as zero": "Un ritmo lento (medio correo por minuto) se muestra con un decimal, no como 0.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::says the index is up to date when nothing is waiting": "Sin correos pendientes, la sección dice que el índice está al día.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::says when emails are waiting but nothing is being indexed": "Con correos pendientes y sin ritmo reciente, la sección dice que ahora no se está indexando.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::refreshes while it is open": "Con Ajustes abierto, el estado del índice se vuelve a pedir cada 5 segundos.",
+    "src/components/Settings/AiSettings/IndexingStatus.test.tsx::shows why the status could not be read": "Si no se puede leer el estado del índice, la sección muestra el error."
+  }
+}

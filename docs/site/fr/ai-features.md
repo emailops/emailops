@@ -81,6 +81,12 @@ tourner) ou **OpenRouter**, qui fait revenir pour lui le budget mensuel et
 et celui qui ne renvoie pas de vecteurs adaptés à l'index est refusé. Le changer reconstruit
 l'index, après confirmation.
 
+<!-- claim:ai-openai-compatible-chunks -->
+Avec **Ce serveur**, **Fragments par requête d’Embeddings** (de 1 à 64, 1 par défaut) fixe combien
+de fragments de texte d’e-mail partent dans une requête au serveur, pour indexer une grande boîte
+en moins de requêtes. Si le serveur refuse une requête qui en porte plusieurs, ses fragments sont
+renvoyés un par un et le panneau Logs le signale.
+
 <!-- claim:ai-openai-compatible-5 -->
 **Taille du contexte (tokens)** indique à EmailOps combien le modèle peut lire d'un coup. Laissez
 0 pour utiliser ce que le serveur annonce : vLLM, LM Studio et `llama-server` indiquent avec
@@ -342,6 +348,12 @@ e-mail indexé, ainsi que de chaque recherche et question du chat, est alors env
 et compte dans le budget mensuel. Sans modèle, la recherche sémantique est désactivée et la
 recherche se fait uniquement par mots-clés. Le modèle est vérifié à l'enregistrement, et celui
 qui ne produit pas les vecteurs de 768 dimensions dont l'index a besoin est refusé.
+
+<!-- claim:ai-semantic-search-progress -->
+**Paramètres → IA : backend et modèles** affiche l’**Index des e-mails** : combien d’e-mails
+attendent encore d’être indexés, comptés avec les catégories et la limite d’âge de l’indexation,
+et, pendant l’indexation, environ combien elle en traite par minute, mesuré sur les deux dernières
+minutes.
 
 ## Traduction {#translation}
 
