@@ -263,15 +263,27 @@ fn uid_store_flag<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, fla
 /// Render a mailbox name as an IMAP quoted string. A raw line break would let
 /// the name inject a second command, so it is rejected before the wire.
 fn quote_mailbox(command: &str, mailbox_name: &str) -> Result<String> {
-    if mailbox_name.contains(['\r', '\n']) {
-        return Err(AppError::SyncError(format!(
-            "IMAP {command} rejected: mailbox name contains a line break"
-        )));
+    quoted_string(mailbox_name).ok_or_else(|| {
+        AppError::SyncError(format!(
+            "IMAP {command} rejected: mailbox name contains a line break or NUL"
+        ))
+    })
+}
+
+/// The `UID SEARCH` key that finds a message by its `Message-ID` header.
+/// `None` when the value cannot be sent: the header is sender-controlled, and
+/// a line break in it would end the command and run the rest as a second one.
+pub(crate) fn message_id_search_key(message_id: &str) -> Option<String> {
+    quoted_string(message_id).map(|quoted| format!("HEADER Message-ID {quoted}"))
+}
+
+/// `value` as an RFC 3501 quoted string, `\` and `"` escaped. `None` when it
+/// holds a CR, LF or NUL, which a quoted string cannot carry.
+fn quoted_string(value: &str) -> Option<String> {
+    if value.contains(['\r', '\n', '\0']) {
+        return None;
     }
-    Ok(format!(
-        "\"{}\"",
-        mailbox_name.replace('\\', "\\\\").replace('"', "\\\"")
-    ))
+    Some(format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
 }
 
 /// The FETCH attribute used for every body download.
@@ -884,6 +896,40 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert!(err.contains("line break"), "got: {err}");
+    }
+
+    #[test]
+    fn a_mailbox_name_with_a_nul_is_rejected() {
+        let err = match uid_copy(&mut session_for("a2 OK done\r\n"), "7", "INBOX\0") {
+            Ok(()) => panic!("expected a failure"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("NUL"), "got: {err}");
+    }
+
+    #[test]
+    fn a_message_id_search_key_is_an_escaped_quoted_string() {
+        for (message_id, key) in [
+            ("<m@example.com>", r#"HEADER Message-ID "<m@example.com>""#),
+            (r#"<"m"@example.com>"#, r#"HEADER Message-ID "<\"m\"@example.com>""#),
+            (r"<m\n@example.com>", r#"HEADER Message-ID "<m\\n@example.com>""#),
+        ] {
+            assert_eq!(message_id_search_key(message_id).as_deref(), Some(key), "{message_id}");
+        }
+    }
+
+    /// The Message-ID is sender-controlled: a raw line break would end the
+    /// `UID SEARCH` line and run the rest of the value as a second command.
+    #[test]
+    fn a_message_id_no_quoted_string_can_carry_has_no_search_key() {
+        for message_id in [
+            "<m@example.com>\r\nz1 EXPUNGE",
+            "<m@example.com>\nz1 EXPUNGE",
+            "<m@example.com>\rz1 EXPUNGE",
+            "<m@example.com>\0",
+        ] {
+            assert_eq!(message_id_search_key(message_id), None, "{message_id:?}");
+        }
     }
 
     #[test]
