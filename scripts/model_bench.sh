@@ -46,6 +46,8 @@ if [[ -z "$MODELS" ]]; then
   exit 2
 fi
 
+"$REPO_ROOT/scripts/bench_preflight.sh" || exit 1
+
 mkdir -p "$WORK"
 
 CARGO_CONFIG=()
