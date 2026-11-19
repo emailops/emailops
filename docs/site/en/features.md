@@ -60,6 +60,13 @@ What you write is saved as a draft as you type, attached files included, so clos
 or the app keeps it; a forward is kept too. A message holds up to 32 files of at most 25 MB
 each.
 
+<!-- claim:compose-drafts-imap-folder -->
+On an IMAP account, drafts another mail client saved in the account's Drafts folder appear in
+**Drafts** too, with their recipients, subject, text or formatting, attached files and the
+conversation they answer, and they follow the changes made to them there. EmailOps only reads
+that folder: a draft you edit here keeps your changes on this computer, and one you delete or
+send here stays in the folder for your other mail clients.
+
 ## Forwarding
 
 <!-- claim:reading-pane-forward -->

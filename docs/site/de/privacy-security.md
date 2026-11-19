@@ -108,7 +108,7 @@ auch überall sonst zu sehen ist:
 | Eine Nachricht in einen anderen Ordner verschieben, oder **Als Spam bestätigen** | Die Nachricht wird auch im Konto verschoben — Als Spam bestätigen legt sie im Spam-Ordner des Anbieters ab |
 | **Kein Spam — in den Posteingang verschieben**, oder **Kein Spam** bei einer Nachricht in **Spam** | Die Nachricht wandert zurück in den Posteingang des Kontos |
 | Einen Ordner anlegen, umbenennen oder löschen | Der Ordner ändert sich auch im Konto |
-| Einen Entwurf speichern | Der Entwurf wird in den Entwürfen des Kontos gespeichert |
+| Einen Entwurf speichern | Der Entwurf wird bei Gmail und Outlook in den Entwürfen des Kontos gespeichert; bei einem IMAP-Konto bleibt er auf diesem Computer |
 
 <!-- claim:priv-what-emailops-2 -->
 EmailOps löscht eine Nachricht nie endgültig: Löschungen gehen immer in den Papierkorb,

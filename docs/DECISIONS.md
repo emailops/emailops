@@ -4696,3 +4696,29 @@ database at all.
   thread or need combined variants.
 - *Sending the draft only when a classifier says the question is about it*: that
   classifier was rejected before; the chip lets the user control the cost, as with the PDF.
+
+## 2026-11-18 — IMAP Drafts folders are read, never written, and keyed by Message-ID
+
+**Decision:** The sync pulls the Drafts folder of a generic IMAP account (the `\Drafts`
+special-use folder, else one named like Drafts) through the same draft pull pass as Gmail
+and Outlook, but read-only: `EXAMINE`, `SEARCH` and `BODY.PEEK[]` only, no `STORE`,
+`EXPUNGE` or `APPEND`. A draft's id is its `Message-ID` (`uid:<UIDVALIDITY>:<UID>` when it
+has none) and its change token is `<UIDVALIDITY>:<UID>`. Nothing is pushed, re-created or
+deleted upstream: an edit made in EmailOps stays on this device and is never overwritten
+by the server copy, and a pulled draft deleted or sent in EmailOps leaves its server copy
+in place, hidden here by a tombstone until it leaves the folder.
+**Context:** Issue #276: drafts saved by another client in an IMAP Drafts folder never
+appeared in EmailOps. IMAP never edits a message: a client saves a draft by appending a
+new one and removing the old, so the UID changes on every save, and a UIDVALIDITY change
+renumbers the folder. The Message-ID survives both, which is also the identity the mail
+sync re-keys by after a UIDVALIDITY change (2026-09-30), so a renumbered folder is read
+again onto the same rows instead of being duplicated. Writing drafts back to IMAP was
+kept out of this change on purpose.
+**Rejected:**
+- *Keying drafts by UIDVALIDITY + UID*: every save in another client and every
+  UIDVALIDITY change would look like a new draft, and a draft edited here would then sit
+  next to a second copy of itself.
+- *Writing edits, deletes and sends back (APPEND / `\Deleted`)*: a separate decision with
+  its own risks (losing a draft another client is editing); this change only reads.
+- *Requiring the `\Draft` flag*: every message in the Drafts folder is a draft, and not
+  every client sets the flag.
