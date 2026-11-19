@@ -4813,3 +4813,45 @@ billions of cells and took the app down before any cap applied.
   attachment in place.
 - *Opening with `open_workbook_auto_from_rs`*: it tries the eager `.xls` parser first,
   whatever the file's extension.
+
+## 2026-11-19 — Release jobs build and sign one resolved commit; only real releases save Rust caches
+
+**Decision:** A `resolve` job in `release.yml` turns `tag_name` into a commit SHA once, and
+every later job checks out that SHA, without persisting the checkout token. The workflow
+token is read-only; `contents: write` goes only to the jobs that attach files to the draft
+(`linux-sign`, `windows-publish`), which never run `npm ci` or a build, so `linux-sign`
+now attaches the Linux installers too. Every rust-cache step saves only when the run is not
+a dry run. `scripts/tests/test_release_workflow.py` asserts these properties.
+**Context:** The signing jobs start after an owner approval, possibly hours after the
+build, and checked out `tag_name` again by name, so a moved tag or branch would have run
+other in-repo signing scripts with the Certum and GPG secrets. The Linux build job, which
+runs the npm and cargo dependency tree, held a persisted write token that could move that
+ref, and jobs without a `permissions` block got the repository default. The rust caches
+had no `save-if`, so a dry run of any ref could seed the dependency artifacts a later
+signed release restores. Both were security audit leads.
+**Rejected:**
+- *Commit SHA in the rust-cache key*: no run could reuse another commit's cache, so every
+  release would build cold (the CUDA leg passes 82 min cold).
+- *Turning off the npm cache on dry runs*: `npm ci` checks every tarball against the
+  lockfile's sha512, so a seeded npm cache cannot change what installs.
+- *A separate Linux publish job*: one more job for no gain, since `linux-sign` already held
+  the write token and runs nothing from the dependency tree.
+- *Requiring an existing tag for non-dry runs*: not needed to close either lead.
+
+## 2026-11-19 — Release builds pin the Rust toolchain
+
+**Decision:** Every job in `release.yml` that installs Rust pins one release (1.99.1)
+instead of the floating `stable`. The pin moves forward by hand, after a dry run on the new
+release.
+**Context:** Rust 1.100 (12/11/2026) moved build-script output from
+`build/<pkg>-<hash>/out` to `build/<pkg>/<hash>/out`. llama-cpp-sys-2 0.1.161, the latest
+release, locates the profile directory three levels above `OUT_DIR`, so the
+dynamic-backends build hard-links its libraries into a `deps/` that does not exist and
+panics. The first release run on 1.100 failed with no change on our side, the same way
+`ubuntu-latest` once raised the glibc floor; this workflow already pins runner images for
+that reason.
+**Rejected:**
+- *Patching llama-cpp-sys-2 through `[patch.crates-io]`*: a fork to maintain for a fix that
+  belongs upstream.
+- *A `rust-toolchain.toml` for the whole repo*: it would also pin local development and CI,
+  which do not build the dynamic-backends path that breaks.

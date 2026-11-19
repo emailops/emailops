@@ -46,7 +46,38 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Read-only by default. Only the jobs that attach files to the draft release
+# (linux-sign, windows-publish) get `contents: write`, and neither runs
+# `npm ci` or a cargo build: a compromised build dependency must not get a
+# token that can move tags or replace the assets of any release.
+permissions:
+  contents: read
+
+# Every checkout below takes the commit `resolve` found, never
+# `inputs.tag_name` by name, and none persists the token. The signing jobs
+# start only after an owner approval, possibly hours after the build, and a
+# ref looked up again at that point could name another commit, whose in-repo
+# signing scripts would then run with the signing secrets.
+#
+# Every rust-cache step saves only on a real release (`save-if`): a dry run of
+# an arbitrary ref restores the release caches but cannot seed what a signed
+# release builds from.
 jobs:
+  resolve:
+    name: Resolve commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag_name }}
+          persist-credentials: false
+
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   # Linux. The packages themselves are not signed (conventionally they are
   # not); linux-sign publishes GPG-signed checksums for them instead.
   #
@@ -55,6 +86,7 @@ jobs:
   #   .../releases/latest/download/EmailOps-linux.AppImage
   release:
     name: Release (${{ matrix.platform }} ${{ matrix.bundle }})
+    needs: resolve
     if: ${{ inputs.targets == 'all' || inputs.targets == 'linux' }}
     # The .deb is pinned to 22.04, NOT ubuntu-latest. glibc is only backward
     # compatible: a binary built against glibc 2.35 runs on 2.39, but not
@@ -78,8 +110,6 @@ jobs:
     # .deb. See docs/DECISIONS.md.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -102,15 +132,24 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
           cache: npm
 
+      # Pinned, NOT the floating `stable`, in every job that builds. Rust
+      # 1.100 moved build-script output from build/<pkg>-<hash>/out to
+      # build/<pkg>/<hash>/out, and llama-cpp-sys-2 (0.1.161) finds the
+      # profile dir by walking three levels up from OUT_DIR, so with the
+      # dynamic-backends build it hard-links its libraries into a deps/ that
+      # does not exist and the build panics. Move the pin forward once the
+      # crate stops counting directories (see docs/DECISIONS.md).
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.99.1
           targets: x86_64-unknown-linux-gnu
 
       # Key includes the runner image, not just the platform: pinning the Linux
@@ -123,6 +162,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: release-${{ matrix.os }}
+          save-if: ${{ !inputs.dry_run }}
 
       - name: Install system dependencies (Linux)
         run: |
@@ -207,6 +247,8 @@ jobs:
           export WEBKIT_DISABLE_COMPOSITING_MODE=1
           # -a picks a free display but does not tell us which; a fixed screen
           # size and a known display are needed so `import` can find it.
+          # The inner bash -c expands its own variables, hence single quotes.
+          # shellcheck disable=SC2016
           xvfb-run -a -s "-screen 0 1600x1000x24" dbus-run-session -- bash -c '
             echo -n "" | gnome-keyring-daemon --unlock >/dev/null 2>&1
             emailops > /tmp/smoke.log 2>&1 &
@@ -237,6 +279,7 @@ jobs:
           APPIMAGE_FILE="$PWD/release/EmailOps-linux.AppImage"
           chmod +x "$APPIMAGE_FILE"
           export WEBKIT_DISABLE_COMPOSITING_MODE=1 APPIMAGE_EXTRACT_AND_RUN=1 APPIMAGE_FILE
+          # shellcheck disable=SC2016
           xvfb-run -a -s "-screen 0 1600x1000x24" dbus-run-session -- bash -c '
             echo -n "" | gnome-keyring-daemon --unlock >/dev/null 2>&1
             "$APPIMAGE_FILE" > /tmp/smoke.log 2>&1 &
@@ -285,50 +328,15 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-      # Each of the 4 publishing jobs (both linux legs here, both windows-publish legs)
-      # hits this same tag, so `generate_release_notes: true` would call
-      # GitHub's auto-generate API 4 times against an already-existing
-      # release; it *appends* to the current body rather than replacing it,
-      # producing duplicated "What's Changed"/"New Contributors" blocks (hit
-      # in practice on the v0.6.5 release). Extracting the matching
-      # CHANGELOG.md section instead is idempotent — every job writes the
-      # same text, so re-running never duplicates anything, and it carries
-      # real bug-fix prose instead of a bare PR-title list.
-      - name: Extract release notes from CHANGELOG
-        if: ${{ !inputs.dry_run }}
-        shell: bash
-        run: |
-          VERSION="${{ inputs.tag_name }}"
-          VERSION="${VERSION#v}"
-          awk -v ver="$VERSION" '
-            /^## \[/ {
-              if (found) { exit }
-              if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
-              next
-            }
-            found { print }
-          ' CHANGELOG.md > "${{ runner.temp }}/release-notes.md"
-
-      - name: Create GitHub Release
-        if: ${{ !inputs.dry_run }}
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
-        with:
-          tag_name: ${{ inputs.tag_name }}
-          body_path: ${{ runner.temp }}/release-notes.md
-          files: release/*
-          # Always a draft: the release skill creates the draft first and
-          # publishes it only after every platform's binaries are attached.
-          # Without this, the action finalizes (publishes) an existing draft.
-          draft: true
-
-
   # GPG-signed checksums for the Linux installers: EmailOps-linux-SHA256SUMS
   # and its .asc, verifiable against docs/release-signing-key.asc. Same rule
   # as the Windows signing jobs: the private key exists only in the `signing`
-  # environment (owner approval) and this job builds nothing.
+  # environment (owner approval) and this job builds nothing. It also
+  # attaches the installers to the draft, so the build job, which runs the
+  # npm and cargo dependency tree, never holds a write token.
   linux-sign:
     name: Linux sign checksums
-    needs: release
+    needs: [resolve, release]
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 15
@@ -337,7 +345,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -360,16 +369,41 @@ jobs:
             release/EmailOps-linux-SHA256SUMS.asc
           if-no-files-found: error
 
-      # Only the two new files: the installers are already on the draft,
-      # attached by the release job.
-      - name: Attach to GitHub Release
+      # Each of the 3 publishing jobs (this one, both windows-publish legs)
+      # hits this same tag, so `generate_release_notes: true` would call
+      # GitHub's auto-generate API 3 times against an already-existing
+      # release; it *appends* to the current body rather than replacing it,
+      # producing duplicated "What's Changed"/"New Contributors" blocks (hit
+      # in practice on the v0.6.5 release). Extracting the matching
+      # CHANGELOG.md section instead is idempotent — every job writes the
+      # same text, so re-running never duplicates anything, and it carries
+      # real bug-fix prose instead of a bare PR-title list.
+      - name: Extract release notes from CHANGELOG
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          VERSION="${{ inputs.tag_name }}"
+          VERSION="${VERSION#v}"
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) { exit }
+              if ($0 ~ ("\\[" ver "\\]")) { found=1; next }
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > "${{ runner.temp }}/release-notes.md"
+
+      # The installers from both legs plus the two checksum files.
+      - name: Create GitHub Release
         if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: ${{ inputs.tag_name }}
-          files: |
-            release/EmailOps-linux-SHA256SUMS
-            release/EmailOps-linux-SHA256SUMS.asc
+          body_path: ${{ runner.temp }}/release-notes.md
+          files: release/*
+          # Always a draft: the release skill creates the draft first and
+          # publishes it only after every platform's binaries are attached.
+          # Without this, the action finalizes (publishes) an existing draft.
           draft: true
 
   # ── Windows: compile → sign binaries → bundle → sign installers → publish ──
@@ -396,6 +430,7 @@ jobs:
   # (msiexec uninstalls).
   windows-compile:
     name: Windows compile (${{ matrix.variant }})
+    needs: resolve
     if: ${{ inputs.targets != 'linux' }}
     # Pinned to windows-2022, NOT windows-latest: `windows-latest` silently
     # moved to a new image mid-investigation (Visual Studio 18 Enterprise /
@@ -417,7 +452,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       # Windows Defender's real-time scanning transiently locks a freshly
       # written file for AV inspection, which is the classic explanation for
@@ -436,8 +472,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
 
+      # Same pinned release as the Linux job: see the comment there.
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.99.1
           targets: x86_64-pc-windows-msvc
 
       # Same keys as before the job split, so the warm caches carry over.
@@ -445,6 +483,7 @@ jobs:
         with:
           workspaces: src-tauri
           key: ${{ matrix.variant == 'cuda' && 'release-windows-cuda' || 'release-windows-2022' }}
+          save-if: ${{ !inputs.dry_run }}
 
       # humbletim/setup-vulkan-sdk installs the Windows SDK via a raw `7z x`
       # extraction of the installer .exe rather than actually running it —
@@ -563,7 +602,7 @@ jobs:
 
   windows-sign-binaries:
     name: Windows sign binaries (${{ matrix.variant }})
-    needs: windows-compile
+    needs: [resolve, windows-compile]
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
@@ -577,7 +616,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - name: Install signing tools
         run: bash scripts/install_signing_tools.sh
@@ -602,7 +642,7 @@ jobs:
 
   windows-bundle:
     name: Windows bundle (${{ matrix.variant }})
-    needs: windows-sign-binaries
+    needs: [resolve, windows-sign-binaries]
     runs-on: windows-2022
     timeout-minutes: 45
     strategy:
@@ -612,15 +652,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
           cache: npm
 
+      # Same pinned release as the Linux job: see the comment there.
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: 1.99.1
           targets: x86_64-pc-windows-msvc
 
       - run: npm ci
@@ -658,7 +701,7 @@ jobs:
 
   windows-sign-installers:
     name: Windows sign installers (${{ matrix.variant }})
-    needs: windows-bundle
+    needs: [resolve, windows-bundle]
     runs-on: ubuntu-24.04
     environment: signing
     timeout-minutes: 30
@@ -672,7 +715,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - name: Install signing tools
         run: bash scripts/install_signing_tools.sh
@@ -697,7 +741,7 @@ jobs:
 
   windows-publish:
     name: Release (windows-${{ matrix.variant }})
-    needs: windows-sign-installers
+    needs: [resolve, windows-sign-installers]
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:
@@ -709,7 +753,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -818,7 +863,7 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-      # See the matching comment on the Linux job's step of the same name —
+      # See the matching comment on linux-sign's step of the same name —
       # idempotent across all 3 publishing jobs, unlike generate_release_notes.
       - name: Extract release notes from CHANGELOG
         if: ${{ !inputs.dry_run }}
