@@ -3822,6 +3822,8 @@ mod tests {
     #[test]
     fn repeated_cid_references_keep_the_body_bounded() {
         use base64::{engine::general_purpose::STANDARD, Engine};
+        // Past the cap the skip is logged through the global logger.
+        let _g = crate::services::events::seam_test_lock();
         let image = STANDARD.encode(vec![0u8; 1024 * 1024]);
         let html = r#"<img src="cid:logo">"#.repeat(100);
         let raw = format!(

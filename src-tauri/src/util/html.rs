@@ -284,13 +284,36 @@ mod tests {
     /// image once per occurrence: a body of gigabytes that SQLite refuses.
     #[test]
     fn many_references_to_one_image_stay_under_the_inlining_cap() {
+        // Past the cap the skip is logged through the global logger.
+        let _g = crate::services::events::seam_test_lock();
         let html = r#"<img src="cid:a">"#.repeat(10_000);
         let out = super::replace_cid_reference(&html, "a", &data_uri_of(1024 * 1024));
         assert!(out.len() <= super::MAX_INLINED_BODY_BYTES, "{} bytes", out.len());
     }
 
     #[test]
+    fn references_left_as_links_are_logged_at_debug_without_content() {
+        let _g = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let html = r#"<img src="cid:logo-x1">"#.repeat(40);
+        super::replace_cid_reference(&html, "logo-x1", &data_uri_of(1024 * 1024));
+        let events = logger.events();
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!((events[0].level.as_str(), events[0].source.as_str()), ("debug", "sync"));
+        assert!(
+            events[0].message.contains("9 inline image reference(s)"),
+            "{}",
+            events[0].message
+        );
+        assert!(!events[0].message.contains("logo-x1"), "{}", events[0].message);
+        assert!(!events[0].message.contains("base64"), "{}", events[0].message);
+    }
+
+    #[test]
     fn references_past_the_inlining_cap_stay_links() {
+        let _g = crate::services::events::seam_test_lock();
         let html = r#"<img src="cid:a">"#.repeat(40);
         let out = super::replace_cid_reference(&html, "a", &data_uri_of(1024 * 1024));
         assert!(out.len() <= super::MAX_INLINED_BODY_BYTES, "{} bytes", out.len());
