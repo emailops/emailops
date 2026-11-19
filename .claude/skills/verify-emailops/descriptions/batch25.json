@@ -34,5 +34,22 @@
     "src-tauri/src/sync/imap.rs::a_draft_keeps_its_attachments_with_their_bytes": "Los adjuntos de un borrador IMAP llevan sus bytes y no necesitan descarga posterior.",
     "src-tauri/src/sync/imap.rs::a_draft_without_a_server_date_takes_its_date_header_and_keeps_an_empty_subject": "Sin fecha del servidor, el borrador toma la de su cabecera Date; un asunto ausente queda vacío.",
     "src-tauri/src/services/emails/sync.rs::the_sync_pulls_the_drafts_folder_of_an_imap_account": "La sincronización de una cuenta IMAP trae a Borradores los borradores que otro programa guardó en su carpeta de borradores."
+  },
+  "vitest": {
+    "src/components/shared/RichTextEditor.load.test.tsx::does not report the content it loaded as a change": "El editor no avisa de un cambio al cargar un HTML que reescribe (líneas <div>, <b>): abrir un borrador no es editarlo.",
+    "src/components/shared/RichTextEditor.load.test.tsx::does not report a change when it is disabled and enabled again": "Desactivar y volver a activar el editor (al enviar) no cuenta como un cambio del texto.",
+    "src/components/shared/RichTextEditor.load.test.tsx::reports an edit": "Una edición real del texto sí se avisa, una sola vez.",
+    "src/components/EmailView/ComposeTabView.openDraft.test.tsx::does not save a draft that was only opened": "Abrir un borrador en una pestaña y no tocarlo no lo guarda (antes se guardaba el HTML reescrito por el editor).",
+    "src/components/EmailView/ComposeTabView.openDraft.test.tsx::saves an edit to the body once, into the same draft": "Editar el cuerpo de un borrador abierto lo guarda una vez, en el mismo borrador.",
+    "src/components/EmailView/ComposeTabView.openDraft.test.tsx::saves an edit to the subject once": "Editar el asunto de un borrador abierto lo guarda una vez.",
+    "src/components/EmailView/ComposeTabView.openDraft.test.tsx::saves what it opened with, as before": "Una pestaña sin borrador guardado sigue guardando lo que trae al abrirse, como antes.",
+    "src/components/EmailView/ReplyCompose.openDraft.test.tsx::does not save the draft when it is left unchanged": "Un borrador de respuesta que reaparece con su hilo no se vuelve a guardar si no se cambia.",
+    "src/lib/composeDraft.test.ts::is the same for snapshots a save would write the same way": "El contenido que escribe un guardado no depende del id ni de si se está enviando.",
+    "src/lib/composeDraft.test.ts::changes with every field a save writes": "Cualquier campo que escribe el guardado (cuenta, respuesta, destinatarios, asunto, cuerpo, HTML, adjuntos) cambia el contenido.",
+    "src/lib/composeDraft.test.ts::does not save the draft as it opened": "El autoguardado no guarda un borrador tal como se abrió.",
+    "src/lib/composeDraft.test.ts::saves an edit once": "Una edición se guarda una sola vez, en el borrador que se abrió.",
+    "src/lib/composeDraft.test.ts::saves a return to the opened content after an edit": "Volver al texto original después de una edición guardada también se guarda.",
+    "src/lib/composeDraft.test.ts::saves again after a save that failed": "Si un guardado falla, el siguiente con el mismo contenido se intenta de nuevo.",
+    "src/lib/composeDraft.test.ts::saves whatever it has into a draft it adopts": "Al adoptar un borrador escrito por el chat, se guarda lo que tiene el compositor aunque coincida con lo abierto."
   }
 }

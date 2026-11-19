@@ -129,14 +129,34 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
   const [activeField, setActiveField] = useState<RecipientField | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const suggestionsRef = useRef(0);
+  /** The draft as the tab holds it now. */
+  const draftState = (): ComposeDraftState => ({
+    accountId: fromAccountId,
+    // A reopened reply keeps answering its message.
+    emailId: tab.replyToEmailId,
+    // A valid address still in the input box (typed, not tokenised) is a
+    // recipient the user means; the saved draft must not drop it.
+    toAddresses: mergePendingRecipient(toRecipients, toInput),
+    ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
+    bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
+    subject,
+    plainBody: prepareOutgoingHtml(bodyHtml).plainText,
+    bodyHtml,
+    attachments: draftFiles.forSave,
+    // A save landing after Discard would bring the draft back.
+    isSending: isSending || isDiscarding,
+    sent,
+  });
   // Auto-save, seeded with this tab's backing draft id when editing an existing
-  // draft so saves upsert that row instead of spawning duplicates.
+  // draft so saves upsert that row instead of spawning duplicates. That draft,
+  // as it opened, is what the row holds: opening it is not an edit.
   const autosaverRef = useRef<DraftAutosaver | null>(null);
   if (autosaverRef.current === null) {
     autosaverRef.current = createDraftAutosaver(
       api.saveDraft,
       (err) => addLog('debug', 'system', `Draft auto-save failed: ${errorText(err)}`),
       tab.draftId,
+      tab.draftId ? draftState() : undefined,
     );
   }
 
@@ -173,25 +193,9 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
 
   // Debounced auto-save ~0.8s after the last edit. Upserts the backing draft
   // (and pushes to the provider's Drafts folder on Gmail/Outlook).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: draftState reads exactly these
   useEffect(() => {
-    const prepared = prepareOutgoingHtml(bodyHtml);
-    const state: ComposeDraftState = {
-      accountId: fromAccountId,
-      // A reopened reply keeps answering its message.
-      emailId: tab.replyToEmailId,
-      // A valid address still in the input box (typed, not tokenised) is a
-      // recipient the user means; the saved draft must not drop it.
-      toAddresses: mergePendingRecipient(toRecipients, toInput),
-      ccAddresses: mergePendingRecipient(ccRecipients, ccInput),
-      bccAddresses: mergePendingRecipient(bccRecipients, bccInput),
-      subject,
-      plainBody: prepared.plainText,
-      bodyHtml,
-      attachments: draftFiles.forSave,
-      // A save landing after Discard would bring the draft back.
-      isSending: isSending || isDiscarding,
-      sent,
-    };
+    const state = draftState();
     // A body holding only the inserted signature is not something to save.
     const typed = { ...state, plainBody: prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText };
     if (!shouldAutosaveDraft(typed)) return;
