@@ -312,6 +312,13 @@ pub trait AIProvider: Send + Sync {
     /// Generate embeddings for a batch of texts (may parallelize internally).
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>>;
 
+    /// How many texts one embeddings request carries. Above 1, the email
+    /// index hands texts to [`Self::embed_batch`] in groups of about this
+    /// size; at 1 (the default) it calls [`Self::embed`] once per text.
+    fn embedding_batch_size(&self) -> usize {
+        1
+    }
+
     /// Non-streaming multi-turn chat with tool definitions. Returns the
     /// assistant message (which may contain tool_calls the caller should resolve).
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage>;
@@ -515,6 +522,10 @@ impl AIProvider for SplitProvider {
         self.embeddings.embed_batch(texts).await
     }
 
+    fn embedding_batch_size(&self) -> usize {
+        self.embeddings.embedding_batch_size()
+    }
+
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
         self.chat.chat_with_tools(messages, tools).await
     }
@@ -619,6 +630,10 @@ pub struct FakeAiProvider {
     embed_calls: RwLock<Vec<String>>,
     /// Called at the end of each `embed` with the number of calls so far.
     embed_hook: RwLock<Option<EmbedHook>>,
+    /// What `embedding_batch_size` answers (1 by default).
+    embedding_batch_size: usize,
+    /// How many texts each `embed_batch` call carried, in call order.
+    embed_batch_sizes: RwLock<Vec<usize>>,
     prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
 }
 
@@ -654,6 +669,8 @@ impl FakeAiProvider {
             truncated_chat_calls: RwLock::new(std::collections::HashSet::new()),
             embed_calls: RwLock::new(Vec::new()),
             embed_hook: RwLock::new(None),
+            embedding_batch_size: 1,
+            embed_batch_sizes: RwLock::new(Vec::new()),
             prewarm_calls: RwLock::new(Vec::new()),
         }
     }
@@ -836,6 +853,20 @@ impl FakeAiProvider {
         self
     }
 
+    /// Behave like a backend that sends `size` texts per embeddings request.
+    pub fn with_embedding_batch_size(mut self, size: usize) -> Self {
+        self.embedding_batch_size = size;
+        self
+    }
+
+    /// How many texts each `embed_batch` call carried, in call order.
+    pub fn embed_batch_sizes(&self) -> Vec<usize> {
+        self.embed_batch_sizes
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// Deterministic embedding of `self.embedding_dim` floats derived from
     /// SHA-256 digests of `text` (one digest per 8 floats, chained with a
     /// counter). Same input → same vector; distinct inputs almost always
@@ -988,11 +1019,19 @@ impl AIProvider for FakeAiProvider {
     }
 
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>> {
+        self.embed_batch_sizes
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(texts.len());
         let mut out = Vec::with_capacity(texts.len());
         for t in texts {
             out.push(self.embed(t).await?);
         }
         Ok(out)
+    }
+
+    fn embedding_batch_size(&self) -> usize {
+        self.embedding_batch_size
     }
 
     async fn chat_with_tools(&self, messages: &[AiMessage], _tools: &[serde_json::Value]) -> Result<AiMessage> {
@@ -1127,6 +1166,18 @@ mod tests {
         let result = provider.chat_stream(vec![], Box::new(|_| true)).await.unwrap();
         assert_eq!(result.content, "streamed");
         assert_eq!(chat.chat_calls().len(), 1);
+    }
+
+    #[test]
+    fn split_provider_sends_as_many_chunks_per_request_as_its_embedding_backend() {
+        let chat = std::sync::Arc::new(FakeAiProvider::new().with_embedding_batch_size(8));
+        let embeddings = std::sync::Arc::new(FakeAiProvider::new().with_embedding_batch_size(3));
+        assert_eq!(SplitProvider::new(chat, embeddings).embedding_batch_size(), 3);
+        assert_eq!(
+            FakeAiProvider::new().embedding_batch_size(),
+            1,
+            "one chunk per request unless a backend says otherwise"
+        );
     }
 
     #[tokio::test]

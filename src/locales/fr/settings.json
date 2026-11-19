@@ -148,6 +148,16 @@
       "reset": "Démarrer une nouvelle période",
       "resetting": "Réinitialisation…"
     },
+    "indexing": {
+      "title": "Index des e-mails",
+      "backlog_one": "{{count}} e-mail en attente d’indexation",
+      "backlog_many": "{{count}} e-mails en attente d’indexation",
+      "backlog_other": "{{count}} e-mails en attente d’indexation",
+      "upToDate": "Tous les e-mails couverts par la recherche sémantique sont indexés.",
+      "rate": "Indexation d’environ {{rate}} e-mails par minute",
+      "idle": "Aucune indexation en cours.",
+      "loadFailed": "Impossible de lire l’état de l’index : {{error}}"
+    },
     "noModelsFound": "(aucun modèle trouvé)",
     "noModelsAvailable": "(aucun modèle disponible)",
     "noCatalog": "Aucun catalogue de modèles dans cette version.",
@@ -250,6 +260,8 @@
     "embeddingSourceHelp": "Où la recherche sémantique calcule les Embeddings de vos e-mails. Avec ce serveur, votre courrier va à un seul endroit.",
     "embeddingModelPlaceholder": "Identifiant du modèle d'Embeddings, ou vide pour la recherche par mots-clés",
     "embeddingModelHelp": "Vérifié à l'enregistrement : un modèle qui ne renvoie pas de vecteurs adaptés à l'index des e-mails est refusé.",
+    "embeddingBatchSize": "Fragments par requête d’Embeddings",
+    "embeddingBatchSizeHelp": "Combien de fragments de texte d’e-mail partent dans une requête au serveur, de 1 à 64. Plus va plus vite sur un serveur local qui les accepte ; 1 les envoie un par un. Si le serveur refuse une requête, ses fragments sont renvoyés un par un et le panneau Logs le signale.",
     "openRouterNeedsKey": "Enregistrez votre clé API OpenRouter dans l'onglet OpenRouter pour utiliser ses modèles d'Embeddings.",
     "privacyNotice": "Le contenu des e-mails du chat, des brouillons et des autres fonctions d'IA est envoyé à ce serveur. EmailOps ne peut pas voir ce que le serveur conserve.",
     "disclosureTitle": "Envoyer le contenu de vos e-mails à un autre ordinateur ?",

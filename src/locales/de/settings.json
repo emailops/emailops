@@ -148,6 +148,16 @@
       "reset": "Neuen Zeitraum starten",
       "resetting": "Wird zurückgesetzt…"
     },
+    "indexing": {
+      "title": "E-Mail-Index",
+      "backlog_one": "{{count}} E-Mail wartet auf die Indexierung",
+      "backlog_many": "{{count}} E-Mails warten auf die Indexierung",
+      "backlog_other": "{{count}} E-Mails warten auf die Indexierung",
+      "upToDate": "Alle E-Mails, die die semantische Suche abdeckt, sind indexiert.",
+      "rate": "Indexiert etwa {{rate}} E-Mails pro Minute",
+      "idle": "Gerade keine Indexierung.",
+      "loadFailed": "Der Indexstatus konnte nicht gelesen werden: {{error}}"
+    },
     "noModelsFound": "(keine Modelle gefunden)",
     "noModelsAvailable": "(keine Modelle verfügbar)",
     "noCatalog": "In diesem Build ist kein Modellkatalog verfügbar.",
@@ -250,6 +260,8 @@
     "embeddingSourceHelp": "Wo die semantische Suche die Embeddings deiner E-Mails berechnet. Mit diesem Server geht deine Post an nur einen Ort.",
     "embeddingModelPlaceholder": "ID des Embeddings-Modells, oder leer für die Stichwortsuche",
     "embeddingModelHelp": "Wird beim Speichern geprüft: Ein Modell, das keine Vektoren für den E-Mail-Index liefert, wird abgelehnt.",
+    "embeddingBatchSize": "Abschnitte pro Embeddings-Anfrage",
+    "embeddingBatchSizeHelp": "Wie viele Textabschnitte aus E-Mails in eine Anfrage an den Server gehen, 1 bis 64. Mehr ist schneller bei einem lokalen Server, der sie annimmt; 1 schickt sie einzeln. Lehnt der Server eine Anfrage ab, werden ihre Abschnitte einzeln erneut gesendet, und das Logs-Panel meldet es.",
     "openRouterNeedsKey": "Speichere deinen OpenRouter-API-Schlüssel im Tab OpenRouter, um seine Embeddings-Modelle zu nutzen.",
     "privacyNotice": "E-Mail-Inhalte aus Chat, Entwürfen und den anderen KI-Funktionen werden an diesen Server gesendet. EmailOps kann nicht sehen, was der Server aufbewahrt.",
     "disclosureTitle": "E-Mail-Inhalte an einen anderen Computer senden?",

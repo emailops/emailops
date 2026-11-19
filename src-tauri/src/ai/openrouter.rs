@@ -357,13 +357,22 @@ struct OpenRouterEmbeddingModelInfo {
 #[derive(Debug, Serialize)]
 struct OpenRouterEmbeddingRequest {
     model: String,
-    input: String,
+    input: EmbeddingInput,
     encoding_format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     dimensions: Option<usize>,
     /// OpenRouter only; omitted for a plain OpenAI-compatible server.
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<ProviderPreferences>,
+}
+
+/// The `input` of an embeddings request: one text as a plain string, which
+/// every server takes, or several as an array.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum EmbeddingInput {
+    One(String),
+    Many(Vec<String>),
 }
 
 /// How a validated embedding model is made to return vectors the email index
@@ -477,6 +486,25 @@ impl EmbeddingFailure {
     }
 }
 
+/// The vectors of an embeddings answer in the order of the `expected` texts
+/// they were asked for, placed by each item's `index` rather than its
+/// position. `None` unless there is exactly one vector per text: a missing,
+/// repeated or out-of-range index cannot be matched to its text.
+fn vectors_by_index(data: Vec<EmbeddingDataItem>, expected: usize) -> Option<Vec<Vec<f32>>> {
+    if data.len() != expected {
+        return None;
+    }
+    let mut slots: Vec<Option<Vec<f32>>> = vec![None; expected];
+    for item in data {
+        let slot = slots.get_mut(item.index?)?;
+        if slot.is_some() {
+            return None;
+        }
+        *slot = Some(item.embedding);
+    }
+    slots.into_iter().collect()
+}
+
 /// Shown instead of sending a request when no embedding model has passed the
 /// probe.
 const EMBEDDING_NOT_SET_UP: &str =
@@ -491,6 +519,9 @@ struct OpenRouterEmbeddingResponse {
 #[derive(Debug, Deserialize)]
 struct EmbeddingDataItem {
     embedding: Vec<f32>,
+    /// Which text of the request this vector is for.
+    #[serde(default)]
+    index: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,6 +538,8 @@ pub struct OpenRouterClient {
     /// `Some` only when `embedding_model` passed the probe; without it no
     /// embedding request is sent.
     embedding_dimensions: Option<EmbeddingDimensions>,
+    /// Texts sent per embeddings request by `embed_batch`; 1 sends each alone.
+    embedding_batch_size: usize,
     zero_data_retention: bool,
     base_url: String,
     endpoint: Endpoint,
@@ -530,6 +563,7 @@ impl OpenRouterClient {
             model,
             embedding_model,
             embedding_dimensions: None,
+            embedding_batch_size: 1,
             zero_data_retention: false,
             base_url: OPENROUTER_BASE_URL.to_string(),
             endpoint: Endpoint::OpenRouter,
@@ -630,6 +664,13 @@ impl OpenRouterClient {
         self
     }
 
+    /// Send up to `size` texts per embeddings request from `embed_batch`
+    /// (at least 1).
+    pub fn with_embedding_batch_size(mut self, size: usize) -> Self {
+        self.embedding_batch_size = size.max(1);
+        self
+    }
+
     /// Refuse a chat model OpenRouter cannot know (see
     /// [`is_openrouter_model_id`]) with what to do about it, before a request
     /// carrying mail content is sent.
@@ -684,13 +725,45 @@ impl OpenRouterClient {
     }
 
     fn embedding_request(&self, text: &str, dimensions: Option<usize>) -> OpenRouterEmbeddingRequest {
+        self.embedding_request_for(EmbeddingInput::One(text.to_string()), dimensions)
+    }
+
+    /// The request that embeds every text of `texts` at once.
+    fn embedding_batch_request(&self, texts: &[String], dimensions: Option<usize>) -> OpenRouterEmbeddingRequest {
+        self.embedding_request_for(EmbeddingInput::Many(texts.to_vec()), dimensions)
+    }
+
+    fn embedding_request_for(&self, input: EmbeddingInput, dimensions: Option<usize>) -> OpenRouterEmbeddingRequest {
         OpenRouterEmbeddingRequest {
             model: self.embedding_model.clone(),
-            input: text.to_string(),
+            input,
             encoding_format: "float".to_string(),
             dimensions,
             provider: self.provider_preferences(),
         }
+    }
+
+    /// Send `request` to `POST /embeddings`. Fails only when no answer came
+    /// back: a broken connection or a timeout.
+    async fn send_embeddings(&self, request: &OpenRouterEmbeddingRequest) -> Result<reqwest::Response> {
+        let url = format!("{}/embeddings", self.base_url);
+        self.authorized(self.client.post(&url))
+            .header("Content-Type", "application/json")
+            .timeout(GENERATION_TIMEOUT)
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    AppError::AiError(format!(
+                        "{} embedding timed out ({}s)",
+                        self.server_name(),
+                        GENERATION_TIMEOUT.as_secs()
+                    ))
+                } else {
+                    AppError::AiError(format!("Failed to connect to {} embeddings: {}", self.server_name(), e))
+                }
+            })
     }
 
     /// One `POST /embeddings` for `text`, asking for `dimensions` floats when
@@ -700,27 +773,10 @@ impl OpenRouterClient {
         text: &str,
         dimensions: Option<usize>,
     ) -> std::result::Result<EmbeddingResult, EmbeddingFailure> {
-        let url = format!("{}/embeddings", self.base_url);
-        let request = self.embedding_request(text, dimensions);
-
         let response = self
-            .authorized(self.client.post(&url))
-            .header("Content-Type", "application/json")
-            .timeout(GENERATION_TIMEOUT)
-            .json(&request)
-            .send()
+            .send_embeddings(&self.embedding_request(text, dimensions))
             .await
-            .map_err(|e| {
-                EmbeddingFailure::other(if e.is_timeout() {
-                    AppError::AiError(format!(
-                        "{} embedding timed out ({}s)",
-                        self.server_name(),
-                        GENERATION_TIMEOUT.as_secs()
-                    ))
-                } else {
-                    AppError::AiError(format!("Failed to connect to {} embeddings: {}", self.server_name(), e))
-                })
-            })?;
+            .map_err(EmbeddingFailure::other)?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -756,6 +812,46 @@ impl OpenRouterClient {
             tokens: body.usage.as_ref().and_then(|usage| usage.prompt_tokens).unwrap_or(0),
             cost_usd: body.usage.as_ref().and_then(|usage| usage.cost).unwrap_or(0.0),
         })
+    }
+
+    /// One `POST /embeddings` carrying every text of `texts`, with the
+    /// vectors back in the order of `texts`. `Ok(Err(_))` when the server
+    /// refused the batch: an error status, an answer that cannot be read, or
+    /// vectors that do not match the texts one for one; the reason goes to
+    /// the log, so it never carries the server's answer, which may quote the
+    /// mail. `Err` when no answer came back.
+    async fn request_embedding_batch(
+        &self,
+        texts: &[String],
+        dimensions: Option<usize>,
+    ) -> Result<std::result::Result<Vec<EmbeddingResult>, String>> {
+        let response = self
+            .send_embeddings(&self.embedding_batch_request(texts, dimensions))
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Ok(Err(format!("HTTP {}", status.as_u16())));
+        }
+        let Ok(body) = response.json::<OpenRouterEmbeddingResponse>().await else {
+            return Ok(Err("an answer that could not be read".to_string()));
+        };
+        let usage = body.usage;
+        let Some(vectors) = vectors_by_index(body.data, texts.len()) else {
+            return Ok(Err("vectors that do not match the chunks one for one".to_string()));
+        };
+        // The usage covers the whole request: the first result carries it, so
+        // what the results add up to is what the request cost.
+        let tokens = usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0);
+        let cost_usd = usage.as_ref().and_then(|u| u.cost).unwrap_or(0.0);
+        Ok(Ok(vectors
+            .into_iter()
+            .enumerate()
+            .map(|(i, embedding)| EmbeddingResult {
+                embedding,
+                tokens: if i == 0 { tokens } else { 0 },
+                cost_usd: if i == 0 { cost_usd } else { 0.0 },
+            })
+            .collect()))
     }
 
     /// Find out whether the configured embedding model can fill the email
@@ -1225,12 +1321,42 @@ impl AIProvider for OpenRouterClient {
             .map_err(|failure| failure.error)
     }
 
+    /// Up to `embedding_batch_size` texts per request. A batch the server
+    /// refuses is logged and sent again one text per request, so a server
+    /// that takes a single `input` string still embeds everything.
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<EmbeddingResult>> {
+        let Some(dimensions) = self.embedding_dimensions else {
+            return Err(AppError::AiError(EMBEDDING_NOT_SET_UP.to_string()));
+        };
         let mut results = Vec::with_capacity(texts.len());
-        for text in texts {
-            results.push(self.embed(text).await?);
+        for group in texts.chunks(self.embedding_batch_size) {
+            if group.len() > 1 {
+                match self.request_embedding_batch(group, dimensions.request_value()).await? {
+                    Ok(vectors) => {
+                        results.extend(vectors);
+                        continue;
+                    }
+                    Err(refusal) => crate::services::logger::log(
+                        "warn",
+                        "embeddings",
+                        format!(
+                            "{} refused {} chunks in one embeddings request ({refusal}); sending them one at a time. \
+                             Lower the chunks per request in Settings → AI if this keeps happening.",
+                            self.server_name(),
+                            group.len()
+                        ),
+                    ),
+                }
+            }
+            for text in group {
+                results.push(self.embed(text).await?);
+            }
         }
         Ok(results)
+    }
+
+    fn embedding_batch_size(&self) -> usize {
+        self.embedding_batch_size
     }
 
     async fn chat_with_tools(&self, messages: &[AiMessage], tools: &[serde_json::Value]) -> Result<AiMessage> {
@@ -2496,6 +2622,218 @@ mod embedding_tests {
             assert_eq!(bodies[0].get("dimensions").is_some(), sends, "{mode:?}");
             assert_eq!(bodies[0]["provider"]["data_collection"], "deny");
         }
+    }
+
+    fn batching(server: &MockServer, size: usize) -> OpenRouterClient {
+        client(server)
+            .with_embedding_dimensions(Some(EmbeddingDimensions::Native))
+            .with_embedding_batch_size(size)
+    }
+
+    fn chunks(count: usize) -> Vec<String> {
+        (0..count).map(|i| format!("chunk {i}")).collect()
+    }
+
+    /// The texts a request asked for: an array `input`, or a single string.
+    fn inputs_of(body: &serde_json::Value) -> Vec<String> {
+        match &body["input"] {
+            serde_json::Value::Array(items) => items.iter().map(|i| i.as_str().unwrap().to_string()).collect(),
+            other => vec![other.as_str().unwrap().to_string()],
+        }
+    }
+
+    /// One vector per input, listed in reverse order with its `index`, so only
+    /// the index says which input a vector belongs to. A vector's first float
+    /// is the number of the chunk it was made from.
+    fn vectors_in_reverse(request: &wiremock::Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+        let inputs = inputs_of(&body);
+        let data: Vec<_> = inputs
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, text)| {
+                let mut embedding = vec![0.5_f32; DIM];
+                embedding[0] = text.trim_start_matches("chunk ").parse().unwrap();
+                json!({ "index": index, "embedding": embedding })
+            })
+            .collect();
+        ResponseTemplate::new(200).set_body_json(json!({
+            "data": data,
+            "usage": { "prompt_tokens": 4 * inputs.len(), "cost": 0.0 }
+        }))
+    }
+
+    fn is_array_input(request: &wiremock::Request) -> bool {
+        serde_json::from_slice::<serde_json::Value>(&request.body).is_ok_and(|body| body["input"].is_array())
+    }
+
+    fn chunk_numbers(results: &[EmbeddingResult]) -> Vec<f32> {
+        results.iter().map(|r| r.embedding[0]).collect()
+    }
+
+    #[test]
+    fn a_batch_request_sends_its_texts_as_an_array_and_a_single_one_as_a_string() {
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into());
+
+        let batch = serde_json::to_value(client.embedding_batch_request(&chunks(3), Some(DIM))).unwrap();
+        assert_eq!(batch["input"], json!(["chunk 0", "chunk 1", "chunk 2"]));
+        assert_eq!(batch["model"], "vendor/embed");
+        assert_eq!(batch["dimensions"], DIM);
+
+        let single = serde_json::to_value(client.embedding_request("chunk 0", None)).unwrap();
+        assert_eq!(single["input"], "chunk 0");
+    }
+
+    #[test]
+    fn vectors_map_back_to_their_inputs_by_index_not_by_position() {
+        let item = |index: Option<usize>, value: f32| EmbeddingDataItem {
+            embedding: vec![value],
+            index,
+        };
+        let cases = [
+            (
+                "in order",
+                vec![item(Some(0), 0.0), item(Some(1), 1.0)],
+                Some(vec![vec![0.0], vec![1.0]]),
+            ),
+            (
+                "reversed",
+                vec![item(Some(1), 1.0), item(Some(0), 0.0)],
+                Some(vec![vec![0.0], vec![1.0]]),
+            ),
+            ("too few", vec![item(Some(0), 0.0)], None),
+            (
+                "too many",
+                vec![item(Some(0), 0.0), item(Some(1), 1.0), item(Some(2), 2.0)],
+                None,
+            ),
+            ("repeated index", vec![item(Some(0), 0.0), item(Some(0), 1.0)], None),
+            (
+                "index past the inputs",
+                vec![item(Some(0), 0.0), item(Some(2), 1.0)],
+                None,
+            ),
+            ("no index", vec![item(None, 0.0), item(None, 1.0)], None),
+        ];
+        for (case, data, expected) in cases {
+            assert_eq!(vectors_by_index(data, 2), expected, "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn one_chunk_per_request_is_the_default_and_sends_plain_strings() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(vectors_in_reverse)
+            .mount(&server)
+            .await;
+        let client = client(&server).with_embedding_dimensions(Some(EmbeddingDimensions::Native));
+
+        let results = client.embed_batch(&chunks(2)).await.unwrap();
+
+        assert_eq!(chunk_numbers(&results), vec![0.0, 1.0]);
+        let bodies = embedding_bodies(&server).await;
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies.iter().all(|body| body["input"].is_string()), "{bodies:?}");
+    }
+
+    #[tokio::test]
+    async fn chunks_go_up_to_n_per_request_and_come_back_in_input_order() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(vectors_in_reverse)
+            .mount(&server)
+            .await;
+
+        let results = batching(&server, 3).embed_batch(&chunks(5)).await.unwrap();
+
+        assert_eq!(chunk_numbers(&results), vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(
+            results.iter().map(|r| r.tokens).sum::<u32>(),
+            20,
+            "every request's usage is kept"
+        );
+        let bodies = embedding_bodies(&server).await;
+        assert_eq!(
+            bodies.iter().map(inputs_of).collect::<Vec<_>>(),
+            vec![chunks(3), vec!["chunk 3".to_string(), "chunk 4".to_string()]]
+        );
+    }
+
+    /// Sync test on a throwaway runtime: it holds the global seam lock for its
+    /// whole body, which must not span an await (`clippy::await_holding_lock`).
+    #[test]
+    fn a_refused_batch_is_sent_again_one_chunk_at_a_time_and_logged() {
+        let _seam = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+
+        let (results, bodies) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime")
+            .block_on(async {
+                let server = MockServer::start().await;
+                Mock::given(method("POST"))
+                    .and(path("/embeddings"))
+                    .and(is_array_input)
+                    .respond_with(
+                        ResponseTemplate::new(400).set_body_string(r#"{"error":{"message":"input must be a string"}}"#),
+                    )
+                    .mount(&server)
+                    .await;
+                Mock::given(method("POST"))
+                    .and(path("/embeddings"))
+                    .respond_with(vectors_in_reverse)
+                    .mount(&server)
+                    .await;
+                let results = batching(&server, 3).embed_batch(&chunks(3)).await;
+                (results, embedding_bodies(&server).await)
+            });
+
+        assert_eq!(chunk_numbers(&results.unwrap()), vec![0.0, 1.0, 2.0]);
+        assert_eq!(bodies.len(), 4, "the refused batch, then one request per chunk");
+        assert!(bodies[1..].iter().all(|body| body["input"].is_string()), "{bodies:?}");
+        let events = logger.events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.source == "embeddings" && e.level == "warn" && e.message.contains("HTTP 400")),
+            "{events:?}"
+        );
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+    }
+
+    #[tokio::test]
+    async fn a_batch_answered_with_the_wrong_number_of_vectors_is_sent_again_one_chunk_at_a_time() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .and(is_array_input)
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [{ "index": 0, "embedding": vec![0.5_f32; DIM] }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/embeddings"))
+            .respond_with(vectors_in_reverse)
+            .mount(&server)
+            .await;
+
+        let results = batching(&server, 4).embed_batch(&chunks(3)).await.unwrap();
+
+        assert_eq!(chunk_numbers(&results), vec![0.0, 1.0, 2.0]);
+        assert_eq!(embedding_bodies(&server).await.len(), 4);
+    }
+
+    #[test]
+    fn the_client_reports_how_many_chunks_it_sends_per_request() {
+        let client = OpenRouterClient::new("key".into(), "vendor/model".into(), "vendor/embed".into());
+        assert_eq!(client.embedding_batch_size(), 1, "one per request unless set");
+        assert_eq!(client.with_embedding_batch_size(16).embedding_batch_size(), 16);
     }
 }
 

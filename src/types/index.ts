@@ -423,6 +423,8 @@ export interface AiConfig {
     hasApiKey: boolean;
     embeddingSource: 'server' | 'inapp' | 'openrouter';
     contextWindow: number;
+    /** Chunks per embeddings request to the server, 1 to 64. */
+    embeddingBatchSize: number;
     disclosedHost: string | null;
   };
 }
