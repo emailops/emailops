@@ -19,6 +19,7 @@ import { isUnifiedMode, useAccountStore } from '@/stores/accountStore';
 import { useJunkStore } from '@/stores/junkStore';
 import { useLogStore } from '@/stores/logStore';
 import { useToastStore } from '@/stores/toastStore';
+import { undoWindowMs } from '@/stores/undoWindowStore';
 import type { ActiveFilter, DraftAttachment, Email, EmailAttachmentMeta, EmailCategory } from '@/types';
 
 const PAGE_SIZE = 50;
@@ -577,11 +578,13 @@ interface EmailStore {
   setThreadsRead: (threads: ThreadRef[], read: boolean) => Promise<void>;
   setThreadsStarred: (threads: ThreadRef[], starred: boolean) => Promise<void>;
   /**
-   * Archive and delete wait out the undo window (`UNDO_WINDOW_MS`): the rows
-   * change at once, a toast offers Undo, and the provider is only called when
-   * the window closes — or earlier, when another archive/delete starts, a new
-   * view is opened, or the app unloads. Undo restores the rows without any
-   * provider call. Resolve once the action committed or was undone.
+   * Archive and delete wait out the undo window (Settings → Appearance, 6 s
+   * by default, `undoWindowStore`): the rows change at once, a toast offers
+   * Undo, and the provider is only called when the window closes — or
+   * earlier, when another archive/delete starts, a new view is opened, or the
+   * app unloads. Undo restores the rows without any provider call. With the
+   * window off they reach the provider at once, without Undo. Resolve once
+   * the action committed or was undone.
    */
   archiveThreads: (threads: ThreadRef[]) => Promise<void>;
   deleteThreads: (threads: ThreadRef[]) => Promise<void>;
@@ -1266,28 +1269,31 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         when: formatSnoozeTime(until),
       });
       log('success', 'system', message);
-      toasts.addToast({
-        message,
-        actionLabel: i18n.t('inbox:undo.action'),
-        durationMs: UNDO_WINDOW_MS,
-        onAction: () => {
-          void (async () => {
-            try {
-              await api.unsnoozeThreads(snoozed);
-            } catch (error) {
-              const text = i18n.t('inbox:snooze.undoFailed', { detail: errorText(error) });
-              log('error', 'system', text);
-              useToastStore.getState().addToast({ message: text });
-              return;
-            }
-            set((current) => ({
-              ...restoreThreads(current, before, done),
-              snoozes: withoutSnoozes(current.snoozes, done),
-            }));
-            log('info', 'system', i18n.t('inbox:snooze.undone', { count: snoozed.length }));
-          })();
-        },
-      });
+      const undo = () => {
+        void (async () => {
+          try {
+            await api.unsnoozeThreads(snoozed);
+          } catch (error) {
+            const text = i18n.t('inbox:snooze.undoFailed', { detail: errorText(error) });
+            log('error', 'system', text);
+            useToastStore.getState().addToast({ message: text });
+            return;
+          }
+          set((current) => ({
+            ...restoreThreads(current, before, done),
+            snoozes: withoutSnoozes(current.snoozes, done),
+          }));
+          log('info', 'system', i18n.t('inbox:snooze.undone', { count: snoozed.length }));
+        })();
+      };
+      // The Undo lasts the archive/delete undo window; with it off, the
+      // notice only says when the conversations come back.
+      const windowMs = undoWindowMs();
+      toasts.addToast(
+        windowMs > 0
+          ? { message, actionLabel: i18n.t('inbox:undo.action'), durationMs: windowMs, onAction: undo }
+          : { message },
+      );
     }
     if (failed.size > 0) {
       const message = i18n.t('inbox:snooze.failed', { count: failed.size, detail });
@@ -1457,12 +1463,8 @@ async function refreshQueryList(
   }
 }
 
-/** How long archive and delete wait for an Undo before reaching the provider. */
-export const UNDO_WINDOW_MS = 6000;
-
 /** The archive/delete actions inside their undo window (see `archiveThreads`). */
 export const pendingThreadActions = createPendingActionQueue({
-  windowMs: UNDO_WINDOW_MS,
   onError: (error) => useLogStore.getState().addLog('error', 'sync', errorText(error)),
 });
 
@@ -1554,8 +1556,10 @@ function setPendingRemovals(keys: ReadonlySet<string>, pending: boolean): void {
 
 /**
  * Archive/delete: the optimistic change now, the backend call when the undo
- * window closes, and a toast whose Undo restores the rows without a provider
- * round trip. Resolves once the action committed or was undone.
+ * window closes, and a toast — lasting the window — whose Undo restores the
+ * rows without a provider round trip. With the window off (Settings), the
+ * backend call at once and no toast. Resolves once the action committed or
+ * was undone.
  */
 async function runDeferredThreadAction(
   threads: ThreadRef[],
@@ -1563,32 +1567,37 @@ async function runDeferredThreadAction(
   patch: (state: EmailStore, keys: ReadonlySet<string>) => EmailStore,
 ): Promise<void> {
   if (threads.length === 0) return;
+  const windowMs = undoWindowMs();
+  if (windowMs === 0) return runThreadAction(threads, action, patch);
   // Scheduling commits whatever was pending (one undo at a time). Snapshots
   // stay independent: a rollback or undo only restores its own threads.
   const { keys, before, leaves } = applyOptimistic(threads, action, patch);
   if (leaves) setPendingRemovals(keys, true);
   const toasts = useToastStore.getState();
   let toastId: number | null = null;
-  const id = pendingThreadActions.schedule({
-    commit: async () => {
-      if (toastId !== null) toasts.dismissToast(toastId);
-      try {
-        await commitThreadAction(threads, action, before);
-      } finally {
+  const id = pendingThreadActions.schedule(
+    {
+      commit: async () => {
+        if (toastId !== null) toasts.dismissToast(toastId);
+        try {
+          await commitThreadAction(threads, action, before);
+        } finally {
+          if (leaves) setPendingRemovals(keys, false);
+        }
+      },
+      undo: () => {
         if (leaves) setPendingRemovals(keys, false);
-      }
+        useEmailStore.setState((current) => restoreThreads(current, before, keys));
+        useLogStore.getState().addLog('info', 'sync', i18n.t(`inbox:undo.undone.${action}`, { count: threads.length }));
+      },
     },
-    undo: () => {
-      if (leaves) setPendingRemovals(keys, false);
-      useEmailStore.setState((current) => restoreThreads(current, before, keys));
-      useLogStore.getState().addLog('info', 'sync', i18n.t(`inbox:undo.undone.${action}`, { count: threads.length }));
-    },
-  });
+    windowMs,
+  );
   toastId = toasts.addToast({
     message: i18n.t(`inbox:undo.done.${action}`, { count: threads.length }),
     actionLabel: i18n.t('inbox:undo.action'),
     onAction: () => pendingThreadActions.undo(id),
-    durationMs: UNDO_WINDOW_MS,
+    durationMs: windowMs,
   });
   await pendingThreadActions.settled(id);
 }

@@ -968,6 +968,7 @@ export default (h) => async function demoCases() {
   // Undo send and After archiving or deleting, as Settings shows them.
   const undoSend = await js(() => { const s = document.querySelector('[data-testid="undo-send-setting"] select'); return s ? { value: s.value, options: [...s.options].map((o) => o.textContent.trim()) } : null; });
   const afterLeave = await js(() => { const s = document.querySelector('[data-testid="auto-advance-setting"] select'); return s ? { value: s.value, options: [...s.options].map((o) => o.textContent.trim()) } : null; });
+  const undoWindow = await js(() => { const s = document.querySelector('[data-testid="undo-window-setting"] select'); return s ? { value: s.value, options: [...s.options].map((o) => o.textContent.trim()) } : null; });
   await closeSettings();
   await claim('feat-send-1', 'opciones', {
     covers: ['The wait is set in Settings → Appearance → Undo send: off, 5, 10, 20 or 30 seconds'],
@@ -977,6 +978,15 @@ export default (h) => async function demoCases() {
     const nums = want.replace(/ or /, ', ').split(', ').filter((x) => x !== 'off');
     const got = (undoSend?.options || []).map((o) => (o.match(/^(\d+)/) || [])[1]).filter(Boolean);
     return ok(undoSend && /off/i.test(undoSend.options[0]) && nums.join() === got.join(), `opciones: ${undoSend?.options.join(', ')}`, `doc: off, ${nums.join(', ')}; app: ${undoSend?.options.join(', ')}`);
+  });
+  await claim('feat-organize-undo-window', 'opciones', {
+    covers: ['Settings → Appearance → Undo archive and delete sets that wait: off, 6, 10, 20 or 30 seconds'],
+    how: 'Lee el desplegable «Undo archive and delete» de Ajustes → Appearance y compara sus opciones con la lista de la doc.',
+  }, async ({ doc }) => {
+    const [, want] = doc.match(/sets that wait: (.+?) seconds/);
+    const nums = want.replace(/ or /, ', ').split(', ').filter((x) => x !== 'off');
+    const got = (undoWindow?.options || []).map((o) => (o.match(/^(\d+)/) || [])[1]).filter(Boolean);
+    return ok(undoWindow && /off/i.test(undoWindow.options[0]) && nums.join() === got.join(), `opciones: ${undoWindow?.options.join(', ')}`, `doc: off, ${nums.join(', ')}; app: ${undoWindow?.options.join(', ')}`);
   });
   await claim('feat-organize-5', 'ajuste', {
     covers: ['Settings → Appearance → After archiving or deleting chooses between the next conversation, the previous one, or going back to the list.'],
