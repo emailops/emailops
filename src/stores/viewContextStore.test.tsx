@@ -55,6 +55,11 @@ describe('selectChatViewContext', () => {
 // crashing <ChatPanel> into the error boundary. Caught by the e2e sweep on
 // 23/09/2026 — the store tests above all passed, because the bug is about
 // reference identity across renders, not about the value.
+function Probe({ onValue }: { onValue: (value: ChatViewContext | null) => void }) {
+  onValue(useChatViewContext());
+  return null;
+}
+
 describe('useChatViewContext', () => {
   beforeEach(() => {
     useViewContextStore.setState({ base: null, form: null });
@@ -62,13 +67,9 @@ describe('useChatViewContext', () => {
 
   function renderHookValue(): { values: (ChatViewContext | null)[]; rerender: () => void; unmount: () => void } {
     const values: (ChatViewContext | null)[] = [];
-    function Probe() {
-      values.push(useChatViewContext());
-      return null;
-    }
     const container = document.createElement('div');
     const root = createRoot(container);
-    const render = () => act(() => root.render(<Probe />));
+    const render = () => act(() => root.render(<Probe onValue={(value) => values.push(value)} />));
     render();
     return { values, rerender: render, unmount: () => act(() => root.unmount()) };
   }

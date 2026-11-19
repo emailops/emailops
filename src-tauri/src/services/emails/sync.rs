@@ -2649,10 +2649,11 @@ async fn reconcile_spam_moves(
 }
 
 /// Pull the provider's Drafts folder into the local `drafts` table, for
-/// providers that support server-side drafts (Gmail/Outlook). Non-fatal: logs
-/// and returns on error so a drafts hiccup never fails the overall sync.
+/// providers whose drafts the sync reads (Gmail and Outlook both ways, IMAP
+/// read-only). Non-fatal: logs and returns on error so a drafts hiccup never
+/// fails the overall sync.
 async fn pull_drafts_if_supported(db: &Arc<Database>, account: &Account, email_provider: &dyn EmailProvider) {
-    if !crate::sync::provider::provider_supports_drafts(&account.provider) {
+    if !crate::sync::provider::provider_reads_drafts(&account.provider) {
         return;
     }
     match super::compose::pull_provider_drafts(db, account, email_provider).await {
@@ -3753,6 +3754,36 @@ mod extra_mailbox_window_tests {
             801,
             "every message of the burst, and the late one"
         );
+    }
+
+    /// Drafts another client saved in an IMAP Drafts folder reach Drafts on the
+    /// sync, as Gmail's and Outlook's do (issue #276).
+    #[tokio::test]
+    async fn the_sync_pulls_the_drafts_folder_of_an_imap_account() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let mut account = account_synced_from(Some(FLOOR));
+        account.provider = "imap".to_string();
+        seed_account_row(&db, &account);
+        let provider = FakeEmailProvider::new("me@example.com", "Me");
+        provider.add_provider_draft(crate::models::ProviderDraft {
+            provider_draft_id: "<d1@example.test>".to_string(),
+            to_addresses: vec!["dest@example.test".to_string()],
+            cc_addresses: Vec::new(),
+            bcc_addresses: Vec::new(),
+            subject: "Started on the phone".to_string(),
+            body: "text".to_string(),
+            body_html: None,
+            updated_at: Some(FLOOR),
+            provider_message_id: Some("7:3".to_string()),
+            in_reply_to: None,
+            attachments: Vec::new(),
+        });
+
+        pull_drafts_if_supported(&db, &account, &provider).await;
+
+        let drafts = db.list_drafts(&account.id).expect("list");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].provider_draft_id.as_deref(), Some("<d1@example.test>"));
     }
 
     /// A message whose download failed must be fetched again by a later pass;

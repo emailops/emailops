@@ -149,6 +149,7 @@ describe('needsEmbeddingProbe', () => {
         baseUrl: 'http://localhost:1234/v1',
         embeddingSource,
         contextWindow: 0,
+        embeddingBatchSize: 1,
         hasApiKey: false,
         disclosedHost: null,
       },

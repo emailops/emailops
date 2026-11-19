@@ -850,6 +850,18 @@ export async function getPendingEmbeddingsCount(accountId?: string): Promise<num
   return invoke('get_pending_embeddings_count', { accountId });
 }
 
+/** The email index's backlog and recent pace (`services::embeddings::IndexingStatus`). */
+export interface IndexingStatus {
+  /** Emails still to be indexed, in every account. */
+  backlog: number;
+  /** Emails indexed per minute lately; null when nothing was indexed in the last two minutes. */
+  messagesPerMinute: number | null;
+}
+
+export async function getIndexingStatus(): Promise<IndexingStatus> {
+  return invoke('get_indexing_status');
+}
+
 // Smart filter commands
 export async function refreshFilterStats(accountId: string | null): Promise<QuickFilterStats> {
   return invoke('refresh_filter_stats', { accountId });
@@ -1187,6 +1199,8 @@ export interface ServerSettingsInput {
   embeddingSource: 'server' | 'inapp' | 'openrouter';
   /** Tokens; 0 reads it from the server. */
   contextWindow: number;
+  /** Chunks per embeddings request, 1 to 64 (the backend refuses others). */
+  embeddingBatchSize: number;
   /** The remote host whose disclosure the user just confirmed. */
   disclosureAcceptedHost: string | null;
 }

@@ -17,8 +17,12 @@ use super::draft_files;
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, Draft, DraftAttachment, DraftAttachmentInput, SaveDraftRequest};
-use crate::sync::draft_plan::{plan_draft_sync, DraftSyncAction, LocalDraftState, UpstreamDraftState};
-use crate::sync::provider::{provider_supports_drafts, EmailAttachment, EmailBody, EmailProvider};
+use crate::sync::draft_plan::{
+    plan_draft_sync, plan_read_only_draft_sync, DraftSyncAction, LocalDraftState, UpstreamDraftState,
+};
+use crate::sync::provider::{
+    provider_reads_drafts, provider_supports_drafts, EmailAttachment, EmailBody, EmailProvider,
+};
 
 /// An attachment with filename + mime resolved from its path (still just a
 /// reference — no bytes read yet).
@@ -496,6 +500,9 @@ pub async fn send_draft(
 /// and retried by [`pull_provider_drafts`]: left alone, the next pull would
 /// take it for a draft written on another device and bring it back, ready to
 /// be sent a second time.
+///
+/// A Drafts folder this app only reads (IMAP) keeps its copy: it is remembered
+/// the same way, and the pull leaves it hidden for as long as it is there.
 async fn remove_provider_copy(
     db: &Database,
     account: &Account,
@@ -503,7 +510,11 @@ async fn remove_provider_copy(
     provider: Option<&dyn EmailProvider>,
 ) -> Result<()> {
     if !provider_supports_drafts(&account.provider) {
-        return Ok(());
+        return if provider_reads_drafts(&account.provider) {
+            db.add_draft_tombstone(&account.id, provider_draft_id)
+        } else {
+            Ok(())
+        };
     }
     if let Some(provider) = provider {
         match provider.delete_draft(provider_draft_id).await {
@@ -614,6 +625,12 @@ pub(crate) fn draft_attachments_pulled_key(account_id: &str) -> String {
 ///
 /// A draft with unpushed local edits is never pruned or overwritten: when both
 /// sides changed, the local draft wins and is pushed.
+///
+/// A provider whose Drafts folder this app only reads (IMAP, see
+/// [`provider_reads_drafts`]) gets the same pass without any write: nothing is
+/// pushed, re-created or deleted upstream ([`plan_read_only_draft_sync`]), so
+/// edits made here stay on this device, and a copy deleted or sent here stays
+/// on the server, hidden here until it leaves the folder.
 pub async fn pull_provider_drafts(
     db: &Arc<Database>,
     account: &Account,
@@ -621,6 +638,12 @@ pub async fn pull_provider_drafts(
 ) -> Result<usize> {
     let _pulling = DRAFT_PULL_LOCK.lock().await;
     let account_id = account.id.as_str();
+    let writes = provider_supports_drafts(&account.provider);
+    let plan: fn(Option<LocalDraftState>, UpstreamDraftState) -> DraftSyncAction = if writes {
+        plan_draft_sync
+    } else {
+        plan_read_only_draft_sync
+    };
     // Snapshot the local rows before listing. A draft pushed while the listing
     // is in flight is then simply not part of this pass, instead of looking
     // like a linked draft that is missing upstream.
@@ -661,7 +684,7 @@ pub async fn pull_provider_drafts(
             linked: provider_id.is_some(),
             dirty: local.dirty,
         };
-        let action = plan_draft_sync(Some(state), upstream);
+        let action = plan(Some(state), upstream);
         match action {
             DraftSyncAction::Push | DraftSyncAction::Recreate => {
                 let gone_upstream = if action == DraftSyncAction::Recreate {
@@ -703,18 +726,21 @@ pub async fn pull_provider_drafts(
         if linked_locally.contains(pd.provider_draft_id.as_str()) || tombstones.contains(&pd.provider_draft_id) {
             continue;
         }
-        if plan_draft_sync(None, UpstreamDraftState::Changed) == DraftSyncAction::Pull {
+        if plan(None, UpstreamDraftState::Changed) == DraftSyncAction::Pull {
             draft_files::import_draft(db, account_id, provider, pd, None).await?;
             pulled += 1;
         }
     }
 
-    // Copies of drafts deleted here: one no longer listed is done with.
+    // Copies of drafts deleted here: one no longer listed is done with. A
+    // folder this app only reads keeps the copy, hidden here while it is listed.
     for id in &tombstones {
-        let removed = if present.contains(id.as_str()) {
+        let removed = if !present.contains(id.as_str()) {
+            Ok(())
+        } else if writes {
             provider.delete_draft(id).await
         } else {
-            Ok(())
+            continue;
         };
         match removed {
             Ok(()) => db.remove_draft_tombstone(account_id, id)?,
@@ -1389,6 +1415,216 @@ mod tests {
         let drafts = db.list_drafts("a1").expect("list");
         assert_eq!(drafts.len(), 1, "a skipped draft must survive the prune pass");
         assert_eq!(drafts[0].subject, "Server draft");
+    }
+
+    // ── IMAP: the Drafts folder is read, never written ─────────────────────
+
+    /// A draft another mail client saved in an IMAP Drafts folder: keyed by
+    /// its Message-ID, versioned by `<UIDVALIDITY>:<UID>`.
+    fn imap_server_draft(message_id: &str, token: &str, subject: &str) -> crate::models::ProviderDraft {
+        crate::models::ProviderDraft {
+            provider_draft_id: message_id.to_string(),
+            to_addresses: vec!["dest@example.test".to_string()],
+            cc_addresses: vec!["copy@example.test".to_string()],
+            bcc_addresses: vec!["blind@example.test".to_string()],
+            subject: subject.to_string(),
+            body: "Started on the phone".to_string(),
+            body_html: Some("<p>Started on the phone</p>".to_string()),
+            updated_at: Some(1_700_000_000),
+            provider_message_id: Some(token.to_string()),
+            in_reply_to: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    fn subjects(db: &Database) -> Vec<String> {
+        let mut subjects: Vec<String> = db
+            .list_drafts("a1")
+            .expect("list")
+            .into_iter()
+            .map(|d| d.subject)
+            .collect();
+        subjects.sort();
+        subjects
+    }
+
+    #[tokio::test]
+    async fn an_imap_draft_saved_by_another_client_is_pulled_without_writing_to_the_server() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        let local_only = compose_draft(&db, &account, input("a1", "Written here", "body"), Some(&provider))
+            .await
+            .expect("compose");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "From the phone"));
+
+        assert_eq!(pull_provider_drafts(&db, &account, &provider).await.expect("pull"), 1);
+
+        let pulled = db
+            .list_drafts("a1")
+            .expect("list")
+            .into_iter()
+            .find(|d| d.id != local_only.id)
+            .expect("the server draft is in Drafts");
+        assert_eq!(pulled.subject, "From the phone");
+        assert_eq!(pulled.provider_draft_id.as_deref(), Some("<d1@example.test>"));
+        assert_eq!(pulled.to_addresses, vec!["dest@example.test".to_string()]);
+        assert_eq!(pulled.cc_addresses, vec!["copy@example.test".to_string()]);
+        assert_eq!(pulled.bcc_addresses, vec!["blind@example.test".to_string()]);
+        assert_eq!(pulled.body_html.as_deref(), Some("<p>Started on the phone</p>"));
+        let kept = db
+            .get_draft(&local_only.id)
+            .expect("get")
+            .expect("the local draft is untouched");
+        assert!(kept.provider_draft_id.is_none(), "a draft written here stays here");
+        assert_eq!(draft_writes(&provider), 0, "nothing is written to the server");
+        assert_eq!(provider.provider_drafts().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_imap_draft_saved_again_elsewhere_is_updated_in_place() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "First version"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        let id = only_draft_id(&db);
+
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:4", "Second version"));
+        assert_eq!(pull_provider_drafts(&db, &account, &provider).await.expect("pull"), 1);
+
+        assert_eq!(only_draft_id(&db), id, "the same row follows the draft");
+        assert_eq!(subjects(&db), vec!["Second version".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_renumbered_imap_drafts_folder_leaves_no_duplicate_and_loses_no_edit() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "Untouched"));
+        provider.add_provider_draft(imap_server_draft("<d2@example.test>", "7:4", "Edited later"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        let edited = db
+            .list_drafts("a1")
+            .expect("list")
+            .into_iter()
+            .find(|d| d.subject == "Edited later")
+            .expect("pulled");
+        let mut edit = input("a1", "Edited here", "my words");
+        edit.draft_id = Some(edited.id.clone());
+        compose_draft(&db, &account, edit, Some(&provider)).await.expect("edit");
+
+        // A server rebuild: new UIDVALIDITY, every UID handed out again.
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "9:1", "Untouched"));
+        provider.add_provider_draft(imap_server_draft("<d2@example.test>", "9:2", "Edited later"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        assert_eq!(subjects(&db), vec!["Edited here".to_string(), "Untouched".to_string()]);
+        let kept = db.get_draft(&edited.id).expect("get").expect("the edited row survives");
+        assert_eq!(kept.body, "my words");
+        assert_eq!(draft_writes(&provider), 0);
+    }
+
+    #[tokio::test]
+    async fn an_imap_draft_removed_from_the_server_goes_unless_it_was_edited_here() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "Sent from the phone"));
+        provider.add_provider_draft(imap_server_draft("<d2@example.test>", "7:4", "Edited later"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        let edited = db
+            .list_drafts("a1")
+            .expect("list")
+            .into_iter()
+            .find(|d| d.subject == "Edited later")
+            .expect("pulled");
+        let mut edit = input("a1", "Edited here", "my words");
+        edit.draft_id = Some(edited.id.clone());
+        compose_draft(&db, &account, edit, Some(&provider)).await.expect("edit");
+
+        provider
+            .delete_draft("<d1@example.test>")
+            .await
+            .expect("sent elsewhere");
+        provider
+            .delete_draft("<d2@example.test>")
+            .await
+            .expect("deleted elsewhere");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        assert_eq!(subjects(&db), vec!["Edited here".to_string()]);
+        assert_eq!(
+            draft_writes(&provider),
+            0,
+            "an edit made here is not re-created upstream"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pulled_imap_draft_deleted_here_stays_deleted_and_the_server_copy_stays() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "Not needed"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        delete_draft(&db, &account, &only_draft_id(&db), None)
+            .await
+            .expect("delete");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        pull_provider_drafts(&db, &account, &provider)
+            .await
+            .expect("pull again");
+
+        assert!(db.list_drafts("a1").expect("list").is_empty(), "the draft came back");
+        assert_eq!(provider.provider_drafts().len(), 1, "the server copy is never touched");
+    }
+
+    #[tokio::test]
+    async fn a_pulled_imap_draft_sent_here_does_not_come_back() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "Ready to go"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        send_draft(&db, &account, &only_draft_id(&db), &provider)
+            .await
+            .expect("send");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        assert_eq!(provider.sent().len(), 1);
+        assert!(
+            db.list_drafts("a1").expect("list").is_empty(),
+            "a sent draft that came back could be sent twice"
+        );
+        assert_eq!(provider.provider_drafts().len(), 1, "the server copy is never touched");
+    }
+
+    #[tokio::test]
+    async fn an_imap_draft_deleted_here_is_forgotten_once_the_server_copy_is_gone() {
+        let db = Arc::new(Database::new_for_testing().expect("db"));
+        let account = seed_account(&db, "a1", "imap");
+        let provider = FakeEmailProvider::new("a1@example.com", "A One");
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:3", "Not needed"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        delete_draft(&db, &account, &only_draft_id(&db), None)
+            .await
+            .expect("delete");
+
+        provider
+            .delete_draft("<d1@example.test>")
+            .await
+            .expect("removed elsewhere");
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        assert!(db.draft_tombstones("a1").expect("tombstones").is_empty());
+
+        // The same Message-ID saved again later is a draft like any other.
+        provider.add_provider_draft(imap_server_draft("<d1@example.test>", "7:9", "Saved again"));
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+        assert_eq!(subjects(&db), vec!["Saved again".to_string()]);
     }
 
     #[test]

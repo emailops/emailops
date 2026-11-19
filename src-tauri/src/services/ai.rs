@@ -1004,7 +1004,8 @@ impl AiService {
         let dimensions = Self::server_embedding_dimensions(db, &base_url, &server_embedding_model)?;
         let chat = OpenRouterClient::openai_compatible(&base_url, key, config.model.clone(), server_embedding_model)
             .with_context_window(context_window)
-            .with_embedding_dimensions(dimensions);
+            .with_embedding_dimensions(dimensions)
+            .with_embedding_batch_size(server.embedding_batch_size as usize);
         let embeddings: Arc<dyn AIProvider> = match server.embedding_source {
             EmbeddingSource::Server => return Ok(Arc::new(chat)),
             EmbeddingSource::OpenRouter => Arc::new(Self::openrouter_client(db, config)?),
@@ -1522,6 +1523,28 @@ impl AiService {
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {
         let result = Self::embed_metered(&self.db, self.provider.as_ref(), text).await?;
         Ok(result.embedding)
+    }
+
+    /// One vector per text of `texts`, in order. A provider that sends one
+    /// text per request gets one [`Self::embed`] call per text; one that sends
+    /// several gets them all in one metered [`AIProvider::embed_batch`] call.
+    pub async fn embed_texts(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if self.provider.embedding_batch_size() <= 1 {
+            let mut vectors = Vec::with_capacity(texts.len());
+            for text in texts {
+                vectors.push(self.embed(text).await?);
+            }
+            return Ok(vectors);
+        }
+        let results = Self::embed_batch_metered(&self.db, self.provider.as_ref(), texts).await?;
+        if results.len() != texts.len() {
+            return Err(AppError::AiError(format!(
+                "The embedding model returned {} vectors for {} texts",
+                results.len(),
+                texts.len()
+            )));
+        }
+        Ok(results.into_iter().map(|r| r.embedding).collect())
     }
 
     pub async fn is_available(&self) -> bool {
@@ -2929,6 +2952,40 @@ mod server_provider_tests {
             requests_to(&server, "/embeddings").await,
             2,
             "an unchanged model is not probed again"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_saved_chunks_per_request_reach_the_server_embeddings_only() {
+        let server = embedding_server(EMAIL_EMBEDDING_DIM).await;
+        let db = db();
+        let mut input = settings(&server, "local-embed", EmbeddingSource::Server);
+        if let Some(s) = input.server.as_mut() {
+            s.embedding_batch_size = Some(8);
+        }
+
+        save(&db, input).await.expect("saved");
+
+        assert_eq!(
+            AiService::load_provider(&db).expect("provider").embedding_batch_size(),
+            8
+        );
+
+        db.set_preference(OPENROUTER_DEV_KEY_PREF, "or-key").unwrap();
+        db.set_preference("openrouter_api_key_id", OPENROUTER_KEY_ID).unwrap();
+        db.set_preference(OPENROUTER_EMBED_VALIDATED_PREF, "vendor/embed")
+            .unwrap();
+        db.set_preference(OPENROUTER_EMBED_DIMENSIONS_PREF, "native").unwrap();
+        let mut input = settings(&server, "vendor/embed", EmbeddingSource::OpenRouter);
+        if let Some(s) = input.server.as_mut() {
+            s.embedding_batch_size = Some(8);
+        }
+        save(&db, input).await.expect("saved");
+
+        assert_eq!(
+            AiService::load_provider(&db).expect("provider").embedding_batch_size(),
+            1,
+            "OpenRouter keeps one chunk per request"
         );
     }
 

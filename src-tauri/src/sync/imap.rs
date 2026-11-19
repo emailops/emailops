@@ -5,7 +5,8 @@ use mailparse::{parse_mail, MailHeaderMap};
 use sha2::{Digest, Sha256};
 
 use crate::models::error::{AppError, Result};
-use crate::models::Email;
+use crate::models::{Email, ProviderDraft, ProviderDraftAttachment};
+use crate::sync::draft_plan::{plan_draft_fetches, plan_imap_draft_listing, ImapDraftEntry, ProviderDraftPull};
 use crate::sync::folder_plan::{self, resolve_role_folder, ListedFolder, WellKnownFolder};
 use crate::sync::imap_search;
 use crate::sync::imap_session::{self, ConnectStage, SessionSlot};
@@ -74,6 +75,10 @@ pub(crate) fn folder_email_id_prefix(account_id: &str, server_path: &str) -> Str
 /// (`MAX_CUSTOM_FOLDERS_PER_ACCOUNT` in `services/emails/sync.rs`). Each costs
 /// one `EXAMINE` round trip on the shared connection.
 const MAX_VALIDITY_FOLDERS: usize = 54;
+
+/// Most drafts downloaded by one `UID FETCH`: a Drafts folder read for the
+/// first time can hold hundreds, each with its attachments.
+const DRAFT_FETCH_CHUNK: usize = 20;
 
 /// IMAP has no "has attachment" search key. A message carrying attachments is
 /// `multipart/mixed` at the top level in practice, and a message that *is*
@@ -694,8 +699,8 @@ impl ImapClient {
     /// Full folder discovery on an open session: plain `LIST` first; when the
     /// server advertises SPECIAL-USE but volunteered no role attributes, retry
     /// with an explicit `RETURN (SPECIAL-USE)` and parse the raw response.
-    fn list_folders_blocking(
-        session: &mut imap::Session<native_tls::TlsStream<std::net::TcpStream>>,
+    fn list_folders_blocking<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
     ) -> std::result::Result<Vec<ListedFolder>, imap::Error> {
         let entries = Self::list_entries_blocking(session)?;
         let has_role_attr = entries.iter().any(|e| {
@@ -1022,6 +1027,78 @@ impl ImapClient {
             }
         }
         Ok(new_uid)
+    }
+
+    /// The blocking half of [`EmailProvider::list_drafts`] on an open session.
+    ///
+    /// Read-only towards the server: the Drafts folder is opened with `EXAMINE`
+    /// and every fetch is `.PEEK`, so no flag changes and nothing is written.
+    /// The listing (one `UID SEARCH UNDELETED` and one `Message-ID` header
+    /// fetch) is planned by [`plan_imap_draft_listing`]; only drafts whose
+    /// token moved are downloaded, [`DRAFT_FETCH_CHUNK`] per command. Any step
+    /// that cannot be answered is an error: an empty listing would prune every
+    /// pulled draft.
+    fn list_drafts_on_session<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
+        known_change_tokens: &std::collections::HashMap<String, String>,
+    ) -> Result<ProviderDraftPull> {
+        let entries = Self::list_folders_blocking(session)
+            .map_err(|e| AppError::SyncError(format!("IMAP LIST failed: {}", imap_search::describe_error(&e))))?;
+        let Some(path) = folder_plan::resolve_drafts_folder(&entries) else {
+            return Ok(ProviderDraftPull::default());
+        };
+        // RFC 3501 requires the value; a server that omits it has no
+        // persistent UIDs, and 0 stands for that.
+        let uid_validity = imap_search::examine_uid_validity(session, &path)?.unwrap_or(0);
+        // A message flagged \Deleted is one a client is replacing or removing.
+        let undeleted: std::collections::HashSet<u32> =
+            imap_search::uid_search(session, "UNDELETED")?.into_iter().collect();
+        let listing: Vec<ImapDraftEntry> = if undeleted.is_empty() {
+            Vec::new()
+        } else {
+            imap_search::uid_fetch_identities(session)?
+                .into_iter()
+                .filter(|identity| undeleted.contains(&identity.uid))
+                .map(|identity| ImapDraftEntry {
+                    uid: identity.uid,
+                    message_id: identity.message_id,
+                })
+                .collect()
+        };
+        let listed = plan_imap_draft_listing(uid_validity, &listing);
+        let drafts: Vec<_> = listed.iter().map(|(_, draft)| draft.clone()).collect();
+        let plan = plan_draft_fetches(&drafts, known_change_tokens);
+        let to_fetch: std::collections::HashSet<&str> = plan.to_fetch.iter().map(String::as_str).collect();
+        let fetch: Vec<_> = listed
+            .iter()
+            .filter(|(_, draft)| to_fetch.contains(draft.provider_draft_id.as_str()))
+            .collect();
+
+        let mut changed = Vec::with_capacity(fetch.len());
+        for chunk in fetch.chunks(DRAFT_FETCH_CHUNK) {
+            let uids: Vec<u32> = chunk.iter().map(|(uid, _)| *uid).collect();
+            let bodies = imap_search::uid_fetch_body_batch(session, &uids)?;
+            for (uid, draft) in chunk {
+                // Gone between the listing and the fetch: the next pass lists
+                // it as gone.
+                let Some(fetched) = bodies.get(uid) else { continue };
+                let token = draft.change_token.as_deref().unwrap_or_default();
+                match parse_draft(&draft.provider_draft_id, token, fetched) {
+                    Ok(parsed) => changed.push(parsed),
+                    // Left as it is here; its token stays unrecorded, so the
+                    // next pass reads it again.
+                    Err(e) => crate::services::logger::log(
+                        "warn",
+                        "drafts",
+                        format!("An IMAP draft could not be read and was skipped: {e}"),
+                    ),
+                }
+            }
+        }
+        Ok(ProviderDraftPull {
+            changed,
+            present_ids: plan.present_ids,
+        })
     }
 
     /// Connect and login synchronously — intended for use inside `spawn_blocking`.
@@ -1585,6 +1662,85 @@ fn collect_attachments(part: &mailparse::ParsedMail, out: &mut Vec<AttachmentInf
     }
 }
 
+// ── Drafts ────────────────────────────────────────────────────────────────────
+
+/// A draft read from the Drafts folder, as the pull pass stores it. One that
+/// panics on parse is an error for that draft only.
+fn parse_draft(
+    provider_draft_id: &str,
+    change_token: &str,
+    fetched: &imap_search::FetchedMessage,
+) -> Result<ProviderDraft> {
+    crate::util::panic_guard::call_isolated(&format!("Reading IMAP draft {change_token}"), || {
+        parse_draft_unguarded(provider_draft_id, change_token, fetched)
+    })
+}
+
+/// Unlike a received message, a draft keeps its own parts: the plain text as
+/// written and, when it has one, the HTML (inline images resolved the same
+/// way). `Bcc` is read, a missing subject stays empty, and the attachments
+/// carry their bytes, since IMAP has no separate attachment download.
+fn parse_draft_unguarded(
+    provider_draft_id: &str,
+    change_token: &str,
+    fetched: &imap_search::FetchedMessage,
+) -> Result<ProviderDraft> {
+    let parsed =
+        parse_mail(&fetched.raw).map_err(|e| AppError::SyncError(format!("Failed to parse IMAP draft: {e}")))?;
+    let hdrs = &parsed.headers;
+    let addresses = |name: &str| parse_address_list(&hdrs.get_first_value(name).unwrap_or_default());
+
+    let (html, plain) = match collect_body_parts(&parsed, false) {
+        (None, None) => collect_body_parts(&parsed, true),
+        found => found,
+    };
+    let body_html = html.map(|h| {
+        if h.contains("cid:") {
+            inline_cid_images(&parsed, h)
+        } else {
+            h
+        }
+    });
+    let body = match (plain, body_html.as_deref()) {
+        (Some(text), _) => text.replace("\r\n", "\n"),
+        (None, Some(h)) => crate::util::html::strip_html_for_fts(h),
+        (None, None) => String::new(),
+    };
+
+    let in_reply_to = hdrs
+        .get_first_value("In-Reply-To")
+        .and_then(|value| value.split_whitespace().next().map(str::to_string))
+        .or_else(|| crate::sync::mime_builder::answered_message_id(hdrs.get_first_value("References").as_deref()));
+
+    let attachments = extract_attachments(&parsed)
+        .into_iter()
+        .map(|att| ProviderDraftAttachment {
+            message_id: provider_draft_id.to_string(),
+            attachment_id: String::new(),
+            filename: att.filename,
+            mime_type: att.mime_type,
+            inline_data: att.inline_data,
+        })
+        .collect();
+
+    Ok(ProviderDraft {
+        provider_draft_id: provider_draft_id.to_string(),
+        to_addresses: addresses("To"),
+        cc_addresses: addresses("Cc"),
+        bcc_addresses: addresses("Bcc"),
+        subject: hdrs.get_first_value("Subject").unwrap_or_default(),
+        body,
+        body_html,
+        // When the server took this version in: the last save.
+        updated_at: fetched
+            .internal_date
+            .or_else(|| hdrs.get_first_value("Date").and_then(|d| mailparse::dateparse(&d).ok())),
+        provider_message_id: Some(change_token.to_string()),
+        in_reply_to,
+        attachments,
+    })
+}
+
 // ── EmailProvider implementation ──────────────────────────────────────────────
 
 #[async_trait]
@@ -2093,6 +2249,27 @@ impl EmailProvider for ImapClient {
         Err(AppError::SyncError(
             "IMAP attachment re-fetch not supported; data is inline in the message".to_string(),
         ))
+    }
+
+    /// Read the Drafts folder other mail clients save into, on the pass's
+    /// shared session. Only the listing is overridden: this app never writes
+    /// to an IMAP Drafts folder (`provider_supports_drafts` is false for IMAP).
+    async fn list_drafts(
+        &self,
+        known_change_tokens: &std::collections::HashMap<String, String>,
+    ) -> Result<ProviderDraftPull> {
+        let creds = self.credentials.clone();
+        let slot = Arc::clone(&self.session);
+        let known = known_change_tokens.clone();
+        tokio::task::spawn_blocking(move || -> Result<ProviderDraftPull> {
+            let mut session = Self::checkout_session(&slot, &creds)
+                .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+            let pull = Self::list_drafts_on_session(&mut session, &known)?;
+            slot.checkin(session);
+            Ok(pull)
+        })
+        .await
+        .map_err(task_failed)?
     }
 
     async fn create_folder(&self, server_path: &str) -> Result<()> {
@@ -3974,5 +4151,327 @@ mod tests {
             "invalid TLS response must be terminal: {error}"
         );
         server.join().unwrap();
+    }
+
+    // ── Drafts folder (read-only pull) ────────────────────────────────────
+
+    /// A scripted server like [`ScriptedServer`] whose writes stay readable
+    /// after the session took the stream.
+    struct RecordingServer {
+        input: std::io::Cursor<Vec<u8>>,
+        written: Arc<std::sync::Mutex<Vec<u8>>>,
+    }
+
+    impl std::io::Read for RecordingServer {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(buf)
+        }
+    }
+
+    impl std::io::Write for RecordingServer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.written
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// [`session_answering`], plus everything the client wrote.
+    fn recorded_session_answering(
+        replies: &[String],
+    ) -> (imap::Session<RecordingServer>, Arc<std::sync::Mutex<Vec<u8>>>) {
+        let mut script = "a1 OK Logged in.\r\n".to_string();
+        for (i, reply) in replies.iter().enumerate() {
+            script.push_str(&reply.replace("{tag}", &format!("a{}", i + 2)));
+        }
+        let written = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server = RecordingServer {
+            input: std::io::Cursor::new(script.into_bytes()),
+            written: Arc::clone(&written),
+        };
+        match imap::Client::new(server).login("u", "p") {
+            Ok(session) => (session, written),
+            Err((e, _)) => panic!("scripted login failed: {e}"),
+        }
+    }
+
+    fn sent_text(written: &Arc<std::sync::Mutex<Vec<u8>>>) -> String {
+        String::from_utf8_lossy(&written.lock().unwrap_or_else(std::sync::PoisonError::into_inner)).into_owned()
+    }
+
+    fn draft_message(message_id: &str, subject: &str) -> String {
+        format!(
+            "From: Me <me@example.test>\r\n\
+             To: Dest One <dest@example.test>, other@example.test\r\n\
+             Subject: {subject}\r\n\
+             Message-ID: {message_id}\r\n\
+             MIME-Version: 1.0\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             Started on the phone\r\n"
+        )
+    }
+
+    const DRAFTS_LISTED: &str = "* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n\
+                                 * LIST (\\HasNoChildren \\Sent) \"/\" \"Sent\"\r\n\
+                                 * LIST (\\HasNoChildren) \"/\" \"Drafts\"\r\n\
+                                 * LIST (\\HasNoChildren \\Drafts) \"/\" \"Work in progress\"\r\n\
+                                 {tag} OK done\r\n";
+    const DRAFTS_EXAMINED: &str = "* OK [UIDVALIDITY 7] UIDs valid\r\n{tag} OK [READ-ONLY] done\r\n";
+
+    /// The `UID FETCH … (MESSAGE-ID)` reply for `(uid, Message-ID)` pairs.
+    fn identities_reply(messages: &[(u32, &str)]) -> String {
+        let mut reply = String::new();
+        for (seq, (uid, message_id)) in messages.iter().enumerate() {
+            let header = format!("Message-ID: {message_id}\r\n\r\n");
+            reply.push_str(&format!(
+                "* {} FETCH (UID {uid} INTERNALDATE \"14-Nov-2023 22:13:20 +0000\" \
+                 BODY[HEADER.FIELDS (MESSAGE-ID)] {{{}}}\r\n{header})\r\n",
+                seq + 1,
+                header.len()
+            ));
+        }
+        reply.push_str("{tag} OK done\r\n");
+        reply
+    }
+
+    /// The `UID FETCH … BODY.PEEK[]` reply for `(uid, raw message)` pairs.
+    fn bodies_reply(messages: &[(u32, String)]) -> String {
+        let mut reply = String::new();
+        for (seq, (uid, raw)) in messages.iter().enumerate() {
+            reply.push_str(&format!(
+                "* {} FETCH (UID {uid} FLAGS (\\Draft) INTERNALDATE \"14-Nov-2023 22:13:20 +0000\" BODY[] {{{}}}\r\n{raw})\r\n",
+                seq + 1,
+                raw.len()
+            ));
+        }
+        reply.push_str("{tag} OK done\r\n");
+        reply
+    }
+
+    fn assert_read_only(sent: &str) {
+        for write in ["SELECT", "STORE", "EXPUNGE", "APPEND", "COPY", "MOVE", " BODY["] {
+            assert!(!sent.contains(write), "sent {write}: {sent}");
+        }
+    }
+
+    #[test]
+    fn the_drafts_listing_reads_the_special_use_folder_and_changes_nothing() {
+        let (mut session, written) = recorded_session_answering(&[
+            DRAFTS_LISTED.to_string(),
+            DRAFTS_EXAMINED.to_string(),
+            "* SEARCH 3 5\r\n{tag} OK done\r\n".to_string(),
+            // UID 4 is flagged \Deleted, so the search left it out.
+            identities_reply(&[
+                (3, "<a@example.test>"),
+                (4, "<gone@example.test>"),
+                (5, "<b@example.test>"),
+            ]),
+            bodies_reply(&[
+                (3, draft_message("<a@example.test>", "First")),
+                (5, draft_message("<b@example.test>", "Second")),
+            ]),
+        ]);
+
+        let pull = ImapClient::list_drafts_on_session(&mut session, &std::collections::HashMap::new()).expect("pull");
+
+        assert_eq!(
+            pull.present_ids,
+            vec!["<a@example.test>".to_string(), "<b@example.test>".to_string()]
+        );
+        let read: Vec<(&str, &str, Option<&str>)> = pull
+            .changed
+            .iter()
+            .map(|d| {
+                (
+                    d.provider_draft_id.as_str(),
+                    d.subject.as_str(),
+                    d.provider_message_id.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            read,
+            vec![
+                ("<a@example.test>", "First", Some("7:3")),
+                ("<b@example.test>", "Second", Some("7:5")),
+            ]
+        );
+        let sent = sent_text(&written);
+        assert!(sent.contains("EXAMINE \"Work in progress\""), "{sent}");
+        assert!(sent.contains("UID SEARCH UNDELETED"), "{sent}");
+        assert!(sent.contains("BODY.PEEK[]"), "{sent}");
+        assert_read_only(&sent);
+    }
+
+    #[test]
+    fn an_unchanged_drafts_folder_downloads_no_draft() {
+        let (mut session, written) = recorded_session_answering(&[
+            DRAFTS_LISTED.to_string(),
+            DRAFTS_EXAMINED.to_string(),
+            "* SEARCH 3\r\n{tag} OK done\r\n".to_string(),
+            identities_reply(&[(3, "<a@example.test>")]),
+        ]);
+        let known = std::collections::HashMap::from([("<a@example.test>".to_string(), "7:3".to_string())]);
+
+        let pull = ImapClient::list_drafts_on_session(&mut session, &known).expect("pull");
+
+        assert!(pull.changed.is_empty());
+        assert_eq!(pull.present_ids, vec!["<a@example.test>".to_string()]);
+        let sent = sent_text(&written);
+        assert!(!sent.contains("BODY.PEEK[]"), "{sent}");
+        assert_read_only(&sent);
+    }
+
+    #[test]
+    fn an_empty_drafts_folder_is_listed_without_a_fetch() {
+        let (mut session, written) = recorded_session_answering(&[
+            DRAFTS_LISTED.to_string(),
+            DRAFTS_EXAMINED.to_string(),
+            "* SEARCH\r\n{tag} OK done\r\n".to_string(),
+        ]);
+
+        let pull = ImapClient::list_drafts_on_session(&mut session, &std::collections::HashMap::new()).expect("pull");
+
+        assert!(pull.changed.is_empty() && pull.present_ids.is_empty());
+        assert!(!sent_text(&written).contains("UID FETCH"));
+    }
+
+    #[test]
+    fn a_server_without_a_drafts_folder_has_no_drafts() {
+        let listed = "* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n\
+                      * LIST (\\HasNoChildren \\Sent) \"/\" \"Sent\"\r\n\
+                      {tag} OK done\r\n";
+        let (mut session, written) = recorded_session_answering(&[listed.to_string()]);
+
+        let pull = ImapClient::list_drafts_on_session(&mut session, &std::collections::HashMap::new()).expect("pull");
+
+        assert!(pull.changed.is_empty() && pull.present_ids.is_empty());
+        assert!(!sent_text(&written).contains("EXAMINE"));
+    }
+
+    #[test]
+    fn a_drafts_listing_cut_short_is_an_error_not_an_empty_folder() {
+        // An empty listing would prune every pulled draft.
+        let replies = [
+            DRAFTS_LISTED.to_string(),
+            DRAFTS_EXAMINED.to_string(),
+            "* SEARCH 3\r\n{tag} OK done\r\n".to_string(),
+        ];
+        for answered in 0..replies.len() {
+            let (mut session, _) = recorded_session_answering(&replies[..answered]);
+            let result = ImapClient::list_drafts_on_session(&mut session, &std::collections::HashMap::new());
+            assert!(result.is_err(), "connection lost after {answered} replies");
+        }
+    }
+
+    #[test]
+    fn a_plain_text_draft_reopens_with_its_recipients_subject_and_text() {
+        let raw = "From: Me <me@example.test>\r\n\
+                   To: \"Doe, Dana\" <dana@example.test>, other@example.test\r\n\
+                   Cc: copy@example.test\r\n\
+                   Bcc: blind@example.test\r\n\
+                   Subject: Quarterly plan\r\n\
+                   Message-ID: <draft-1@example.test>\r\n\
+                   MIME-Version: 1.0\r\n\
+                   Content-Type: text/plain; charset=utf-8\r\n\
+                   \r\n\
+                   Line one\r\nLine two\r\n";
+
+        let draft = parse_draft("<draft-1@example.test>", "7:3", &fetched(raw, Some(1_700_000_000))).expect("parse");
+
+        assert_eq!(draft.provider_draft_id, "<draft-1@example.test>");
+        assert_eq!(draft.provider_message_id.as_deref(), Some("7:3"));
+        assert_eq!(
+            draft.to_addresses,
+            vec!["dana@example.test".to_string(), "other@example.test".to_string()]
+        );
+        assert_eq!(draft.cc_addresses, vec!["copy@example.test".to_string()]);
+        assert_eq!(draft.bcc_addresses, vec!["blind@example.test".to_string()]);
+        assert_eq!(draft.subject, "Quarterly plan");
+        assert_eq!(draft.body, "Line one\nLine two\n");
+        assert_eq!(draft.body_html, None, "a plain-text draft stays plain text");
+        assert_eq!(
+            draft.updated_at,
+            Some(1_700_000_000),
+            "saved when the server received it"
+        );
+        assert_eq!(draft.in_reply_to, None);
+        assert!(draft.attachments.is_empty());
+    }
+
+    #[test]
+    fn an_html_draft_keeps_its_html_and_its_text() {
+        let raw = "Subject: Rich\r\nMIME-Version: 1.0\r\n\
+                   Content-Type: multipart/alternative; boundary=\"ALT\"\r\n\r\n\
+                   --ALT\r\nContent-Type: text/plain\r\n\r\nHello there\r\n\
+                   --ALT\r\nContent-Type: text/html\r\n\r\n<p>Hello <b>there</b></p>\r\n\
+                   --ALT--\r\n";
+
+        let draft = parse_draft("<d@example.test>", "7:3", &fetched(raw, None)).expect("parse");
+
+        assert_eq!(draft.body.trim_end(), "Hello there");
+        assert_eq!(
+            draft.body_html.as_deref().map(str::trim_end),
+            Some("<p>Hello <b>there</b></p>")
+        );
+    }
+
+    #[test]
+    fn an_html_only_draft_gets_its_text_from_the_html() {
+        let raw = "Subject: Rich\r\nMIME-Version: 1.0\r\nContent-Type: text/html\r\n\r\n<p>Only <i>HTML</i></p>\r\n";
+
+        let draft = parse_draft("<d@example.test>", "7:3", &fetched(raw, None)).expect("parse");
+
+        assert_eq!(draft.body.trim(), "Only HTML");
+        assert!(draft.body_html.is_some());
+    }
+
+    #[test]
+    fn a_reply_draft_keeps_the_message_it_answers() {
+        let replying = "Subject: Re: Plan\r\nIn-Reply-To: <parent@example.test>\r\n\
+                        References: <root@example.test> <parent@example.test>\r\n\r\nYes\r\n";
+        let draft = parse_draft("<d@example.test>", "7:3", &fetched(replying, None)).expect("parse");
+        assert_eq!(draft.in_reply_to.as_deref(), Some("<parent@example.test>"));
+
+        // A client that writes only References answers its last entry.
+        let referencing = "Subject: Re: Plan\r\nReferences: <root@example.test> <parent@example.test>\r\n\r\nYes\r\n";
+        let draft = parse_draft("<d@example.test>", "7:3", &fetched(referencing, None)).expect("parse");
+        assert_eq!(draft.in_reply_to.as_deref(), Some("<parent@example.test>"));
+    }
+
+    #[test]
+    fn a_draft_keeps_its_attachments_with_their_bytes() {
+        let raw = mixed_message(&[
+            "Content-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"plan.pdf\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\nJVBERi0x",
+        ]);
+        let raw = String::from_utf8(raw).expect("utf-8");
+
+        let draft = parse_draft("<d@example.test>", "7:3", &fetched(&raw, None)).expect("parse");
+
+        assert_eq!(draft.attachments.len(), 1);
+        let attachment = &draft.attachments[0];
+        assert_eq!(attachment.filename, "plan.pdf");
+        assert_eq!(attachment.mime_type, "application/pdf");
+        assert_eq!(
+            attachment.inline_data.as_deref(),
+            Some("JVBERi0x"),
+            "the bytes come with the draft"
+        );
+        assert!(attachment.attachment_id.is_empty(), "nothing to download afterwards");
+    }
+
+    #[test]
+    fn a_draft_without_a_server_date_takes_its_date_header_and_keeps_an_empty_subject() {
+        let raw = "Date: Tue, 14 Nov 2023 22:13:20 +0000\r\n\r\nText\r\n";
+        let draft = parse_draft("uid:7:3", "7:3", &fetched(raw, None)).expect("parse");
+        assert_eq!(draft.updated_at, Some(1_700_000_000));
+        assert_eq!(draft.subject, "");
     }
 }

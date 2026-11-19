@@ -18,6 +18,8 @@ pub const PROVIDER_ID: &str = "openai_compatible";
 const BASE_URL_PREF: &str = "openai_compatible_base_url";
 const EMBEDDING_SOURCE_PREF: &str = "openai_compatible_embedding_source";
 const CONTEXT_WINDOW_PREF: &str = "openai_compatible_context_window";
+/// How many text chunks one embeddings request to the server carries.
+const EMBEDDING_BATCH_SIZE_PREF: &str = "openai_compatible_embedding_batch_size";
 /// The remote host the user last confirmed the disclosure for.
 const DISCLOSED_HOST_PREF: &str = "openai_compatible_disclosed_host";
 /// The server embedding model that passed the probe, as `{base_url} {model}`,
@@ -37,6 +39,14 @@ const DEV_KEY_PREF: &str = "openai_compatible_api_key_dev";
 const MIN_CONTEXT_WINDOW: u32 = 2_048;
 /// Largest context window a user may set.
 const MAX_CONTEXT_WINDOW: u32 = 1_048_576;
+
+/// Chunks per embeddings request when nothing is set: one, as every server
+/// takes a single `input` string.
+const DEFAULT_EMBEDDING_BATCH_SIZE: u32 = 1;
+/// Most chunks a user may put in one embeddings request. Local servers cap a
+/// request by their own batch size, and a refused batch is resent one chunk
+/// at a time, so a larger value would only waste requests.
+const MAX_EMBEDDING_BATCH_SIZE: u32 = 64;
 
 /// Window below which chat runs cut down: the auxiliary query planner needs
 /// 16k (`AUX_MIN_N_CTX` in the embedded runtime's planner), and long threads
@@ -134,6 +144,8 @@ pub struct ServerSettingsInput {
     pub embedding_source: EmbeddingSource,
     /// Context window in tokens; `None` or `0` reads it from the server.
     pub context_window: Option<u32>,
+    /// Chunks per embeddings request, 1 to 64; `None` is 1.
+    pub embedding_batch_size: Option<u32>,
     /// The remote host the user just confirmed the disclosure for.
     pub disclosure_accepted_host: Option<String>,
 }
@@ -155,6 +167,8 @@ pub struct ServerSettingsPlan {
     pub embedding_source: EmbeddingSource,
     /// `0` = read from the server.
     pub context_window: u32,
+    /// Chunks per embeddings request, 1 to 64.
+    pub embedding_batch_size: u32,
     /// The host to remember as disclosed; `None` for a loopback server.
     pub disclosed_host: Option<String>,
 }
@@ -167,6 +181,8 @@ pub struct ServerSettings {
     pub has_api_key: bool,
     pub embedding_source: EmbeddingSource,
     pub context_window: u32,
+    /// Chunks per embeddings request to the server.
+    pub embedding_batch_size: u32,
     pub disclosed_host: Option<String>,
 }
 
@@ -224,11 +240,19 @@ pub fn plan_server_settings(
         )));
     }
 
+    let embedding_batch_size = input.embedding_batch_size.unwrap_or(DEFAULT_EMBEDDING_BATCH_SIZE);
+    if !(1..=MAX_EMBEDDING_BATCH_SIZE).contains(&embedding_batch_size) {
+        return Err(AppError::InvalidInput(format!(
+            "Chunks per Embeddings request must be between 1 and {MAX_EMBEDDING_BATCH_SIZE}."
+        )));
+    }
+
     Ok(ServerSettingsPlan {
         base_url,
         key,
         embedding_source: input.embedding_source,
         context_window,
+        embedding_batch_size,
         disclosed_host,
     })
 }
@@ -238,6 +262,7 @@ pub(crate) fn store_server_settings(db: &Database, plan: &ServerSettingsPlan) ->
     db.set_preference(BASE_URL_PREF, &plan.base_url)?;
     db.set_preference(EMBEDDING_SOURCE_PREF, plan.embedding_source.as_pref())?;
     db.set_preference(CONTEXT_WINDOW_PREF, &plan.context_window.to_string())?;
+    db.set_preference(EMBEDDING_BATCH_SIZE_PREF, &plan.embedding_batch_size.to_string())?;
     match &plan.disclosed_host {
         Some(host) => db.set_preference(DISCLOSED_HOST_PREF, host)?,
         None => db.delete_preference(DISCLOSED_HOST_PREF)?,
@@ -255,6 +280,12 @@ pub fn load_server_settings(db: &Database) -> Result<ServerSettings> {
             .get_preference(CONTEXT_WINDOW_PREF)?
             .and_then(|raw| raw.parse().ok())
             .unwrap_or(0),
+        // A value outside the bounds was not written by a save: ignore it.
+        embedding_batch_size: db
+            .get_preference(EMBEDDING_BATCH_SIZE_PREF)?
+            .and_then(|raw| raw.parse::<u32>().ok())
+            .filter(|n| (1..=MAX_EMBEDDING_BATCH_SIZE).contains(n))
+            .unwrap_or(DEFAULT_EMBEDDING_BATCH_SIZE),
         disclosed_host: db.get_preference(DISCLOSED_HOST_PREF)?,
     })
 }
@@ -499,6 +530,47 @@ mod plan_tests {
         );
         assert!(plan_server_settings(&with(512), None, true).is_err());
         assert!(plan_server_settings(&with(4_000_000), None, true).is_err());
+    }
+
+    #[test]
+    fn chunks_per_embedding_request_default_to_one_and_stay_within_bounds() {
+        let with = |n: Option<u32>| ServerSettingsInput {
+            embedding_batch_size: n,
+            ..input("http://localhost:1234/v1")
+        };
+        let planned = |n: Option<u32>| plan_server_settings(&with(n), None, true).map(|p| p.embedding_batch_size);
+
+        assert_eq!(planned(None).unwrap(), 1, "today's one chunk per request");
+        assert_eq!(planned(Some(1)).unwrap(), 1);
+        assert_eq!(planned(Some(64)).unwrap(), 64);
+        for refused in [0, 65, 10_000] {
+            let err = planned(Some(refused)).expect_err("out of bounds");
+            assert!(
+                matches!(&err, AppError::InvalidInput(m) if m.contains("1") && m.contains("64")),
+                "{refused}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_chunks_per_request_are_stored_and_a_bad_stored_value_reads_as_one() {
+        let db = Database::new_for_testing().expect("db");
+        assert_eq!(load_server_settings(&db).unwrap().embedding_batch_size, 1);
+
+        let plan = plan_server_settings(
+            &ServerSettingsInput {
+                embedding_batch_size: Some(16),
+                ..input("http://localhost:1234/v1")
+            },
+            None,
+            true,
+        )
+        .unwrap();
+        store_server_settings(&db, &plan).unwrap();
+        assert_eq!(load_server_settings(&db).unwrap().embedding_batch_size, 16);
+
+        db.set_preference(EMBEDDING_BATCH_SIZE_PREF, "500").unwrap();
+        assert_eq!(load_server_settings(&db).unwrap().embedding_batch_size, 1);
     }
 }
 

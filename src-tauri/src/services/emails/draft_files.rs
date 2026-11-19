@@ -516,6 +516,30 @@ mod tests {
         only_draft(db)
     }
 
+    /// IMAP offers no attachment download: the bytes come with the draft's own
+    /// message, so the listing carries them and nothing is asked of the server.
+    #[tokio::test]
+    async fn an_imap_draft_keeps_the_attachment_its_message_carried() {
+        let (tmp, db) = database();
+        let account = account(&db, "imap");
+        let provider = fake();
+        let carried = ProviderDraftAttachment {
+            attachment_id: String::new(),
+            inline_data: Some(base64(REPORT)),
+            ..report("report.pdf")
+        };
+        provider.add_provider_draft(upstream("7:3", vec![carried]));
+
+        pull_provider_drafts(&db, &account, &provider).await.expect("pull");
+
+        let draft = only_draft(&db);
+        assert_eq!(draft.attachments.len(), 1);
+        assert_eq!(draft.attachments[0].filename, "report.pdf");
+        // The fake holds no bytes to download, so the file can only have come
+        // from the listing.
+        assert_eq!(file_at(tmp.path(), &draft.attachments[0].file_path), REPORT);
+    }
+
     #[tokio::test]
     async fn a_pulled_draft_keeps_its_attachment() {
         let (tmp, db) = database();

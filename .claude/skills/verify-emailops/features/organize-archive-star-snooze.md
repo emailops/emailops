@@ -3,8 +3,9 @@
 A conversation can be starred, marked read/unread, archived, deleted or snoozed from its row
 (star toggle, ⋮ menu), from the open thread, from the keyboard, or for many rows at once
 through the checkboxes and the bulk toolbar. Archive and delete are provider-first and wait
-out a 6-second undo window ("Archived 2 conversations · Undo") before anything reaches the
-provider; a refusal rolls the rows back with a visible error. Snooze hides the thread until a
+out an undo window ("Archived 2 conversations · Undo", 6 s by default, set in Settings →
+Appearance → *Undo archive and delete*) before anything reaches the provider; with the window
+off they reach it at once, without Undo. A refusal rolls the rows back with a visible error. Snooze hides the thread until a
 chosen time (Snoozed view); Unsnooze brings it back at once.
 
 ## Sub-features
@@ -12,7 +13,7 @@ chosen time (Snoozed view); Unsnooze brings it back at once.
 - `organize.star` the row's star toggle and the Starred view (stars stay local and are pushed to the provider later, `star_push_pending_since`).
 - `organize.archive` Archive / Move to Inbox; IMAP accounts archive into their Archive folder, so the Archive view is offered for Gmail/Outlook and All accounts only.
 - `organize.select` row checkboxes, the bulk toolbar (Archive, Snooze, Delete, Mark as read/unread, Star) and Clear selection.
-- `organize.undo` the 6 s undo window on archive and delete, and the error + rollback when the provider refuses.
+- `organize.undo` the undo window on archive and delete (Settings → Appearance → *Undo archive and delete*: Off / 6 / 10 / 20 / 30 s, default 6; pref `ui.archive_delete_undo_secs`; Off = provider call at once, no toast), the snooze Undo lasting the same window (Off = the snooze notice without Undo), and the error + rollback when the provider refuses. Undo send is a separate setting.
 - `organize.advance` after archive, delete, snooze, block or Confirm junk of the open conversation the next one opens (Settings → Appearance → *After archiving or deleting*: next / previous / back to the list; pref `ui.after_thread_leave`). Mark as unread and bulk actions never advance; a slow action never replaces a conversation opened meanwhile.
 - `organize.snooze` ⋮ → Snooze presets (later today, tomorrow, this weekend, next week, custom), the Snoozed view with its badge, Unsnooze.
 
@@ -32,6 +33,7 @@ archived message (*Studio key handover confirmed*) in `demo-acct-work` (`insert_
 - Archive view → `$V wd click 'button=All accounts'`, `$V wd click 'button=Archive'` → *Studio key handover confirmed*.
 - Multi-select → click `[data-testid=row-select]` in two rows → `[data-testid=bulk-toolbar]` says *2 selected*; its **Archive** removes them and the toast offers **Undo**, which brings them back.
 - Archive without credentials → ⋮ → **Archive** on one row and wait ~7 s → toast *Could not archive 1 conversation: … Authentication required …*, the row returns, `emails.mailbox` stays `inbox`.
+- Undo window setting → Settings → Appearance → `[data-testid=undo-window-setting] select` sits right after `[data-testid=undo-send-setting]`, offers *Off, 6, 10, 20, 30 seconds* and shows `6` on a fresh demo DB. Choose `0`, archive a row from ⋮ → the row leaves, no toast offers Undo and the credential-less error toast arrives at once (not after ~6 s); set it back to `6`. Not yet driven live.
 - Snooze → ⋮ → `[data-testid=row-snooze]` → `[data-testid^=snooze-preset-]` → the row leaves, `thread_snoozes` gains a row; Snoozed lists it with `[data-testid=snooze-badge]`; ⋮ → `[data-testid=row-unsnooze]` removes it.
 
 ## Gotchas
@@ -46,6 +48,7 @@ archived message (*Studio key handover confirmed*) in `demo-acct-work` (`insert_
 | thread action planning, provider-first archive/delete, local-only accounts, star widening | unit (`services::emails::thread_actions`, `db::emails::mailbox_state`) |
 | snooze planner, wake pass, snooze rows | unit (`services::emails::snooze`, `db::emails::snoozes`) |
 | selection, bulk planning, undo queue, snooze presets, star/selection rows, toasts | vitest (`selectionStore`, `bulkActions`, `pendingActions`, `snooze`, `BulkToolbar`, `SnoozePicker`, `EmailRow.star/.selection`, `emailStore.threadActions/.snooze`, `ToastHost`) |
+| undo window setting: offered windows, default, Off, longer window on queue + toast, snooze Undo | vitest (`undoWindow`, `undoWindowStore`, `UndoWindowSetting`, `emailStore.threadActions/.snooze`, `pendingActions`) |
 | archive ↔ inbox through the command entry point; snooze → wake | integration (`thread_action_archive_and_move_to_inbox_round_trip`, `snooze_hides_a_thread_until_the_wake_pass_brings_it_back`) |
 | auto-advance planner, executor and race guard, setting, junk confirm race, block | vitest (`autoAdvance`, `autoAdvanceStore`, `AutoAdvanceSetting`, `JunkBanner.autoAdvance`, `EmailView.shortcuts`, `SenderDialogs`) |
 | command arguments | contract (`src/lib/apiContract/inbox.api.test.ts`, `emails.rs`) |
