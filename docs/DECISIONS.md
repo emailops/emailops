@@ -4697,6 +4697,54 @@ database at all.
 - *Sending the draft only when a classifier says the question is about it*: that
   classifier was rejected before; the chip lets the user control the cost, as with the PDF.
 
+## 2026-11-18 — The archive/delete undo window is a setting; Off commits at once without Undo
+
+**Decision:** Settings → Appearance → *Undo archive and delete*, right after *Undo send* and
+separate from it, sets the window of "Archive and delete wait out a six-second undo window
+before reaching the provider" (2026-10-01): Off, 6, 10, 20 or 30 seconds, 6 by default. It is
+stored the way Undo send is, as a SQLite preference (`ui.archive_delete_undo_secs`, seconds;
+unset or unknown values read as 6), loaded at startup into `undoWindowStore`, and read per
+action: the same value goes to the queue (`schedule(action, windowMs)`) and to the Undo
+toast. It applies to single and bulk archive and delete, and to the Undo offered after a
+snooze, which already shared the window. With Off, archive and delete call the provider at
+once (the path move-to-inbox takes) and show no toast; a refusal still rolls back with an
+error toast. A snooze then shows its "Snoozed until …" notice without Undo.
+**Context:** Issue #259: six seconds can be too short to catch a mistake, and people who want
+actions to happen at once could not turn the delay off.
+**Rejected:**
+- *Undo send's exact choices (off, 5, 10, 20, 30)*: the 6 s default must be a choice, and
+  5 next to 6 adds an option without a real difference.
+- *One setting for send and for archive/delete*: they hold back different things (a
+  message leaving the machine, a provider call) and the issue asked to keep them apart.
+- *Keeping the snooze Undo when the window is Off*: it would need a duration of its own,
+  and Off means no Undo.
+
+## 2026-11-18 — IMAP Drafts folders are read, never written, and keyed by Message-ID
+
+**Decision:** The sync pulls the Drafts folder of a generic IMAP account (the `\Drafts`
+special-use folder, else one named like Drafts) through the same draft pull pass as Gmail
+and Outlook, but read-only: `EXAMINE`, `SEARCH` and `BODY.PEEK[]` only, no `STORE`,
+`EXPUNGE` or `APPEND`. A draft's id is its `Message-ID` (`uid:<UIDVALIDITY>:<UID>` when it
+has none) and its change token is `<UIDVALIDITY>:<UID>`. Nothing is pushed, re-created or
+deleted upstream: an edit made in EmailOps stays on this device and is never overwritten
+by the server copy, and a pulled draft deleted or sent in EmailOps leaves its server copy
+in place, hidden here by a tombstone until it leaves the folder.
+**Context:** Issue #276: drafts saved by another client in an IMAP Drafts folder never
+appeared in EmailOps. IMAP never edits a message: a client saves a draft by appending a
+new one and removing the old, so the UID changes on every save, and a UIDVALIDITY change
+renumbers the folder. The Message-ID survives both, which is also the identity the mail
+sync re-keys by after a UIDVALIDITY change (2026-09-30), so a renumbered folder is read
+again onto the same rows instead of being duplicated. Writing drafts back to IMAP was
+kept out of this change on purpose.
+**Rejected:**
+- *Keying drafts by UIDVALIDITY + UID*: every save in another client and every
+  UIDVALIDITY change would look like a new draft, and a draft edited here would then sit
+  next to a second copy of itself.
+- *Writing edits, deletes and sends back (APPEND / `\Deleted`)*: a separate decision with
+  its own risks (losing a draft another client is editing); this change only reads.
+- *Requiring the `\Draft` flag*: every message in the Drafts folder is a draft, and not
+  every client sets the flag.
+
 ## 2026-11-18 — Embeddings go up to N chunks per request on an OpenAI-compatible server; Settings shows the index pace
 
 **Decision:** With an OpenAI-compatible server computing the email index, **Chunks per
@@ -4727,3 +4775,24 @@ its per-request cost is dominated by the network, and its settings have no place
 Persisting throughput samples in the database — a rate over the last two minutes needs no
 history across restarts. Measuring to the last sample instead of now — a pace that stays put
 after indexing stops, and two emails 31 ms apart read as 1935 a minute.
+
+## 2026-11-19 — Opening a draft is not an edit: the composer saves only after the content differs from what it loaded
+
+**Decision:** A composer opened on an existing draft saves it only once what a save would
+write differs from what the draft row holds: the draft as it opened, then each save
+(`savedDraftContent` and `createDraftAutosaver`'s `opened` baseline in
+`src/lib/composeDraft.ts`). The editor's own load-time normalisation is not a change: the
+rich-text editor no longer reports a change when it is made editable or read-only
+(`setEditable(…, false)`), so the composer keeps the HTML it loaded until the user edits.
+Every real change still saves, and every composer save still marks the draft dirty
+(30/09/2026 rule).
+**Context:** Opening a draft and closing it unchanged saved it about a second later, with
+the HTML re-serialised by the editor (`<div>` lines as paragraphs, `<b>` as `<strong>`) and
+the plain text regenerated from it. Each save marks the draft dirty, so a Gmail or Outlook
+draft was pushed back upstream, rewritten, by merely opening it, and an IMAP draft (read
+only, 18/11/2026) stopped following the server for good.
+**Rejected:**
+- *Deduping in the backend*: the plain text and the HTML are regenerated by the editor, so
+  the backend cannot tell an open from an edit.
+- *Only fixing the editor's spurious update*: the tab composer's autosave also ran on
+  mount for any draft with content, so an unchanged draft was still saved.

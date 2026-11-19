@@ -2,7 +2,8 @@
  * The undo window behind archive and delete.
  *
  * An action's visible effect is applied at once by the caller; what reaches
- * the provider (`commit`) is held back for `windowMs`. Undo inside the window
+ * the provider (`commit`) is held back for the window it is scheduled with
+ * (the user's setting, `src/lib/undoWindow.ts`). Undo inside the window
  * calls `undo` and the provider never hears of it, so no provider needs an
  * "un-trash" or "un-archive" path. The window closes — and the action commits —
  * when the timer fires, when another action is scheduled (one undo at a time,
@@ -23,8 +24,8 @@ export interface PendingAction {
 export type PendingOutcome = 'committed' | 'undone';
 
 export interface PendingActionQueue {
-  /** Hold `action` for the window; commits whatever was pending before. */
-  schedule: (action: PendingAction) => number;
+  /** Hold `action` for `windowMs`; commits whatever was pending before. */
+  schedule: (action: PendingAction, windowMs: number) => number;
   /** Undo a pending action. False when it already committed (or never was). */
   undo: (id: number) => boolean;
   /** Commit a pending action now. */
@@ -43,10 +44,7 @@ interface Entry {
   resolve: (outcome: PendingOutcome) => void;
 }
 
-export function createPendingActionQueue(options: {
-  windowMs: number;
-  onError?: (error: unknown) => void;
-}): PendingActionQueue {
+export function createPendingActionQueue(options: { onError?: (error: unknown) => void } = {}): PendingActionQueue {
   const pending = new Map<number, Entry>();
   let nextId = 1;
 
@@ -68,14 +66,14 @@ export function createPendingActionQueue(options: {
   };
 
   return {
-    schedule: (action) => {
+    schedule: (action, windowMs) => {
       void flushAll();
       const id = nextId++;
       let resolve: (outcome: PendingOutcome) => void = () => {};
       const outcome = new Promise<PendingOutcome>((r) => {
         resolve = r;
       });
-      const timer = setTimeout(() => void commit(id), options.windowMs);
+      const timer = setTimeout(() => void commit(id), windowMs);
       pending.set(id, { action, timer, outcome, resolve });
       return id;
     },

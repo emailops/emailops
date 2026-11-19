@@ -65,6 +65,14 @@ Was du schreibst, wird beim Tippen als Entwurf gespeichert, Anhänge eingeschlos
 das Verfassen-Fenster oder die App, bleibt es erhalten, auch bei einer Weiterleitung. Eine
 Nachricht fasst bis zu 32 Dateien mit je höchstens 25 MB.
 
+<!-- claim:compose-drafts-imap-folder -->
+Bei einem IMAP-Konto erscheinen Entwürfe, die ein anderes Mailprogramm im Entwürfe-Ordner des
+Kontos gespeichert hat, ebenfalls unter **Entwürfe**, mit Empfängern, Betreff, Text oder
+Formatierung, Anhängen und der Unterhaltung, auf die sie antworten, und sie übernehmen die
+Änderungen, die dort an ihnen vorgenommen werden. EmailOps liest diesen Ordner nur: Ein
+Entwurf, den du hier bearbeitest, behält deine Änderungen auf diesem Computer, und einer, den
+du hier löschst oder sendest, bleibt für deine anderen Mailprogramme im Ordner.
+
 ## Weiterleiten
 
 <!-- claim:reading-pane-forward -->
@@ -109,6 +117,13 @@ Archivieren oder Löschen nimmt die Konversationen sofort aus der Liste und zeig
 einen Hinweis mit **Rückgängig**. Ihr E-Mail-Anbieter erfährt erst davon, wenn diese Sekunden
 vorbei sind (oder früher, wenn Sie etwas anderes archivieren oder löschen oder eine andere
 Ansicht öffnen) — Rückgängig legt sie also einfach zurück.
+
+<!-- claim:feat-organize-undo-window -->
+**Einstellungen → Erscheinungsbild → Archivieren und Löschen rückgängig machen** legt diese
+Wartezeit fest: aus, 6, 10, 20 oder 30 Sekunden, standardmäßig 6. Ist sie aus, erreichen
+Archivieren und Löschen Ihren E-Mail-Anbieter sofort, ohne Rückgängig. Das Rückgängig nach dem
+Zurückstellen bleibt genauso lange verfügbar. **Senden rückgängig machen** ist eine eigene
+Einstellung.
 
 <!-- claim:feat-organize-5 -->
 Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,

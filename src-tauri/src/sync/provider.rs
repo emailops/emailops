@@ -8,10 +8,19 @@ use crate::services::i18n::Language;
 use crate::sync::draft_plan::{plan_draft_fetches, ListedDraft, ProviderDraftPull};
 
 /// Whether a provider (identified by its `accounts.provider` string) supports
-/// server-side drafts we can push to / pull from. Gmail and Outlook expose
-/// draft APIs; IMAP does not in our implementation, so its drafts stay local.
+/// server-side drafts we can push to as well as pull from. Gmail and Outlook
+/// expose draft APIs; IMAP's Drafts folder is only read
+/// ([`provider_reads_drafts`]), so drafts written here stay local.
 pub fn provider_supports_drafts(provider: &str) -> bool {
     matches!(provider, "gmail" | "outlook")
+}
+
+/// Whether the sync pulls a provider's Drafts folder into the local drafts:
+/// every provider that [`provider_supports_drafts`], plus IMAP, whose Drafts
+/// folder other mail clients save into and which this app reads without ever
+/// writing to it.
+pub fn provider_reads_drafts(provider: &str) -> bool {
+    provider_supports_drafts(provider) || provider == "imap"
 }
 
 /// Whether a provider supports server-side mailbox-state writes — pushing
@@ -801,8 +810,10 @@ pub trait EmailProvider: Send + Sync {
     // Providers that support server-side drafts (Gmail, Outlook) override
     // these; callers gate the create/update/delete calls behind
     // `provider_supports_drafts(account.provider)`, so the "unsupported"
-    // defaults below only fire if a provider is mis-wired. `list_drafts`
-    // defaults to empty (the pull pass is best-effort) rather than erroring.
+    // defaults below only fire if a provider is mis-wired. IMAP overrides
+    // `list_drafts` only: its Drafts folder is read, never written
+    // (`provider_reads_drafts`). `list_drafts` defaults to empty (the pull
+    // pass is best-effort) rather than erroring.
 
     /// Create a draft in the provider's Drafts folder. Returns the provider's
     /// draft id, which the caller stores locally to keep the two in sync.
@@ -2672,6 +2683,16 @@ mod tests {
     #[tokio::test]
     async fn a_provider_without_a_signature_api_has_no_signature_to_import() {
         assert_eq!(BareProvider.get_signature("me@example.com").await.unwrap(), None);
+    }
+
+    #[test]
+    fn every_shipped_provider_has_its_drafts_folder_read_and_only_imap_is_never_written() {
+        for provider in ["gmail", "imap", "outlook"] {
+            assert!(provider_reads_drafts(provider), "{provider}");
+        }
+        assert!(provider_supports_drafts("gmail") && provider_supports_drafts("outlook"));
+        assert!(!provider_supports_drafts("imap"), "IMAP drafts are read, never written");
+        assert!(!provider_reads_drafts("exchange-ews"));
     }
 
     #[test]

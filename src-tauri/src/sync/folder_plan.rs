@@ -121,8 +121,9 @@ pub fn resolve_archive_folder(entries: &[ListedFolder]) -> Option<String> {
     })
 }
 
-/// Drafts folders are excluded from sync entirely (drafts are handled by the
-/// dedicated provider-drafts pipeline, not the mail sync).
+/// Drafts folder names when no folder carries `\Drafts`, tried in order.
+/// Drafts folders are left out of the mail sync: the provider-drafts pipeline
+/// reads them ([`resolve_drafts_folder`]).
 const DRAFTS_FOLDER_CANDIDATES: &[&str] = &[
     "Drafts",
     "Draft",
@@ -132,6 +133,21 @@ const DRAFTS_FOLDER_CANDIDATES: &[&str] = &[
     "Borradores",
     "Brouillons",
 ];
+
+/// The folder other mail clients save drafts in: the RFC 6154 `\Drafts`
+/// special-use folder, else the first one named like a Drafts folder. `None`
+/// when the server has neither.
+pub fn resolve_drafts_folder(entries: &[ListedFolder]) -> Option<String> {
+    if let Some(entry) = entries.iter().find(|e| !is_unselectable(e) && has_attr(e, "\\Drafts")) {
+        return Some(entry.raw_name.clone());
+    }
+    DRAFTS_FOLDER_CANDIDATES.iter().find_map(|candidate| {
+        entries
+            .iter()
+            .find(|e| !is_unselectable(e) && name_matches(e, candidate))
+            .map(|e| e.raw_name.clone())
+    })
+}
 
 impl WellKnownFolder {
     pub fn as_str(&self) -> &'static str {
@@ -541,6 +557,42 @@ mod tests {
             entry("Projects", ".", &[]),
         ];
         assert_eq!(resolve_archive_folder(&entries), None);
+    }
+
+    // --- drafts folder ---
+
+    #[test]
+    fn the_special_use_drafts_folder_wins_over_a_folder_named_drafts() {
+        let entries = vec![
+            entry("INBOX", ".", &[]),
+            entry("Drafts", ".", &[]),
+            entry("Work in progress", ".", &["\\HasNoChildren", "\\Drafts"]),
+        ];
+        assert_eq!(resolve_drafts_folder(&entries), Some("Work in progress".to_string()));
+    }
+
+    #[test]
+    fn a_folder_named_like_drafts_is_the_fallback() {
+        for name in ["Drafts", "INBOX.Drafts", "Entw&APw-rfe", "Borradores", "Brouillons"] {
+            let entries = vec![entry("INBOX", ".", &[]), entry(name, ".", &[])];
+            assert_eq!(resolve_drafts_folder(&entries), Some(name.to_string()), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_first_drafts_name_candidate_wins() {
+        let entries = vec![entry("Draft", "/", &[]), entry("Drafts", "/", &[])];
+        assert_eq!(resolve_drafts_folder(&entries), Some("Drafts".to_string()));
+    }
+
+    #[test]
+    fn no_drafts_folder_and_unselectable_ones_resolve_to_none() {
+        let entries = vec![
+            entry("INBOX", ".", &[]),
+            entry("Drafts", ".", &["\\Noselect"]),
+            entry("Templates", ".", &["\\Drafts", "\\NonExistent"]),
+        ];
+        assert_eq!(resolve_drafts_folder(&entries), None);
     }
 
     // --- role detection ladder ---

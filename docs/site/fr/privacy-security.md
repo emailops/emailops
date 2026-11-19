@@ -107,7 +107,7 @@ que ce que vous faites ici soit ce que vous voyez partout ailleurs :
 | Déplacer un message vers un autre dossier, ou **Confirmer** | Le message est aussi déplacé sur le compte — Confirmer le range dans le dossier des indésirables du fournisseur |
 | **Pas un spam — déplacer vers la boîte de réception**, ou **Pas indésirable** sur un message des **Indésirables** | Le message revient dans la boîte de réception du compte |
 | Créer, renommer ou supprimer un dossier | Le dossier change aussi sur le compte |
-| Enregistrer un brouillon | Le brouillon est enregistré dans les Brouillons du compte |
+| Enregistrer un brouillon | Le brouillon est enregistré dans les Brouillons du compte sur Gmail et Outlook ; sur un compte IMAP, il reste sur cet ordinateur |
 
 <!-- claim:priv-what-emailops-2 -->
 EmailOps ne supprime jamais définitivement un message : les suppressions vont toujours à la

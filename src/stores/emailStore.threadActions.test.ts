@@ -17,6 +17,7 @@ vi.mock('@/lib/api', () => ({
 
 import { initI18n } from '@/i18n';
 import * as api from '@/lib/api';
+import { DEFAULT_UNDO_WINDOW_SECS } from '@/lib/undoWindow';
 import {
   applyThreadFlag,
   isThreadStarred,
@@ -25,12 +26,15 @@ import {
   removeThreads,
   restoreThreads,
   threadKey,
-  UNDO_WINDOW_MS,
   useEmailStore,
 } from './emailStore';
 import { isFlagged, useJunkStore } from './junkStore';
 import { useTagStore } from './tagStore';
 import { useToastStore } from './toastStore';
+import { useUndoWindowStore } from './undoWindowStore';
+
+/** The default undo window (Settings → Appearance → Undo archive and delete). */
+const UNDO_WINDOW_MS = DEFAULT_UNDO_WINDOW_SECS * 1000;
 
 function email(id: string, threadId: string, extra: Partial<Email> = {}): Email {
   return {
@@ -313,6 +317,7 @@ describe('archive and delete wait out the undo window', () => {
     await pendingThreadActions.flushAll();
     useEmailStore.getState().reset();
     useToastStore.setState({ toasts: [] });
+    useUndoWindowStore.setState({ secs: DEFAULT_UNDO_WINDOW_SECS });
     vi.clearAllMocks();
     vi.mocked(api.applyThreadAction).mockResolvedValue({ failed: [] });
   });
@@ -432,6 +437,60 @@ describe('archive and delete wait out the undo window', () => {
     await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS);
     await done;
 
+    expect(ids()).toEqual(['b']);
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].actionLabel).toBeUndefined();
+  });
+
+  it('the window is 6 seconds by default', async () => {
+    useEmailStore.setState({ emails: [email('a', 't1')], totalCount: 1, listScope: 'inbox' });
+
+    const done = useEmailStore.getState().archiveThreads([t1]);
+    expect(useToastStore.getState().toasts[0].durationMs).toBe(6000);
+    await vi.advanceTimersByTimeAsync(5999);
+    expect(api.applyThreadAction).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1], 'archive');
+  });
+
+  it('a longer window from Settings holds the provider call and the Undo notice as long', async () => {
+    useUndoWindowStore.setState({ secs: 20 });
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+
+    const done = useEmailStore.getState().deleteThreads([t1, t2]);
+    expect(useToastStore.getState().toasts[0].durationMs).toBe(20_000);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(api.applyThreadAction).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await done;
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1, t2], 'delete');
+  });
+
+  it('with the window off, archive reaches the provider at once and offers no Undo', async () => {
+    useUndoWindowStore.setState({ secs: 0 });
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+
+    const done = useEmailStore.getState().archiveThreads([t1]);
+    expect(ids()).toEqual(['b']);
+    await done;
+
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1], 'archive');
+    expect(pendingThreadActions.pendingCount()).toBe(0);
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it('with the window off, a bulk delete that is refused in part puts those back with one error toast', async () => {
+    useUndoWindowStore.setState({ secs: 0 });
+    useEmailStore.setState({ emails: [email('a', 't1'), email('b', 't2')], totalCount: 2, listScope: 'inbox' });
+    vi.mocked(api.applyThreadAction).mockResolvedValue({
+      failed: [{ accountId: 'acc', threadId: 't2', code: 'not_found', params: {}, message: 'gone' }],
+    });
+
+    await useEmailStore.getState().deleteThreads([t1, t2]);
+
+    expect(api.applyThreadAction).toHaveBeenCalledWith([t1, t2], 'delete');
     expect(ids()).toEqual(['b']);
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
