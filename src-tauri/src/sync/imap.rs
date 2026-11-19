@@ -1452,14 +1452,7 @@ fn derive_thread_id(
 
 /// Parse "Display Name <email@host>" or "email@host" → (name, email).
 fn parse_from_header(raw: &str) -> (String, String) {
-    let raw = raw.trim();
-    if let Some(lt) = raw.rfind('<') {
-        let email = raw[lt + 1..].trim_end_matches('>').trim().to_string();
-        let name = raw[..lt].trim().trim_matches('"').to_string();
-        (name, email)
-    } else {
-        (String::new(), raw.to_string())
-    }
+    crate::sync::header_capture::split_from_header(raw)
 }
 
 /// Parse an address-list header → the bare addresses (groups flattened).
@@ -3821,6 +3814,16 @@ mod tests {
         assert_eq!(
             parse_address_list(r#""Doe, Jane" <jane@example.com>, bob@example.com"#),
             vec!["jane@example.com", "bob@example.com"]
+        );
+    }
+
+    /// An address in a comment is not the sender: the server authenticated
+    /// the one in the angle-addr.
+    #[test]
+    fn sender_parse_ignores_an_address_inside_a_comment() {
+        assert_eq!(
+            parse_from_header("Billing <billing@attacker.example> (<ceo@bank.example>)"),
+            ("Billing".to_string(), "billing@attacker.example".to_string())
         );
     }
 
