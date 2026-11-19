@@ -195,14 +195,26 @@ fn collect_fixed_zones(components: Vec<ZoneComponent>) -> HashMap<String, chrono
         let Some(id) = zone.one_value("TZID").map(unquote).filter(|id| !id.is_empty()) else {
             return HashMap::new();
         };
-        // Repeated identities or identities nested in observations are ambiguous.
-        // Keep the events and let consumers use their existing UTC/IANA fallback.
         if !seen.insert(id.to_string()) || zone.children.iter().any(|c| c.contains_property("TZID")) {
             return HashMap::new();
         }
-        if zone.children.len() != 1
-            || zone.children[0].name != "STANDARD"
-            || !zone.children[0].children.is_empty()
+        if zone.children.is_empty() || zone.children.len() > 2 {
+            continue;
+        }
+        let mut standard_index = None;
+        let mut daylight_index = None;
+        let mut bad_name = false;
+        for (index, child) in zone.children.iter().enumerate() {
+            match child.name.as_str() {
+                "STANDARD" if standard_index.is_none() => standard_index = Some(index),
+                "DAYLIGHT" if daylight_index.is_none() => daylight_index = Some(index),
+                _ => bad_name = true,
+            }
+        }
+        if bad_name || standard_index.is_none() {
+            continue;
+        }
+        if zone.children.iter().any(|child| !child.children.is_empty())
             || zone.contains_property("RRULE")
             || zone.contains_property("RDATE")
             || zone
@@ -212,15 +224,31 @@ fn collect_fixed_zones(components: Vec<ZoneComponent>) -> HashMap<String, chrono
         {
             continue;
         }
-        let standard = &zone.children[0];
-        if let (Some(from), Some(to)) = (
-            standard.one_value("TZOFFSETFROM").and_then(parse_utc_offset),
-            standard.one_value("TZOFFSETTO").and_then(parse_utc_offset),
-        ) {
-            if from == to {
-                zones.insert(id.to_string(), from);
+        let mut all_offsets = Vec::new();
+        let mut unsupported = false;
+        for child in &zone.children {
+            let Some(from) = child.one_value("TZOFFSETFROM").and_then(parse_utc_offset) else {
+                unsupported = true;
+                break;
+            };
+            let Some(to) = child.one_value("TZOFFSETTO").and_then(parse_utc_offset) else {
+                unsupported = true;
+                break;
+            };
+            if child.contains_property("RRULE") || child.contains_property("RDATE") {
+                unsupported = true;
+                break;
             }
+            all_offsets.push(from);
+            all_offsets.push(to);
         }
+        if unsupported || all_offsets.is_empty() {
+            continue;
+        }
+        if !all_offsets.iter().all(|offset| *offset == all_offsets[0]) {
+            continue;
+        }
+        zones.insert(id.to_string(), all_offsets[0]);
     }
     zones
 }
@@ -414,6 +442,86 @@ mod tests {
     use super::*;
 
     const TWO_EVENTS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Work\\, shared\r\nX-WR-TIMEZONE:Europe/Madrid\r\nBEGIN:VEVENT\r\nUID:one@example.com\r\nDTSTART;TZID=Europe/Madrid:20260728T073000\r\nSUMMARY:First\r\nBEGIN:VALARM\r\nTRIGGER:-PT10M\r\nACTION:DISPLAY\r\nEND:VALARM\r\nDESCRIPTION:after the alarm\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:two@example.com\r\nDTSTART:20260729T070000Z\r\nSUMMARY:Second\r\nEXDATE:20260805T070000Z\r\nEXDATE:20260812T070000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn valid_fixed_zone_standard_daylight() {
+        let ics="BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nDTSTART:16010101T000000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:16010101T000000\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:e\r\nDTSTART;TZID=Example Fixed Time:20261023T103000\r\nDTEND;TZID=Example Fixed Time:20261023T113000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let cal = parse_vcalendar(ics);
+        assert_eq!(cal.fixed_zones.len(), 1);
+        assert_eq!(
+            cal.fixed_zones.get("Example Fixed Time").unwrap().local_minus_utc(),
+            7200
+        );
+        assert_eq!(cal.events.len(), 1);
+        let prop = cal.events[0].first("DTSTART").unwrap();
+        let (ts, all_day) = parse_ics_time_with_fixed_zones(&prop.value, &prop.params, &cal.fixed_zones).unwrap();
+        assert_eq!(
+            chrono::DateTime::from_timestamp(ts, 0).unwrap().to_rfc3339(),
+            "2026-10-23T08:30:00+00:00"
+        );
+        assert!(!all_day);
+    }
+
+    #[test]
+    fn invalid_fixed_zone_observation_shapes() {
+        let wrap = |body: &str| -> String {
+            format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\n{}\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:e\r\nDTSTART;TZID=Example Fixed Time:20261023T103000\r\nDTEND;TZID=Example Fixed Time:20261023T113000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", body)
+        };
+        let obs = |c: &str, f: &str, t: &str| -> String {
+            format!(
+                "BEGIN:{}\r\nDTSTART:16010101T000000\r\nTZOFFSETFROM:{}\r\nTZOFFSETTO:{}\r\nEND:{}\r\n",
+                c, f, t, c
+            )
+        };
+        let cases = [
+            format!(
+                "{}{}{}",
+                obs("STANDARD", "+0200", "+0200"),
+                obs("DAYLIGHT", "+0200", "+0200"),
+                obs("DAYLIGHT", "+0200", "+0200")
+            ),
+            format!(
+                "{}{}{}",
+                obs("STANDARD", "+0200", "+0200"),
+                obs("STANDARD", "+0200", "+0200"),
+                obs("DAYLIGHT", "+0200", "+0200")
+            ),
+            format!(
+                "{}{}",
+                obs("STANDARD", "+0200", "+0200"),
+                obs("DAYLIGHT", "+0300", "+0300")
+            ),
+            format!(
+                "{}BEGIN:DAYLIGHT\r\nDTSTART:16010101T000000\r\nTZOFFSETFROM:+0300\r\nEND:DAYLIGHT\r\n",
+                obs("STANDARD", "+0200", "+0200")
+            ),
+            format!(
+                "{}{}",
+                obs("STANDARD", "+0200", "+0200"),
+                obs("DAYLIGHT", "+0200", "+0300")
+            ),
+        ];
+        for body in cases {
+            let cal = parse_vcalendar(&wrap(&body));
+            assert!(cal.fixed_zones.is_empty());
+            assert_eq!(cal.events.len(), 1);
+            let prop = cal.events[0].first("DTSTART").unwrap();
+            let (ts, all_day) = parse_ics_time_with_fixed_zones(&prop.value, &prop.params, &cal.fixed_zones).unwrap();
+            assert_eq!(
+                chrono::DateTime::from_timestamp(ts, 0).unwrap().to_rfc3339(),
+                "2026-10-23T10:30:00+00:00"
+            );
+            assert!(!all_day);
+        }
+    }
+
+    #[test]
+    fn truncated_vevent_missing_end_is_rejected() {
+        let cal = parse_vcalendar(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:truncated@example.test\r\nSUMMARY:Partial\r\nEND:VCALENDAR\r\n",
+        );
+        assert!(cal.events.is_empty());
+    }
 
     #[test]
     fn parse_vcalendar_returns_every_vevent_and_the_calendar_name() {

@@ -600,11 +600,12 @@ fn rrule_value(
     Some(parts.join(";"))
 }
 
-/// The `DTSTART`/`RRULE`/`EXDATE` lines of a master, normalised for the
-/// `rrule` parser: all-day values become UTC midnights (it does not read
+/// The `DTSTART`/`RRULE`/`RDATE`/`EXDATE` lines of a master, normalised for
+/// the `rrule` parser: all-day values become UTC midnights (it does not read
 /// `VALUE=DATE`), floating values get the feed's default zone, every `TZID`
 /// its IANA name, `UNTIL` follows [`rrule_until`]. A series with a
-/// [`wall_clock_shift`] has every value moved by it instead.
+/// [`wall_clock_shift`] has every value moved by it instead. An RDATE value
+/// the parser cannot read is skipped; any other one fails the series.
 fn rrule_source(
     event: &RawVEvent,
     is_all_day: bool,
@@ -612,32 +613,57 @@ fn rrule_source(
     fixed_zones: &HashMap<String, chrono::FixedOffset>,
     shift: Option<i64>,
 ) -> Option<String> {
+    // One value as the parser takes it; `None` when it cannot be read.
+    let date_line = |name: &str, value: &str, params: &[String]| -> Option<String> {
+        if is_all_day {
+            let (epoch, _) = parse_ics_time_with_fixed_zones(value, &["VALUE=DATE".to_string()], fixed_zones)?;
+            Some(format!("{name}:{}", utc_value(epoch)?))
+        } else if let Some(shift) = shift {
+            Some(format!("{name}:{}", shifted_value(value, params, fixed_zones, shift)?))
+        } else {
+            let head = std::iter::once(name.to_string())
+                .chain(params.iter().map(|p| with_iana_tzid(p, fixed_zones)))
+                .collect::<Vec<_>>()
+                .join(";");
+            Some(format!("{head}:{}", value.trim()))
+        }
+    };
+    // DTSTART and EXDATE values the parser cannot take fail the series:
+    // skipping an EXDATE would bring back the occurrence it cancels.
     let mut lines = Vec::new();
     for name in ["DTSTART", "EXDATE"] {
         for prop in event.all(name) {
             let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
-            if is_all_day {
-                for date in prop.value.split(',') {
-                    let (epoch, _) = parse_ics_time_with_fixed_zones(date, &["VALUE=DATE".to_string()], fixed_zones)?;
-                    lines.push(format!("{name}:{}", utc_value(epoch)?));
-                }
-            } else if let Some(shift) = shift {
-                for value in prop.value.split(',') {
-                    lines.push(format!("{name}:{}", shifted_value(value, &params, fixed_zones, shift)?));
-                }
-            } else {
-                let head = std::iter::once(name.to_string())
-                    .chain(params.iter().map(|p| with_iana_tzid(p, fixed_zones)))
-                    .collect::<Vec<_>>()
-                    .join(";");
-                lines.push(format!("{head}:{}", prop.value.trim()));
+            for value in prop.value.split(',') {
+                lines.push(date_line(name, value, &params)?);
             }
         }
     }
-    lines.push(format!(
+    let rrule_line = format!(
         "RRULE:{}",
         rrule_value(event, is_all_day, default_tz, fixed_zones, shift)?
-    ));
+    );
+    // An RDATE only adds an occurrence: one the parser cannot take is skipped.
+    let base = format!("{}\n{rrule_line}", lines.join("\n"));
+    for prop in event.all("RDATE") {
+        let params = params_with_default_tz(&prop.params, &prop.value, default_tz);
+        for value in prop.value.split(',') {
+            match date_line("RDATE", value, &params)
+                .filter(|line| rrule::RRuleSet::from_str(&format!("{base}\n{line}")).is_ok())
+            {
+                Some(line) => lines.push(line),
+                None => crate::services::logger::log(
+                    "warn",
+                    "sync",
+                    format!(
+                        "calendar feed: skipped an RDATE of event '{}' the rule parser cannot read",
+                        event.first_value("UID").unwrap_or_default().trim()
+                    ),
+                ),
+            }
+        }
+    }
+    lines.push(rrule_line);
     Some(lines.join("\n"))
 }
 
@@ -833,6 +859,108 @@ mod tests {
         );
     }
 
+    #[test]
+    fn unsupported_period_rdate_keeps_iana_and_floating_series_beyond_master() {
+        for (zones, dtstart) in [
+            (
+                "",
+                "DTSTART;TZID=Europe/Madrid:20260324T100000\r\nDTEND;TZID=Europe/Madrid:20260324T110000",
+            ),
+            (
+                "X-WR-TIMEZONE:Europe/Madrid\r\n",
+                "DTSTART:20260324T100000\r\nDTEND:20260324T110000",
+            ),
+        ] {
+            let event = format!("UID:period-regression@example.test\r\n{dtstart}\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nRDATE;VALUE=PERIOD:20260401T100000/20260401T110000,20260402T100000/PT1H");
+            let calendar = with_zones(&[&event], zones);
+            let out = expand_events(&calendar, utc(2026, 3, 30, 0, 0), utc(2026, 4, 30, 0, 0));
+            let actual: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            let expected = vec![utc(2026, 3, 31, 8, 0), utc(2026, 4, 7, 8, 0), utc(2026, 4, 14, 8, 0)];
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn fixed_mixed_optional_dates_skip_invalid_elements_without_losing_series() {
+        let event = "UID:dates-regression@example.test\r\nDTSTART;TZID=\"Example Fixed Time\":20260901T003000\r\nDTEND;TZID=\"Example Fixed Time\":20260901T013000\r\nRRULE:FREQ=DAILY;COUNT=4\r\nRDATE;TZID=\"Example Fixed Time\":bad-date,20260905T003000\r\nEXDATE;TZID=\"Example Fixed Time\":20260903T003000";
+        let calendar = with_zones(&[event], FIXED_ZONE);
+        let out = expand_events(&calendar, utc(2026, 9, 1, 0, 0), utc(2026, 9, 7, 0, 0));
+        let actual: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+        let expected = vec![
+            utc(2026, 9, 1, 22, 30),
+            utc(2026, 9, 3, 22, 30),
+            utc(2026, 9, 4, 22, 30),
+        ];
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn a_skipped_rdate_is_logged() {
+        let _seam = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        expand(
+            &["UID:p@x\nDTSTART:20260324T100000Z\nRRULE:FREQ=WEEKLY;COUNT=2\nRDATE;VALUE=PERIOD:20260401T100000Z/PT1H"],
+            utc(2026, 3, 23, 0, 0),
+            utc(2026, 4, 30, 0, 0),
+        );
+        crate::services::logger::install(Arc::new(crate::services::logger::NoopLogger));
+        let warnings: Vec<String> = logger
+            .events()
+            .into_iter()
+            .filter(|e| e.level == "warn" && e.source == "sync")
+            .map(|e| e.message)
+            .collect();
+        assert_eq!(
+            warnings,
+            vec!["calendar feed: skipped an RDATE of event 'p@x' the rule parser cannot read".to_string()]
+        );
+    }
+
+    /// Skipping an EXDATE would bring back the occurrence it cancels, so one
+    /// the parser rejects (an unknown parameter) or that cannot be read fails
+    /// the series instead, which falls back to its first occurrence.
+    #[test]
+    fn an_exdate_the_rule_parser_cannot_take_never_brings_back_its_occurrence() {
+        let madrid = "UID:x@x\nDTSTART;TZID=Europe/Madrid:20260728T073000\nDTEND;TZID=Europe/Madrid:20260728T083000\nRRULE:FREQ=WEEKLY;COUNT=4\nEXDATE;X-EXAMPLE=1;TZID=Europe/Madrid:20260804T073000";
+        let half_hour = "UID:x@x\nDTSTART;TZID=\"Example Fixed Time\":20260728T073000\nDTEND;TZID=\"Example Fixed Time\":20260728T083000\nRRULE:FREQ=WEEKLY;COUNT=4\nEXDATE;TZID=\"Example Fixed Time\":not-a-date,20260804T073000";
+        let cases = [
+            (with_zones(&[madrid], ""), utc(2026, 7, 28, 5, 30)),
+            (
+                with_zones(&[half_hour], &FIXED_ZONE.replace("+0200", "+0530")),
+                utc(2026, 7, 28, 2, 0),
+            ),
+        ];
+        for (calendar, first) in cases {
+            let out = expand_events(&calendar, utc(2026, 7, 27, 0, 0), utc(2026, 8, 31, 0, 0));
+            let starts: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            assert_eq!(starts, vec![first]);
+        }
+    }
+
+    #[test]
+    fn date_only_fixed_until_includes_last_local_day_for_both_offset_signs() {
+        for (zones, ws, we, expected) in [
+            (
+                FIXED_ZONE.to_string(),
+                utc(2026, 10, 24, 0, 0),
+                utc(2026, 10, 28, 0, 0),
+                vec![utc(2026, 10, 24, 21, 30), utc(2026, 10, 25, 21, 30)],
+            ),
+            (
+                FIXED_ZONE.replace("+0200", "-0330"),
+                utc(2026, 10, 25, 0, 0),
+                utc(2026, 10, 29, 0, 0),
+                vec![utc(2026, 10, 25, 3, 0), utc(2026, 10, 26, 3, 0)],
+            ),
+        ] {
+            let event = "UID:until-regression@example.test\r\nDTSTART;TZID=\"Example Fixed Time\":20261023T233000\r\nDTEND;TZID=\"Example Fixed Time\":20261023T234500\r\nRRULE:FREQ=DAILY;UNTIL=20261025";
+            let calendar = with_zones(&[event], &zones);
+            let out = expand_events(&calendar, ws, we);
+            let actual: Vec<i64> = out.iter().map(|e| e.start_time).collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
     const FIXED_ZONE: &str = "BEGIN:VTIMEZONE\r\nTZID:Example Fixed Time\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0200\r\nDTSTART:16010101T000000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n";
 
     fn with_zones(events: &[&str], zones: &str) -> ParsedCalendar {
@@ -870,15 +998,19 @@ mod tests {
     }
 
     #[test]
-    fn fixed_zone_recurrence_keeps_wall_day_exdates_until_and_override_ids() {
+    fn fixed_zone_recurrence_keeps_wall_day_exdates_rdates_until_and_override_ids() {
         let calendar = with_zones(&[
-            "UID:fixed-series@x\nDTSTART;TZID=\"Example Fixed Time\":20260728T003000\nDTEND;TZID=\"Example Fixed Time\":20260728T013000\nRRULE:FREQ=WEEKLY;BYDAY=TU;BYHOUR=0;BYMINUTE=30;UNTIL=20260810T223000Z\nEXDATE;TZID=\"Example Fixed Time\":20260804T003000",
+            "UID:fixed-series@x\nDTSTART;TZID=\"Example Fixed Time\":20260728T003000\nDTEND;TZID=\"Example Fixed Time\":20260728T013000\nRRULE:FREQ=WEEKLY;BYDAY=TU;BYHOUR=0;BYMINUTE=30;UNTIL=20260810T223000Z\nEXDATE;TZID=\"Example Fixed Time\":20260804T003000\nRDATE;TZID=\"Example Fixed Time\":20260806T003000",
             "UID:fixed-series@x\nRECURRENCE-ID;TZID=\"Example Fixed Time\":20260811T003000\nDTSTART;TZID=\"Example Fixed Time\":20260811T020000\nDTEND;TZID=\"Example Fixed Time\":20260811T030000\nSUMMARY:Moved",
         ], FIXED_ZONE);
         let out = expand_events(&calendar, utc(2026, 7, 27, 0, 0), utc(2026, 8, 18, 0, 0));
         assert_eq!(
             out.iter().map(|event| event.start_time).collect::<Vec<_>>(),
-            vec![utc(2026, 7, 27, 22, 30), utc(2026, 8, 11, 0, 0)]
+            vec![
+                utc(2026, 7, 27, 22, 30),
+                utc(2026, 8, 5, 22, 30),
+                utc(2026, 8, 11, 0, 0)
+            ]
         );
         let moved = out.iter().find(|event| event.title == "Moved").unwrap();
         assert_eq!(moved.provider_event_id, "fixed-series@x_20260810T223000Z");
