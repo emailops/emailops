@@ -13,6 +13,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+scripts/bench_preflight.sh || exit 1
 
 DEMO_DIR="${EMAILOPS_DEMO_DIR:-$PWD/.emailops-demo-data}"
 # The generated demo DB has two enabled accounts; the work one holds the
