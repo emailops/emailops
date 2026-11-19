@@ -2664,17 +2664,11 @@ fn format_gmail_error(status: StatusCode, body: &str) -> String {
         .unwrap_or_else(|| format!("HTTP {} {}", status.as_u16(), body))
 }
 
+/// Parse "Name <email@example.com>" or "email@example.com" → (name, email);
+/// without a display name the address doubles as the name.
 fn parse_email_address(from: &str) -> (String, String) {
-    // Parse "Name <email@example.com>" or "email@example.com". The address is
-    // the last <…>: a display name may itself hold '<' or '>'.
-    if let Some(start) = from.rfind('<') {
-        if let Some(len) = from[start + 1..].find('>') {
-            let name = from[..start].trim().trim_matches('"').to_string();
-            let email = from[start + 1..start + 1 + len].to_string();
-            return (if name.is_empty() { email.clone() } else { name }, email);
-        }
-    }
-    (from.to_string(), from.to_string())
+    let (name, email) = crate::sync::header_capture::split_from_header(from);
+    (if name.is_empty() { email.clone() } else { name }, email)
 }
 
 pub fn decode_base64_url_bytes(data: &str) -> Result<Vec<u8>> {
@@ -4066,6 +4060,23 @@ mod tests {
         assert_eq!(
             parse_email_address(r#""a <b" <x@example.com>"#),
             ("a <b".to_string(), "x@example.com".to_string())
+        );
+    }
+
+    /// Gmail checks DMARC against the angle-addr, so an address in a comment
+    /// must not become the stored sender.
+    #[test]
+    fn sender_parse_ignores_an_address_inside_a_comment() {
+        assert_eq!(
+            parse_email_address("Billing <billing@attacker.example> (<ceo@bank.example>)"),
+            ("Billing".to_string(), "billing@attacker.example".to_string())
+        );
+        assert_eq!(
+            parse_email_address("billing@attacker.example (<ceo@bank.example>)"),
+            (
+                "billing@attacker.example".to_string(),
+                "billing@attacker.example".to_string()
+            )
         );
     }
 
