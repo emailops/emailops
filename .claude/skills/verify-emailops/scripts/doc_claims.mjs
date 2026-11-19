@@ -996,6 +996,14 @@ async function afterWizard() {
     const want = doc.number(/(\d+) by default/);
     return ok(Number(undoSendDefault) === want, `Undo send de fábrica: ${undoSendDefault} s`, `de fábrica: ${undoSendDefault}, la doc dice ${want}`);
   });
+  const undoWindowDefault = await js(() => document.querySelector('[data-testid="undo-window-setting"] select')?.value ?? null);
+  await claim('feat-organize-undo-window', 'por defecto', {
+    covers: ['6 by default'],
+    how: 'En una instalación nueva, lee el valor del desplegable «Undo archive and delete» de Ajustes → Appearance y lo compara con el de la doc.',
+  }, async ({ doc }) => {
+    const want = doc.number(/(\d+) by default/);
+    return ok(Number(undoWindowDefault) === want, `Undo archive and delete de fábrica: ${undoWindowDefault} s`, `de fábrica: ${undoWindowDefault}, la doc dice ${want}`);
+  });
   await tab('Notifications');
   const notifDefaults = await toggles();
   const contentDefault = await js(() => [...document.querySelectorAll('input[name="notification-content"]')].find((r) => r.checked)?.value ?? null);

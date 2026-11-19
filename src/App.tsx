@@ -122,6 +122,7 @@ import { useShortcutStore } from '@/stores/shortcutStore';
 import { type ClassifiedTags, mergeClassifiedTags, useTagStore } from '@/stores/tagStore';
 import { useToastStore } from '@/stores/toastStore';
 import { initTranslationListeners } from '@/stores/translationStore';
+import { useUndoWindowStore } from '@/stores/undoWindowStore';
 import { type UpdateToastHost, useUpdateStore } from '@/stores/updateStore';
 import { useViewContextStore } from '@/stores/viewContextStore';
 import type {
@@ -855,6 +856,7 @@ function AppInner() {
   useEffect(() => {
     void useShortcutStore.getState().loadEnabled();
     void useAutoAdvanceStore.getState().loadMode();
+    void useUndoWindowStore.getState().load();
     void useDefaultSenderStore.getState().load();
   }, []);
   const listView = isEmailListView(viewMode);

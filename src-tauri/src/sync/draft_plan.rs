@@ -6,6 +6,11 @@
 //! full read for drafts that have not been touched since the last pull; this
 //! module decides which ones those are, with no I/O so it can be tested
 //! exhaustively.
+//!
+//! IMAP has no draft API: its listing is a Drafts folder of immutable
+//! messages, turned into the same [`ListedDraft`] shape by
+//! [`plan_imap_draft_listing`], and its Drafts folder is only ever read
+//! ([`plan_read_only_draft_sync`]).
 
 use std::collections::HashMap;
 
@@ -72,6 +77,53 @@ pub fn plan_draft_fetches(listed: &[ListedDraft], known: &HashMap<String, String
     DraftFetchPlan { to_fetch, present_ids }
 }
 
+/// One message of an IMAP Drafts folder, as the cheap listing reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImapDraftEntry {
+    pub uid: u32,
+    /// The message's `Message-ID` header; `None` when it carries none.
+    pub message_id: Option<String>,
+}
+
+/// Turn an IMAP Drafts folder listing into the [`ListedDraft`]s the pull pass
+/// plans with, each paired with the UID its content is fetched by.
+///
+/// IMAP never edits a message. Another client saves a draft by appending a new
+/// message and removing the old one, so the UID changes on every save, and a
+/// UIDVALIDITY change renumbers the whole folder. A draft's id is therefore its
+/// `Message-ID`, which survives both, and its change token is
+/// `<UIDVALIDITY>:<UID>`, which changes with every save and every renumbering:
+/// a renumbered folder is read again and lands on the rows it already has
+/// instead of duplicating them. A draft without a `Message-ID` is keyed by
+/// `uid:<UIDVALIDITY>:<UID>`. When several messages carry one `Message-ID` (a
+/// client that appended the new copy and has not removed the old one yet), the
+/// newest UID is the draft. Sorted by UID.
+pub fn plan_imap_draft_listing(uid_validity: u32, entries: &[ImapDraftEntry]) -> Vec<(u32, ListedDraft)> {
+    let mut newest: HashMap<String, u32> = HashMap::new();
+    for entry in entries {
+        let id = match entry.message_id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+            Some(message_id) => message_id.to_string(),
+            None => format!("uid:{uid_validity}:{}", entry.uid),
+        };
+        let uid = newest.entry(id).or_insert(entry.uid);
+        *uid = (*uid).max(entry.uid);
+    }
+    let mut listed: Vec<(u32, ListedDraft)> = newest
+        .into_iter()
+        .map(|(provider_draft_id, uid)| {
+            (
+                uid,
+                ListedDraft {
+                    provider_draft_id,
+                    change_token: Some(format!("{uid_validity}:{uid}")),
+                },
+            )
+        })
+        .collect();
+    listed.sort_by_key(|(uid, _)| *uid);
+    listed
+}
+
 /// What the sync knows about one local draft row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalDraftState {
@@ -132,6 +184,17 @@ pub fn plan_draft_sync(local: Option<LocalDraftState>, upstream: UpstreamDraftSt
         (true, false, Changed) => Pull,
         (true, true, Absent) => Recreate,
         (true, true, Unchanged | Changed) => Push,
+    }
+}
+
+/// [`plan_draft_sync`] for a provider whose Drafts folder this app only reads
+/// (IMAP). Nothing is pushed or re-created upstream: a draft the two-way table
+/// would send there stays as it is here, so an edit made in this app is still
+/// never overwritten or pruned, and it stays on this device.
+pub fn plan_read_only_draft_sync(local: Option<LocalDraftState>, upstream: UpstreamDraftState) -> DraftSyncAction {
+    match plan_draft_sync(local, upstream) {
+        DraftSyncAction::Push | DraftSyncAction::Recreate => DraftSyncAction::Keep,
+        other => other,
     }
 }
 
@@ -244,6 +307,175 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_read_only_provider_is_never_written_to() {
+        // IMAP drafts are only read: whatever the two-way table would push or
+        // re-create upstream stays as it is here instead.
+        for local_state in [
+            None,
+            local(false, false),
+            local(false, true),
+            local(true, false),
+            local(true, true),
+        ] {
+            for upstream in [
+                UpstreamDraftState::Absent,
+                UpstreamDraftState::Unchanged,
+                UpstreamDraftState::Changed,
+            ] {
+                let expected = match plan_draft_sync(local_state, upstream) {
+                    DraftSyncAction::Push | DraftSyncAction::Recreate => DraftSyncAction::Keep,
+                    other => other,
+                };
+                assert_eq!(
+                    plan_read_only_draft_sync(local_state, upstream),
+                    expected,
+                    "{local_state:?} / {upstream:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_read_only_provider_still_imports_refreshes_and_prunes_clean_drafts() {
+        use DraftSyncAction::{Keep, Prune, Pull};
+        use UpstreamDraftState::{Absent, Changed, Unchanged};
+        let table = [
+            (None, Changed, Pull, "a draft saved by another client is imported"),
+            (
+                local(true, false),
+                Changed,
+                Pull,
+                "re-saved elsewhere: the local copy follows",
+            ),
+            (
+                local(true, false),
+                Absent,
+                Prune,
+                "deleted or sent elsewhere: the local copy goes",
+            ),
+            (local(true, false), Unchanged, Keep, "steady state"),
+            (
+                local(true, true),
+                Changed,
+                Keep,
+                "an edit made here is never overwritten",
+            ),
+            (
+                local(true, true),
+                Absent,
+                Keep,
+                "an edit made here outlives the server copy",
+            ),
+            (local(false, true), Absent, Keep, "a draft written here stays here"),
+        ];
+        for (local_state, upstream, expected, why) in table {
+            assert_eq!(
+                plan_read_only_draft_sync(local_state, upstream),
+                expected,
+                "{local_state:?} / {upstream:?}: {why}"
+            );
+        }
+    }
+
+    fn entry(uid: u32, message_id: Option<&str>) -> ImapDraftEntry {
+        ImapDraftEntry {
+            uid,
+            message_id: message_id.map(String::from),
+        }
+    }
+
+    #[test]
+    fn an_imap_draft_is_keyed_by_its_message_id_and_versioned_by_its_uid() {
+        let listed = plan_imap_draft_listing(7, &[entry(3, Some("<a@example.test>"))]);
+        assert_eq!(listed, vec![(3, listed_draft("<a@example.test>", "7:3"))]);
+    }
+
+    #[test]
+    fn a_draft_saved_again_by_another_client_keeps_its_id_with_a_new_token() {
+        // IMAP never edits a message: a save appends a new one and removes the
+        // old, so only the UID tells the two versions apart.
+        let before = plan_imap_draft_listing(7, &[entry(3, Some("<a@example.test>"))]);
+        let after = plan_imap_draft_listing(7, &[entry(4, Some("<a@example.test>"))]);
+        assert_eq!(before[0].1.provider_draft_id, after[0].1.provider_draft_id);
+        assert_ne!(before[0].1.change_token, after[0].1.change_token);
+    }
+
+    #[test]
+    fn a_renumbered_drafts_folder_is_read_again_under_the_same_ids() {
+        // A UIDVALIDITY change hands out new UIDs, and an old UID may now be
+        // another draft: every draft is read again, and lands on its own row.
+        let before = plan_imap_draft_listing(
+            7,
+            &[entry(3, Some("<a@example.test>")), entry(4, Some("<b@example.test>"))],
+        );
+        let known: HashMap<String, String> = before
+            .iter()
+            .map(|(_, d)| (d.provider_draft_id.clone(), d.change_token.clone().expect("token")))
+            .collect();
+        let after = plan_imap_draft_listing(
+            9,
+            &[entry(4, Some("<a@example.test>")), entry(3, Some("<b@example.test>"))],
+        );
+        let after: Vec<ListedDraft> = after.into_iter().map(|(_, d)| d).collect();
+
+        let mut plan = plan_draft_fetches(&after, &known);
+        plan.to_fetch.sort();
+        plan.present_ids.sort();
+        let mut ids: Vec<String> = known.keys().cloned().collect();
+        ids.sort();
+        assert_eq!(plan.to_fetch, ids, "every draft is read again");
+        assert_eq!(plan.present_ids, ids, "no draft looks new or gone");
+    }
+
+    #[test]
+    fn an_unchanged_imap_drafts_folder_plans_no_read() {
+        let listed = plan_imap_draft_listing(7, &[entry(3, Some("<a@example.test>"))]);
+        let listed: Vec<ListedDraft> = listed.into_iter().map(|(_, d)| d).collect();
+        let plan = plan_draft_fetches(&listed, &known(&[("<a@example.test>", "7:3")]));
+        assert!(plan.to_fetch.is_empty());
+        assert_eq!(plan.present_ids, vec!["<a@example.test>".to_string()]);
+    }
+
+    #[test]
+    fn an_imap_draft_without_a_message_id_is_keyed_by_its_uid() {
+        for missing in [None, Some(""), Some("   ")] {
+            let listed = plan_imap_draft_listing(7, &[entry(3, missing)]);
+            assert_eq!(listed, vec![(3, listed_draft("uid:7:3", "7:3"))], "{missing:?}");
+        }
+    }
+
+    #[test]
+    fn the_newest_copy_of_a_message_id_is_the_draft() {
+        // A client that appended the new version and has not removed the old
+        // one yet: listing both would show the draft twice.
+        let listed = plan_imap_draft_listing(
+            7,
+            &[
+                entry(5, Some("<a@example.test>")),
+                entry(2, Some("<b@example.test>")),
+                entry(8, Some("<a@example.test>")),
+            ],
+        );
+        assert_eq!(
+            listed,
+            vec![
+                (2, listed_draft("<b@example.test>", "7:2")),
+                (8, listed_draft("<a@example.test>", "7:8")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_message_id_is_trimmed_like_the_one_the_mail_sync_stores() {
+        let listed = plan_imap_draft_listing(7, &[entry(3, Some("  <a@example.test>\r\n"))]);
+        assert_eq!(listed[0].1.provider_draft_id, "<a@example.test>");
+    }
+
+    fn listed_draft(id: &str, token: &str) -> ListedDraft {
+        listed(id, Some(token))
     }
 
     fn listed(id: &str, token: Option<&str>) -> ListedDraft {

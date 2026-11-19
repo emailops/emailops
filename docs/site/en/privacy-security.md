@@ -104,7 +104,7 @@ everywhere else:
 | Moving a message to another folder, or **Confirm junk** | The message moves on the account too — Confirm junk files it in the provider's junk folder |
 | **Not spam — move to Inbox**, or **Not junk** on a message in **Spam** | The message moves back to the account's inbox |
 | Creating, renaming or deleting a folder | The folder changes on the account too |
-| Saving a draft | The draft is saved to the account's Drafts |
+| Saving a draft | The draft is saved to the account's Drafts on Gmail and Outlook; on an IMAP account it stays on this computer |
 
 <!-- claim:priv-what-emailops-2 -->
 EmailOps never permanently erases a message: deletes always go to Trash, never to a hard

@@ -50,7 +50,8 @@ function embeddingModelForSource(source: EmbeddingSource, catalog: CatalogModel[
  * llama.cpp `llama-server`, LiteLLM, a proxy): base URL, an optional key kept
  * in the keychain, the chat model from the server's list or typed in, the
  * context size and where the email index is computed. By default that is the
- * same server, so mail goes to one destination only.
+ * same server, so mail goes to one destination only; then the panel also sets
+ * how many chunks one embeddings request carries.
  *
  * Plain `http://` is accepted for this machine only; a server elsewhere needs
  * `https://`, and saving one asks the user to confirm the disclosure first
@@ -246,6 +247,26 @@ export function ServerPanel({
           </>
         )}
       </div>
+      {server.embeddingSource === 'server' && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('settings:server.embeddingBatchSize')}
+          </label>
+          <input
+            type="number"
+            aria-label={t('settings:server.embeddingBatchSize')}
+            min={1}
+            max={64}
+            value={server.embeddingBatchSize}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              setServer({ embeddingBatchSize: Number.isFinite(v) ? v : 1 });
+            }}
+            className="w-24 bg-white text-gray-800 border border-gray-300 rounded px-3 py-2 text-sm focus:border-primary-500 outline-none"
+          />
+          <p className="text-xs text-gray-500 mt-1">{t('settings:server.embeddingBatchSizeHelp')}</p>
+        </div>
+      )}
       {server.embeddingSource === 'openrouter' && <OpenRouterSpendControls config={config} setConfig={setConfig} />}
       <p className="text-xs text-gray-500">{t('settings:server.privacyNotice')}</p>
       <ThinkingToggle

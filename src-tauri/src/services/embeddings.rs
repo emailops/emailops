@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::ops::Range;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Instant;
 
 use crate::services::app_handle::AppHandle;
 use serde::{Deserialize, Serialize};
@@ -411,32 +414,18 @@ async fn generate_with_service(
         return Ok(0);
     }
 
-    // Load per-account category config: every account in the global path.
-    let per_account_cfg: std::collections::HashMap<String, EmbeddingsConfig> = match account_id {
-        Some(acc) => {
-            let mut m = std::collections::HashMap::new();
-            m.insert(acc.to_string(), get_embeddings_config(db, acc)?);
-            m
-        }
-        None => {
-            let mut m = std::collections::HashMap::new();
-            for a in db.list_accounts()? {
-                m.insert(a.id.clone(), get_embeddings_config(db, &a.id)?);
-            }
-            m
-        }
-    };
-
-    // Respect the user's "limit AI work to recent emails" preference so we
-    // never embed emails older than the cutoff. The cutoff and the categories
-    // depend on the account, so candidates are collected account by account
-    // (the global path included): each account gives its newest pending
-    // emails, and the batch keeps the newest of them all.
+    // Candidates are collected account by account (the global path
+    // included): each account gives its newest pending emails, and the batch
+    // keeps the newest of them all.
     let now = chrono::Utc::now().timestamp();
     let mut email_ids = Vec::new();
-    for (acc, cfg) in &per_account_cfg {
-        let min_ts = db.ai_processing_min_timestamp(acc, now)?;
-        email_ids.extend(db.get_emails_without_embeddings(Some(acc), batch_size, &cfg.categories, min_ts)?);
+    for scope in pending_scopes(db, account_id, now)? {
+        email_ids.extend(db.get_emails_without_embeddings(
+            Some(&scope.account_id),
+            batch_size,
+            &scope.categories,
+            scope.min_timestamp,
+        )?);
     }
 
     if email_ids.is_empty() {
@@ -474,14 +463,10 @@ async fn generate_with_service(
         }
     }
 
-    let mut stopped = false;
+    // Every email's chunks are read first, so emails can share a request
+    // when the provider takes several chunks per request.
+    let mut pending = Vec::new();
     for (idx, email) in emails.iter().enumerate() {
-        // Checked between emails, not between batches: once the user stops
-        // the work, no further email goes to the provider.
-        if task_queue::cancel_requested() {
-            stopped = true;
-            break;
-        }
         // `get_emails_by_ids` leaves `body` empty: the text lives in its own table.
         let body = crate::services::thread_clean::clean_email_body(
             &db.get_email_body(&email.id)?,
@@ -496,56 +481,68 @@ async fn generate_with_service(
         }
 
         let texts = create_embedding_texts(&email.subject, &email.sender, content);
+        pending.push((idx, email, content_hash, texts));
+    }
 
-        // Generate embeddings for all chunks
-        let mut chunk_embeddings = Vec::new();
-        let mut failed = false;
-        for text in &texts {
-            match ai_service.embed(text).await {
-                Ok(embedding) => chunk_embeddings.push(embedding),
-                Err(e) => {
-                    crate::services::logger::log(
-                        "error",
-                        "embeddings",
-                        format!("failed to generate embedding for email {} chunk: {}", email.id, e),
-                    );
-                    failed = true;
-                    break;
-                }
+    let chunk_counts: Vec<usize> = pending.iter().map(|(_, _, _, texts)| texts.len()).collect();
+    let mut stopped = false;
+    for group in plan_embedding_groups(&chunk_counts, ai_service.provider().embedding_batch_size()) {
+        // Checked between groups (one email each, unless the provider takes
+        // several chunks per request): once the user stops the work, no
+        // further email goes to the provider.
+        if task_queue::cancel_requested() {
+            stopped = true;
+            break;
+        }
+        let group = &pending[group];
+        let texts: Vec<String> = group
+            .iter()
+            .flat_map(|(_, _, _, texts)| texts.iter().cloned())
+            .collect();
+        let mut vectors = match ai_service.embed_texts(&texts).await {
+            Ok(vectors) => vectors.into_iter(),
+            Err(e) => {
+                let ids: Vec<&str> = group.iter().map(|(_, email, _, _)| email.id.as_str()).collect();
+                crate::services::logger::log(
+                    "error",
+                    "embeddings",
+                    format!("failed to generate embeddings for email {}: {}", ids.join(", "), e),
+                );
+                continue;
+            }
+        };
+
+        for (idx, email, content_hash, texts) in group {
+            let chunk_embeddings: Vec<Vec<f32>> = vectors.by_ref().take(texts.len()).collect();
+            db.store_embedding_chunks(
+                &email.id,
+                &email.account_id,
+                &chunk_embeddings,
+                &embedding_model,
+                content_hash,
+            )?;
+            generated += 1;
+            task_queue::report_progress((idx + 1) as u32, total);
+
+            if let Some(ref app) = app {
+                let _ = app.emit(
+                    "embedding-progress",
+                    EmbeddingProgress {
+                        status: "generating".to_string(),
+                        current: (idx + 1) as u32,
+                        total,
+                        message: format!(
+                            "Generated {} of {} embeddings ({} chunks){}",
+                            idx + 1,
+                            total,
+                            chunk_embeddings.len(),
+                            label_suffix
+                        ),
+                    },
+                );
             }
         }
-
-        if failed || chunk_embeddings.is_empty() {
-            continue;
-        }
-
-        db.store_embedding_chunks(
-            &email.id,
-            &email.account_id,
-            &chunk_embeddings,
-            &embedding_model,
-            &content_hash,
-        )?;
-        generated += 1;
-        task_queue::report_progress((idx + 1) as u32, total);
-
-        if let Some(ref app) = app {
-            let _ = app.emit(
-                "embedding-progress",
-                EmbeddingProgress {
-                    status: "generating".to_string(),
-                    current: (idx + 1) as u32,
-                    total,
-                    message: format!(
-                        "Generated {} of {} embeddings ({} chunks){}",
-                        idx + 1,
-                        total,
-                        chunk_embeddings.len(),
-                        label_suffix
-                    ),
-                },
-            );
-        }
+        record_progress(group.len() as u32);
     }
 
     if stopped {
@@ -578,9 +575,145 @@ async fn generate_with_service(
     Ok(generated)
 }
 
-/// Get the number of emails without embeddings
+/// Where the pipeline looks for emails to embed: one account, with the
+/// categories it embeds and its "limit AI work to recent emails" cutoff.
+struct PendingScope {
+    account_id: String,
+    categories: Vec<String>,
+    min_timestamp: Option<i64>,
+}
+
+/// The scope of `account_id`, or of every account when `None`.
+fn pending_scopes(db: &Database, account_id: Option<&str>, now: i64) -> Result<Vec<PendingScope>> {
+    let ids: Vec<String> = match account_id {
+        Some(acc) => vec![acc.to_string()],
+        None => db.list_accounts()?.into_iter().map(|a| a.id).collect(),
+    };
+    ids.into_iter()
+        .map(|id| {
+            Ok(PendingScope {
+                categories: get_embeddings_config(db, &id)?.categories,
+                min_timestamp: db.ai_processing_min_timestamp(&id, now)?,
+                account_id: id,
+            })
+        })
+        .collect()
+}
+
+/// Split emails, given how many chunks each has, into the consecutive groups
+/// whose chunks are embedded together: as many whole emails as fit in
+/// `max_chunks`, and always at least one, so an email with more chunks than
+/// that goes alone (the provider splits its requests). Pure.
+fn plan_embedding_groups(chunk_counts: &[usize], max_chunks: usize) -> Vec<Range<usize>> {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    let mut chunks = 0;
+    for (i, &count) in chunk_counts.iter().enumerate() {
+        if i > start && chunks + count > max_chunks {
+            groups.push(start..i);
+            start = i;
+            chunks = 0;
+        }
+        chunks += count;
+    }
+    if start < chunk_counts.len() {
+        groups.push(start..chunk_counts.len());
+    }
+    groups
+}
+
+/// How many emails the pipeline will still embed: the ones it would pick,
+/// account by account, with each account's categories and age cutoff.
 pub fn count_pending_embeddings(db: &Arc<Database>, account_id: Option<&str>) -> Result<i32> {
-    db.count_emails_without_embeddings(account_id)
+    let now = chrono::Utc::now().timestamp();
+    let mut pending = 0;
+    for scope in pending_scopes(db, account_id, now)? {
+        pending +=
+            db.count_emails_without_embeddings(Some(&scope.account_id), &scope.categories, scope.min_timestamp)?;
+    }
+    Ok(pending)
+}
+
+/// How far back the indexing rate looks.
+const RATE_WINDOW_MS: u64 = 120_000;
+/// The least time a rate is measured over. Below it, a burst of emails
+/// stored milliseconds apart would read as thousands a minute.
+const MIN_RATE_SPAN_MS: u64 = 10_000;
+
+/// `emails` stored in the index at `at_ms`, on a monotonic clock.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ProgressSample {
+    at_ms: u64,
+    emails: u32,
+}
+
+/// What the pipeline stored lately, one sample per group of emails, oldest
+/// first. Nothing older than [`RATE_WINDOW_MS`] is kept.
+static RECENT_PROGRESS: Mutex<VecDeque<ProgressSample>> = Mutex::new(VecDeque::new());
+
+/// Milliseconds since the first call. The wall clock (`Clock`) counts whole
+/// seconds and can jump; a rate needs neither.
+fn monotonic_ms() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    u64::try_from(START.get_or_init(Instant::now).elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn record_progress(emails: u32) {
+    let now = monotonic_ms();
+    let mut recent = RECENT_PROGRESS.lock().unwrap_or_else(PoisonError::into_inner);
+    while recent
+        .front()
+        .is_some_and(|s| now.saturating_sub(s.at_ms) > RATE_WINDOW_MS)
+    {
+        recent.pop_front();
+    }
+    recent.push_back(ProgressSample { at_ms: now, emails });
+}
+
+/// Emails indexed per minute over the last [`RATE_WINDOW_MS`]: the ones
+/// stored after the window's first sample, over the time from that sample to
+/// now (the first sample's own emails were done before it, at an unknown
+/// pace). Measured to now, so it falls while nothing is stored. `None` when
+/// the window holds fewer than two samples, or covers less than
+/// [`MIN_RATE_SPAN_MS`]: too little to measure. Pure.
+fn messages_per_minute(samples: &[ProgressSample], now_ms: u64) -> Option<f64> {
+    let recent: Vec<&ProgressSample> = samples
+        .iter()
+        .filter(|s| now_ms.saturating_sub(s.at_ms) <= RATE_WINDOW_MS)
+        .collect();
+    let first = recent.first()?;
+    let span_ms = now_ms.saturating_sub(first.at_ms);
+    if recent.len() < 2 || span_ms < MIN_RATE_SPAN_MS {
+        return None;
+    }
+    let emails: u32 = recent[1..].iter().map(|s| s.emails).sum();
+    Some(f64::from(emails) * 60_000.0 / span_ms as f64)
+}
+
+/// What Settings → AI shows about the email index.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexingStatus {
+    /// Emails the pipeline will still embed.
+    pub backlog: i32,
+    /// Emails indexed per minute lately; `None` until there is enough to
+    /// measure (see `messages_per_minute`), and once nothing has been indexed
+    /// for about two minutes.
+    pub messages_per_minute: Option<f64>,
+}
+
+/// The backlog of every account and the recent indexing rate.
+pub fn indexing_status(db: &Arc<Database>) -> Result<IndexingStatus> {
+    let samples: Vec<ProgressSample> = RECENT_PROGRESS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .copied()
+        .collect();
+    Ok(IndexingStatus {
+        backlog: count_pending_embeddings(db, None)?,
+        messages_per_minute: messages_per_minute(&samples, monotonic_ms()),
+    })
 }
 
 /// Delete all embeddings and regenerate them. Loops over batches of
@@ -1038,6 +1171,164 @@ mod tests {
         assert_eq!(embedded_emails(&db), 1, "the index must survive");
         assert_eq!(last_embedding_status(&events).as_deref(), Some("cancelled"));
         crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+    }
+
+    #[test]
+    fn emails_are_grouped_whole_up_to_the_chunks_one_request_takes() {
+        let groups = |counts: &[usize], max_chunks: usize| -> Vec<(usize, usize)> {
+            plan_embedding_groups(counts, max_chunks)
+                .into_iter()
+                .map(|r| (r.start, r.end))
+                .collect()
+        };
+        assert_eq!(groups(&[], 4), Vec::<(usize, usize)>::new());
+        assert_eq!(groups(&[1, 1, 1], 1), vec![(0, 1), (1, 2), (2, 3)]);
+        assert_eq!(groups(&[1, 1, 1, 1, 1], 4), vec![(0, 4), (4, 5)]);
+        assert_eq!(groups(&[2, 2, 2], 4), vec![(0, 2), (2, 3)]);
+        assert_eq!(groups(&[1, 6, 1], 8), vec![(0, 3)]);
+        // An email with more chunks than one request takes goes alone.
+        assert_eq!(groups(&[1, 6, 1], 4), vec![(0, 1), (1, 2), (2, 3)]);
+        assert_eq!(groups(&[3, 1], 0), vec![(0, 1), (1, 2)]);
+    }
+
+    #[test]
+    fn a_provider_that_takes_several_chunks_per_request_gets_them_across_emails() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_emails(&db, 5);
+        let fake = Arc::new(
+            crate::ai::provider::FakeAiProvider::new()
+                .with_embedding_dim(768)
+                .with_embedding_batch_size(4),
+        );
+        let service = AiService::with_provider(db.clone(), fake.clone());
+
+        let generated = test_runtime()
+            .block_on(generate_with_service(&db, &service, Some("acc1"), None, 10, None, true))
+            .expect("run");
+
+        assert_eq!(generated, 5);
+        assert_eq!(fake.embed_batch_sizes(), vec![4, 1]);
+        assert_eq!(fake.embed_calls().len(), 5, "every chunk once");
+        assert_eq!(embedded_emails(&db), 5);
+    }
+
+    #[test]
+    fn one_chunk_per_request_keeps_embedding_chunk_by_chunk() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        seed_emails(&db, 3);
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new().with_embedding_dim(768));
+        let service = AiService::with_provider(db.clone(), fake.clone());
+
+        test_runtime()
+            .block_on(generate_with_service(&db, &service, Some("acc1"), None, 10, None, true))
+            .expect("run");
+
+        assert!(fake.embed_batch_sizes().is_empty(), "no batch call at the default");
+        assert_eq!(fake.embed_calls().len(), 3);
+        assert_eq!(embedded_emails(&db), 3);
+    }
+
+    fn sample(at_ms: u64, emails: u32) -> ProgressSample {
+        ProgressSample { at_ms, emails }
+    }
+
+    #[test]
+    fn the_rate_counts_the_emails_indexed_after_the_first_sample_up_to_now() {
+        let at = sample;
+        let every_second: Vec<ProgressSample> = (0..=12).map(|s| at(s * 1_000, 1)).collect();
+        let cases: [(&str, Vec<ProgressSample>, u64, Option<f64>); 9] = [
+            ("nothing indexed", vec![], 10_000, None),
+            ("a single sample", vec![at(0, 1)], 10_000, None),
+            ("one email a minute", vec![at(0, 1), at(60_000, 1)], 60_000, Some(1.0)),
+            ("one email a second", every_second, 12_000, Some(60.0)),
+            (
+                "batches of twenty every ten seconds",
+                vec![at(0, 20), at(10_000, 20)],
+                10_000,
+                Some(120.0),
+            ),
+            (
+                "samples older than the window are left out",
+                vec![at(0, 50), at(200_000, 1), at(230_000, 1)],
+                230_000,
+                Some(2.0),
+            ),
+            ("indexing stopped long ago", vec![at(0, 1), at(1_000, 1)], 500_000, None),
+            (
+                "everything at the same instant",
+                vec![at(5_000, 3), at(5_000, 2)],
+                5_000,
+                None,
+            ),
+            (
+                "less than ten seconds measured",
+                vec![at(0, 1), at(1_000, 1), at(2_000, 1)],
+                2_000,
+                None,
+            ),
+        ];
+        for (case, samples, now_ms, expected) in cases {
+            assert_eq!(messages_per_minute(&samples, now_ms), expected, "{case}");
+        }
+    }
+
+    /// The bug this pins: two emails stored 31 ms apart read as 1935 a minute,
+    /// and kept reading so until they left the window.
+    #[test]
+    fn a_short_burst_does_not_read_as_a_huge_pace() {
+        let burst = [sample(0, 1), sample(31, 1)];
+
+        assert_eq!(messages_per_minute(&burst, 31), None);
+        assert_eq!(messages_per_minute(&burst, 5_031), None);
+        let later = messages_per_minute(&burst, 15_031);
+        assert!(later.is_some_and(|rate| rate < 5.0), "{later:?}");
+    }
+
+    #[test]
+    fn the_pace_falls_while_nothing_is_indexed_and_then_disappears() {
+        let run = [sample(0, 20), sample(10_000, 20)];
+
+        assert_eq!(messages_per_minute(&run, 10_000), Some(120.0));
+        assert_eq!(messages_per_minute(&run, 40_000), Some(30.0));
+        assert_eq!(
+            messages_per_minute(&run, 130_000),
+            None,
+            "the first batch left the window"
+        );
+    }
+
+    /// Measuring up to now drops the pace a little between two batches: 20
+    /// emails every 10 s reads between 110 and 120 a minute.
+    #[test]
+    fn a_steady_run_reads_close_to_its_pace_between_batches() {
+        let run: Vec<ProgressSample> = (0..=30).map(|i| sample(i * 10_000, 20)).collect();
+        for now_ms in [150_000, 152_500, 155_000, 159_999, 300_000] {
+            let stored = usize::try_from(now_ms / 10_000).unwrap();
+            let rate = messages_per_minute(&run[..=stored], now_ms).unwrap();
+            assert!((109.9..=120.0).contains(&rate), "at {now_ms} ms: {rate}");
+        }
+    }
+
+    /// The backlog Settings shows must be what the pipeline will embed, or it
+    /// never reaches zero: an excluded category is not pending work.
+    #[test]
+    fn the_backlog_counts_only_what_the_pipeline_will_embed() {
+        let _seam = crate::services::events::seam_test_lock();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        insert_email(&db, "acc1", "acc1-primary", "primary", 100);
+        insert_email(&db, "acc1", "acc1-promo", "promotions", 200);
+        insert_email(&db, "acc2", "acc2-primary", "primary", 300);
+
+        assert_eq!(count_pending_embeddings(&db, None).unwrap(), 2);
+        assert_eq!(count_pending_embeddings(&db, Some("acc1")).unwrap(), 1);
+        let status = serde_json::to_value(indexing_status(&db).unwrap()).unwrap();
+        assert_eq!(status["backlog"], 2);
+        assert!(status.get("messagesPerMinute").is_some(), "{status}");
+
+        run_all_accounts(&db, 10);
+        assert_eq!(count_pending_embeddings(&db, None).unwrap(), 0);
     }
 
     #[test]
