@@ -352,7 +352,7 @@ Downloads-Ordner. **Löschen** fragt vorher nach; ein geteiltes Dokument zu lös
 nur Ihre Kopie, die anderen behalten ihre.
 
 <!-- claim:feat-eo-docs-7 -->
-**Importieren** macht aus einem Word-Dokument (`.docx`) oder einer Tabelle (`.xlsx`, `.xls`, `.ods`)
+**Importieren** macht aus einem Word-Dokument (`.docx`) oder einer Tabelle (`.xlsx`)
 EO Docs, eine Tabelle pro Blatt und Formeln als ihre Werte; **In EO Docs öffnen** tut dasselbe mit
 einem E-Mail-Anhang. Im E-Mail-Editor hängt **Aus EO Docs** ein Dokument an und teilt es damit mit
 den Empfängern der E-Mail.

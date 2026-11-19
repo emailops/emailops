@@ -341,8 +341,8 @@ Descargas. **Eliminar** pide confirmación; eliminar un documento compartido
 solo borra tu copia, y los demás conservan la suya.
 
 <!-- claim:feat-eo-docs-7 -->
-**Importar** convierte un documento de Word (`.docx`) o una hoja de cálculo (`.xlsx`, `.xls`,
-`.ods`) en EO Docs, una hoja por pestaña y las fórmulas como sus valores; **Abrir en EO Docs** hace
+**Importar** convierte un documento de Word (`.docx`) o una hoja de cálculo (`.xlsx`) en
+EO Docs, una hoja por pestaña y las fórmulas como sus valores; **Abrir en EO Docs** hace
 lo mismo con un adjunto de un email. En el editor de emails, **Desde EO Docs** adjunta un
 documento, lo que lo comparte con los destinatarios del email.
 

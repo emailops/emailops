@@ -324,7 +324,7 @@ versions. **Export PDF** saves the document as a PDF in your Downloads folder.
 theirs.
 
 <!-- claim:feat-eo-docs-7 -->
-**Import** turns a Word document (`.docx`) or a spreadsheet (`.xlsx`, `.xls`, `.ods`) into EO Docs,
+**Import** turns a Word document (`.docx`) or a spreadsheet (`.xlsx`) into EO Docs,
 one sheet per tab and formulas as their values; **Open in EO Docs** does the same for an email
 attachment. In the composer, **From EO Docs** attaches a document, which shares it with the
 email's recipients.
