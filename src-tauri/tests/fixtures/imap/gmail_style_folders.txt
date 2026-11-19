@@ -1,0 +1,18 @@
+# Synthetic. A Gmail-style hierarchy: a \Noselect "[Gmail]" parent, roles
+# under it, a modified UTF-7 name (Büro) and a name sent as a literal
+# because it contains a quote.
+S: * OK Gimap ready
+C: LOGIN *
+S: {tag} OK user@example.test authenticated (Success)
+C: LIST *
+S: * LIST (\HasNoChildren) "/" "INBOX"
+S: * LIST (\HasChildren \Noselect) "/" "[Gmail]"
+S: * LIST (\HasNoChildren \Sent) "/" "[Gmail]/Sent Mail"
+S: * LIST (\HasNoChildren \Junk) "/" "[Gmail]/Spam"
+S: * LIST (\HasNoChildren \Trash) "/" "[Gmail]/Trash"
+S: * LIST (\All \HasNoChildren) "/" "[Gmail]/All Mail"
+S: * LIST (\HasNoChildren) "/" "B&APw-ro"
+S: * LIST (\HasNoChildren) "/" {=}
+L: Clients "VIP"
+S+:
+S: {tag} OK Success

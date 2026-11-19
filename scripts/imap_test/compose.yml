@@ -1,0 +1,42 @@
+# Local IMAP/SMTP test servers for `make imap-up` / `make imap-e2e`.
+#
+#   dovecot   IMAP (STARTTLS on 31143) and SMTP submission (STARTTLS on
+#             31587). Any username logs in with USER_PASSWORD and gets an
+#             empty mailbox of its own, so each test run uses a fresh user.
+#   mailpit   catches what Dovecot submission relays; its API (8025) shows
+#             what the app sent.
+#   toxiproxy sits in front of Dovecot IMAP (21143) for fault injection; its
+#             API is on 8474.
+#
+# TLS uses the CA and leaf certificate `scripts/imap_test.sh certs` writes
+# under .imap-test/certs (gitignored). Synthetic data only.
+name: emailops-imap-test
+
+services:
+  dovecot:
+    image: dovecot/dovecot:2.4.1
+    environment:
+      USER_PASSWORD: ${IMAP_TEST_PASSWORD:-emailops-test}
+    volumes:
+      - ../../.imap-test/certs/server.crt:/etc/dovecot/ssl/tls.crt:ro
+      - ../../.imap-test/certs/server.key:/etc/dovecot/ssl/tls.key:ro
+      - ./dovecot-test.conf:/etc/dovecot/conf.d/zz-test.conf:ro
+    ports:
+      - "127.0.0.1:31143:31143"
+      - "127.0.0.1:31587:31587"
+    depends_on:
+      - mailpit
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    ports:
+      - "127.0.0.1:8474:8474"
+      - "127.0.0.1:21143:21143"

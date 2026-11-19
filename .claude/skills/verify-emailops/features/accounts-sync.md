@@ -31,6 +31,7 @@ Preconditions: baseline. The demo accounts have no credentials: every sync ends 
 ## Gotchas
 
 - Anything that needs the provider (sync, send, write-back, state refresh) cannot be driven on the demo instance; it is proven against `FakeEmailProvider` in `tests/integration.rs` and against recorded cassettes.
+- An IMAP account **can** be driven end to end against the local test Dovecot: `make imap-ui` launches its own instance on a fresh data dir, adds the account through the first-run wizard's IMAP form, waits for the seeded mail, then stars and archives from the UI and checks both on the server (`scripts/imap_ui.mjs`, evidence under `src-tauri/reports/verify/imap-ui-<run>/`). Needs Docker. See `docs/testing/IMAP-TESTING.md`.
 - Live provider behaviour is checked by hand from a dev build on a real account, never in this run.
 
 | Case | Test kind |
@@ -42,4 +43,7 @@ Preconditions: baseline. The demo accounts have no credentials: every sync ends 
 | account and system command arguments | contract (`src/lib/apiContract/cuentas.api.test.ts`) |
 | account switching | e2e (`Cuentas/*`) |
 | star-on-GitHub dialog: open, visit, cancel, open failure logged | unit (`src/components/Sidebar/FeedbackMenu.test.tsx`) + e2e (`Cuentas/estrella en GitHub`) |
+| `ImapClient` end to end on an in-memory server, provider contract, recorded conversations, properties | integration (`tests/imap_client.rs`, `tests/provider_contract.rs`, `tests/imap_replay.rs`) + unit (`sync::imap::proptests`) |
+| IMAP against a real server (contract, send, faults) and through the CLI | live (`make imap-e2e`, Docker) |
+| IMAP add account, sync, star and archive through the desktop UI | e2e (`make imap-ui`, Docker) |
 | eval | n/a: no model takes part in sync or account management |

@@ -1,0 +1,18 @@
+# Synthetic. The server shuts the first session down in the middle of a
+# command; the client must report an error and open a new session for the
+# next operation.
+=== connection
+S: * OK ready
+C: LOGIN *
+S: {tag} OK Logged in
+C: SELECT "INBOX"
+S: * BYE Server shutting down for maintenance
+=== connection
+S: * OK ready
+C: LOGIN *
+S: {tag} OK Logged in
+C: SELECT "INBOX"
+S: * 1 EXISTS
+S: {tag} OK [READ-WRITE] Select completed
+C: UID STORE 7 +FLAGS.SILENT (\Flagged)
+S: {tag} OK Store completed

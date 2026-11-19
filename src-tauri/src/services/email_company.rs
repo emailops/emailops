@@ -331,10 +331,10 @@ fn log(app: Option<&AppHandle>, level: &str, message: &str) {
             },
         );
     }
-    // Also echo to stdout so the CLI binary surfaces progress without a
-    // Tauri runtime.
+    // Without a Tauri runtime (the CLI) progress goes through the installed
+    // logger — stderr there — never stdout, which a `--json` command owns.
     if app.is_none() {
-        println!("[{level}] {message}");
+        crate::services::logger::log(level, "company", message.to_string());
     }
 }
 
