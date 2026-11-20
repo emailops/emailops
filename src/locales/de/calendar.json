@@ -80,7 +80,20 @@
     "cancellationMessagePlaceholder": "Optionale Nachricht an die Teilnehmer",
     "googleCancellationHint": "Google sendet seine Standard-Absage-E-Mail an die Eingeladenen.",
     "deleteError": "Der Termin konnte nicht gelöscht werden: {{message}}",
-    "account": "Konto"
+    "account": "Konto",
+    "mailOrganizer": "An den Organisator schreiben",
+    "mailParticipants": "An alle Teilnehmer schreiben",
+    "yourResponse": "Deine Antwort",
+    "response": {
+      "accepted": "Ja",
+      "declined": "Nein",
+      "tentative": "Vielleicht"
+    },
+    "responseScope": {
+      "instance": "Nur dieser Termin",
+      "series": "Alle Termine"
+    },
+    "responseError": "Deine Antwort konnte nicht gesendet werden: {{message}}"
   },
   "reminder": {
     "title": "Anstehendes Meeting",

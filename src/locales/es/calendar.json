@@ -80,7 +80,20 @@
     "cancellationMessagePlaceholder": "Mensaje opcional para los asistentes",
     "googleCancellationHint": "Google envía su correo estándar de cancelación a los invitados.",
     "deleteError": "No se pudo eliminar el evento: {{message}}",
-    "account": "Cuenta"
+    "account": "Cuenta",
+    "mailOrganizer": "Escribir al organizador",
+    "mailParticipants": "Escribir a todos los participantes",
+    "yourResponse": "Tu respuesta",
+    "response": {
+      "accepted": "Sí",
+      "declined": "No",
+      "tentative": "Quizás"
+    },
+    "responseScope": {
+      "instance": "Solo este evento",
+      "series": "Todos los eventos"
+    },
+    "responseError": "No se pudo enviar tu respuesta: {{message}}"
   },
   "reminder": {
     "title": "Próxima reunión",

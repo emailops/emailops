@@ -12,7 +12,7 @@ import {
   createAccountChoices,
   eventColorFor,
 } from '@/lib/calendarAccounts';
-import { eventsAfterDelete } from '@/lib/calendarEvent';
+import { eventsAfterDelete, eventsAfterResponse } from '@/lib/calendarEvent';
 import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
 import { addDays, monthGrid, startOfDay, weekDays } from '@/lib/calendarGrid';
 import { accountColorHex } from '@/lib/colors';
@@ -483,6 +483,11 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
             // occurrence(s) from every view per the chosen scope.
             setEvents((prev) => eventsAfterDelete(prev, { id: eventId, recurringEventId, startTime }, scope));
             setSelectedEvent(null);
+          }}
+          onResponded={(responded, response, scope) => {
+            // Provider round-trip already happened — patch my answer locally.
+            const self = accountById.get(responded.accountId)?.email ?? '';
+            setEvents((prev) => eventsAfterResponse(prev, responded, response, scope, self));
           }}
           onAuthError={() => {
             setSelectedEvent(null);

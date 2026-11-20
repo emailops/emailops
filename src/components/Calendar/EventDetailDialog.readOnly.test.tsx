@@ -67,6 +67,7 @@ describe('EventDetailDialog — read-only calendars', () => {
           readOnly={readOnly}
           onClose={() => {}}
           onDeleted={() => {}}
+          onResponded={() => {}}
           onAuthError={() => {}}
         />,
       ),

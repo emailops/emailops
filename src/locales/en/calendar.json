@@ -80,7 +80,20 @@
     "cancellationMessagePlaceholder": "Optional message to attendees",
     "googleCancellationHint": "Google sends its standard cancellation email to invitees.",
     "deleteError": "Couldn't delete the event: {{message}}",
-    "account": "Account"
+    "account": "Account",
+    "mailOrganizer": "Write to the organizer",
+    "mailParticipants": "Write to all participants",
+    "yourResponse": "Your response",
+    "response": {
+      "accepted": "Yes",
+      "declined": "No",
+      "tentative": "Maybe"
+    },
+    "responseScope": {
+      "instance": "Only this event",
+      "series": "All events"
+    },
+    "responseError": "Couldn't send your response: {{message}}"
   },
   "reminder": {
     "title": "Upcoming meeting",
