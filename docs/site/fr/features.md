@@ -253,6 +253,15 @@ minutes, et son lien est conservé dans votre trousseau, pas dans la base de don
 À côté de la boîte de réception, le calendrier s'ouvre aussi en panneau ancré à droite,
 l'**Agenda** ; **Ouvrir le calendrier complet** passe à la vue complète.
 
+<!-- claim:feat-calendar-6 -->
+**Importer un .ics** dans la barre d'outils du calendrier ouvre un sélecteur de fichier pour un fichier `.ics`, puis un aperçu qui range chaque événement sous **Sera importé**, **Déjà dans le calendrier** ou **Ne peut pas être importé**, avec la raison pour ce dernier cas (par exemple, une règle de répétition qu'Outlook ne sait pas représenter). Choisissez le compte sous **Importer dans** (Gmail ou Outlook) et les événements vont dans le calendrier principal de ce compte. Un fichier peut peser jusqu'à 10 Mo et contenir 500 événements, et réimporter le même fichier ne crée pas de doublons. Les comptes IMAP ne sont pas proposés, car leurs calendriers sont des flux en lecture seule, et il n'est pas possible de choisir un calendrier secondaire.
+
+<!-- claim:feat-calendar-7 -->
+Une invitation dans un message affiche une carte avec **Oui**, **Non** et **Peut-être**. Si l'invitation n'est pas encore dans votre calendrier, **Oui** ou **Peut-être** l'ajoute au calendrier du compte qui a reçu le message et envoie votre réponse à l'organisateur par e-mail ; la carte indique « Votre réponse sera envoyée à » l'organisateur, avec un avertissement lorsque l'organisateur n'est pas l'expéditeur du message. **Non** supprime une copie ajoutée par EmailOps et envoie le refus. Si l'invitation est arrivée il y a moins de dix minutes, la carte vous demande de réessayer dans un instant. Les billets et webinaires sans organisateur affichent à la place un seul bouton **Ajouter au calendrier**.
+
+<!-- claim:feat-calendar-8 -->
+Dans le détail d'un événement, les icônes d'enveloppe **Écrire à l'organisateur** et **Écrire à tous les participants** ouvrent un nouveau message depuis le compte de l'événement, avec le titre de l'événement comme objet. Lorsque vous êtes invité, une ligne **Votre réponse** (**Oui**, **Non**, **Peut-être**) modifie votre réponse ; pour un événement récurrent, vous choisissez **Uniquement cet événement** ou **Tous les événements**.
+
 <!-- claim:feat-calendar-3 -->
 Les notifications système d'un rappel omettent le titre de la réunion, sauf si vous activez
 **Afficher le titre de la réunion dans les notifications** dans **Paramètres → Calendrier** :
