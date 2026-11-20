@@ -292,6 +292,7 @@ export function CalendarPanel({
 
       {selectedEvent && (
         <EventDetailDialog
+          key={selectedEvent.id}
           event={selectedEvent}
           accountId={selectedEvent.accountId}
           accountEmail={isAllAccounts ? accountById.get(selectedEvent.accountId)?.email : undefined}

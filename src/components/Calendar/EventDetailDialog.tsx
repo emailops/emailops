@@ -279,7 +279,7 @@ export function EventDetailDialog({
               </div>
             </DetailRow>
           )}
-          {attendeeList.length > 0 && (
+          {(attendeeList.length > 0 || participantsTo.length > 0) && (
             <DetailRow
               label={t('calendar:detail.attendees')}
               action={

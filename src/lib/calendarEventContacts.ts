@@ -30,9 +30,10 @@ export function selfResponse(event: CalendarEvent, selfEmail: string): RsvpChoic
   return mine && CHOICES.includes(mine.response) ? (mine.response as RsvpChoice) : null;
 }
 
-/** I can answer an invitation only when the calendar is writable and I am not its organizer. */
+/** I can answer only when the calendar is writable, I am an invited attendee and not the organizer. */
 export function canRespond(event: CalendarEvent, selfEmail: string, readOnly: boolean): boolean {
   if (readOnly || !selfEmail) return false;
   if (same(event.organizer, selfEmail)) return false;
-  return !event.attendees.some((a) => same(a.email, selfEmail) && a.response === 'organizer');
+  const mine = event.attendees.find((a) => same(a.email, selfEmail));
+  return mine !== undefined && mine.response !== 'organizer';
 }

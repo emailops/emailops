@@ -45,4 +45,13 @@ describe('calendarEventContacts', () => {
       canRespond(make('me@example.com', [{ email: 'me@example.com', response: 'organizer' }]), 'me@example.com', false),
     ).toBe(false);
   });
+
+  it('cannot_respond_when_not_listed_as_attendee', () => {
+    const event = make('lead@example.com', [{ email: 'ana@example.com', response: 'accepted' }]);
+    expect(canRespond(event, 'me@example.com', false)).toBe(false);
+  });
+
+  it('cannot_respond_with_empty_organizer_and_no_attendees', () => {
+    expect(canRespond(make('', []), 'me@example.com', false)).toBe(false);
+  });
 });

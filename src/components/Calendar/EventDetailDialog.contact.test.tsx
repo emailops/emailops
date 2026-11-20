@@ -104,6 +104,12 @@ describe('EventDetailDialog — contact icons', () => {
     expect(button('calendar:detail.mailParticipants')).toBeNull();
   });
 
+  it('mail_participants_reachable_when_only_the_organizer_is_listed', async () => {
+    await render(make('lead@example.com', [{ email: 'lead@example.com', response: 'organizer' }]));
+    await act(async () => button('calendar:detail.mailParticipants')?.click());
+    expect(openComposeTab).toHaveBeenCalledWith('acc', ['lead@example.com'], 'Weekly sync');
+  });
+
   it('icons_shown_on_read_only_calendars', async () => {
     await render(make('lead@example.com', guests), true);
     expect(button('calendar:detail.mailOrganizer')).not.toBeNull();
