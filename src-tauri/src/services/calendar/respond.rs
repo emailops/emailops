@@ -343,12 +343,16 @@ pub async fn respond_to_calendar_event(
         return Err(AppError::ReadOnlyCalendar);
     }
 
-    let (target_id, mut rows) = match (scope, event.recurring_event_id.as_deref()) {
-        (ResponseScope::Series, Some(master_id)) => (
-            master_id.to_string(),
-            db.list_calendar_events_for_master(&account.id, calendar_id, master_id)?,
-        ),
-        _ => (provider_event_id.to_string(), vec![event]),
+    let (target_id, mut rows) = match scope {
+        ResponseScope::Series => {
+            // A master row has no `recurring_event_id`; it is its own series id.
+            let master_id = event.recurring_event_id.as_deref().unwrap_or(provider_event_id);
+            (
+                master_id.to_string(),
+                db.list_calendar_events_for_master(&account.id, calendar_id, master_id)?,
+            )
+        }
+        ResponseScope::Instance => (provider_event_id.to_string(), vec![event]),
     };
 
     provider
@@ -1158,5 +1162,37 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert!(provider.responses.lock().expect("lock").is_empty());
+    }
+
+    #[tokio::test]
+    async fn series_response_clicked_on_the_master_updates_every_local_row() {
+        let db = db_with(&[
+            stored_event("m", 500, None),
+            stored_event("m_1", 1_000, Some("m")),
+            stored_event("m_2", 2_000, Some("m")),
+        ]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        respond(&db, &provider, "m", RsvpResponse::Accepted, ResponseScope::Series)
+            .await
+            .expect("respond");
+
+        assert_eq!(provider.responses.lock().expect("lock")[0].1, "m");
+        for id in ["m", "m_1", "m_2"] {
+            assert_eq!(my_response(&db, id).as_deref(), Some("accepted"), "{id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_calendar_row_does_not_block_the_provider_call() {
+        // Fail-open by design: no local `calendars` row means no known role.
+        let db = db_with(&[stored_event("ev1", 1_000, None)]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        respond(&db, &provider, "ev1", RsvpResponse::Accepted, ResponseScope::Instance)
+            .await
+            .expect("respond");
+
+        assert_eq!(provider.responses.lock().expect("lock").len(), 1);
     }
 }
