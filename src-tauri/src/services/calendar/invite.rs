@@ -114,7 +114,7 @@ pub(crate) fn is_publish_invite(cal: &super::ics::ParsedCalendar) -> bool {
 /// Where an answer to `event` goes: its organizer, unless there is none, it is
 /// the account itself, or it is not a usable email address.
 pub(crate) fn reply_target(event: &RawVEvent, account_email: &str) -> Option<String> {
-    organizer_address(event).filter(|o| !o.eq_ignore_ascii_case(account_email) && super::itip::looks_like_email(o))
+    organizer_address(event).filter(|o| !o.eq_ignore_ascii_case(account_email) && super::create::looks_like_email(o))
 }
 
 /// Fill the fields that depend on who sent the email and who reads it.

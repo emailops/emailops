@@ -596,6 +596,7 @@ impl CalendarProvider for OutlookCalendarClient {
         provider_event_id: &str,
         response: RsvpResponse,
         _self_email: &str,
+        notify: bool,
     ) -> Result<()> {
         let url = format!(
             "{}/me/events/{}/{}",
@@ -603,7 +604,7 @@ impl CalendarProvider for OutlookCalendarClient {
             urlencoding::encode(provider_event_id),
             response.as_graph_action()
         );
-        let body = serde_json::json!({ "sendResponse": true });
+        let body = serde_json::json!({ "sendResponse": notify });
         let acted = self.send_post_json_no_resend(&url, &body, "rsvp").await?;
         if !acted.status().is_success() {
             return Err(self.failure(acted).await);
@@ -2464,7 +2465,28 @@ mod tests {
             .await;
         let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
         client
-            .respond_to_event("primary", "evt1", RsvpResponse::Tentative, "me@example.com")
+            .respond_to_event("primary", "evt1", RsvpResponse::Tentative, "me@example.com", true)
+            .await
+            .expect("respond");
+    }
+
+    #[tokio::test]
+    async fn outlook_respond_without_notify_sends_no_response() {
+        use crate::sync::calendar_provider::{CalendarProvider, RsvpResponse};
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events/evt1/accept"))
+            .and(body_json(serde_json::json!({"sendResponse": false})))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .respond_to_event("primary", "evt1", RsvpResponse::Accepted, "me@example.com", false)
             .await
             .expect("respond");
     }

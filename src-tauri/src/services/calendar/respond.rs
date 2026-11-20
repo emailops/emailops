@@ -219,10 +219,13 @@ async fn decide(
         organizer: reply_target(event, me),
     };
     let declined = req.response == RsvpResponse::Declined;
+    // An answer to one occurrence: our copy is found by the series' UID, so it
+    // is the whole series and must not change.
+    let one_occurrence = event.first("RECURRENCE-ID").is_some();
 
     match calendar.find_event_by_uid(uid).await? {
         Some(found) if found.imported_by_emailops => {
-            if declined {
+            if declined && !one_occurrence {
                 calendar
                     .delete_event(req.primary_calendar_id, &found.provider_event_id, false, "")
                     .await?;
@@ -232,6 +235,19 @@ async fn decide(
                     reply_error,
                 })
             } else {
+                // Our Google copy carries my answer; keep it current without
+                // emailing its attendees. Outlook copies have no attendees.
+                if !declined && !one_occurrence && req.kind == CalendarKind::Google {
+                    calendar
+                        .respond_to_event(
+                            req.primary_calendar_id,
+                            &found.provider_event_id,
+                            req.response,
+                            me,
+                            false,
+                        )
+                        .await?;
+                }
                 Ok(InviteResponseOutcome::Responded {
                     reply_sent_to: replier.send(req.response).await?,
                 })
@@ -356,7 +372,7 @@ pub async fn respond_to_calendar_event(
     };
 
     provider
-        .respond_to_event(calendar_id, &target_id, response, &account.email)
+        .respond_to_event(calendar_id, &target_id, response, &account.email, true)
         .await?;
 
     let status = response.as_google_status();
@@ -490,8 +506,8 @@ mod tests {
         async fn import_event(&self, e: &ImportableEvent) -> Result<String> {
             self.0.import_event(e).await
         }
-        async fn respond_to_event(&self, c: &str, p: &str, r: RsvpResponse, e: &str) -> Result<()> {
-            self.0.respond_to_event(c, p, r, e).await
+        async fn respond_to_event(&self, c: &str, p: &str, r: RsvpResponse, e: &str, n: bool) -> Result<()> {
+            self.0.respond_to_event(c, p, r, e, n).await
         }
     }
 
@@ -675,8 +691,110 @@ mod tests {
         let deleted = calendar.deleted.lock().unwrap();
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0], ("primary".into(), "ev-1".into(), false, String::new()));
+        assert!(
+            calendar.responses.lock().unwrap().is_empty(),
+            "no status on a deleted copy"
+        );
         let sent = sent_text(&mail);
         assert!(sent[0].contains("PARTSTAT=DECLINED"), "{}", sent[0]);
+    }
+
+    #[tokio::test]
+    async fn answering_again_updates_our_google_copy_quietly_then_replies() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        let mail = mail();
+        let out = run(&calendar, &mail, &lead_ics(), OLD, RsvpResponse::Tentative)
+            .await
+            .expect("respond");
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Responded {
+                reply_sent_to: Some("lead@example.com".into())
+            }
+        );
+        assert_eq!(
+            *calendar.responses.lock().unwrap(),
+            vec![("primary".into(), "ev-1".into(), "tentative".into(), false)]
+        );
+        let sent = sent_text(&mail);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].contains("PARTSTAT=TENTATIVE"), "{}", sent[0]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_status_update_on_our_copy_sends_nothing() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        calendar.respond_errors.insert("ev-1".into(), "patch failed".into());
+        let mail = mail();
+        run(&calendar, &mail, &lead_ics(), OLD, RsvpResponse::Accepted)
+            .await
+            .expect_err("the status update failed");
+        assert!(mail.raw_sent().is_empty(), "no reply unless the calendar changed");
+    }
+
+    #[tokio::test]
+    async fn an_outlook_copy_gets_no_status_update() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        let mail = mail();
+        let account = account();
+        let lead = lead_ics();
+        let mut req = request(&account, &lead, OLD, RsvpResponse::Accepted);
+        req.kind = CalendarKind::Outlook;
+        let out = respond_to_invite(&calendar, &mail, &req).await.expect("respond");
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Responded {
+                reply_sent_to: Some("lead@example.com".into())
+            }
+        );
+        assert!(calendar.responses.lock().unwrap().is_empty());
+        assert_eq!(mail.raw_sent().len(), 1);
+    }
+
+    /// An invitation for one occurrence of a series.
+    fn occurrence_ics() -> String {
+        ics(Some("lead@example.com"), "RECURRENCE-ID:20261208T100000Z\r\n")
+    }
+
+    #[tokio::test]
+    async fn declining_one_occurrence_keeps_our_series() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        let mail = mail();
+        let out = run(&calendar, &mail, &occurrence_ics(), OLD, RsvpResponse::Declined)
+            .await
+            .expect("respond");
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Responded {
+                reply_sent_to: Some("lead@example.com".into())
+            }
+        );
+        assert!(calendar.deleted.lock().unwrap().is_empty(), "the series must survive");
+        let sent = sent_text(&mail);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].contains("RECURRENCE-ID:20261208T100000Z"), "{}", sent[0]);
+        assert!(sent[0].contains("PARTSTAT=DECLINED"), "{}", sent[0]);
+    }
+
+    #[tokio::test]
+    async fn answering_one_occurrence_leaves_our_series_status() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        let mail = mail();
+        run(&calendar, &mail, &occurrence_ics(), OLD, RsvpResponse::Tentative)
+            .await
+            .expect("respond");
+        assert!(
+            calendar.responses.lock().unwrap().is_empty(),
+            "a status on the series would cover every occurrence"
+        );
+        let sent = sent_text(&mail);
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].contains("RECURRENCE-ID:20261208T100000Z"), "{}", sent[0]);
     }
 
     #[tokio::test]
@@ -992,7 +1110,7 @@ mod tests {
         let responses = provider.responses.lock().expect("lock").clone();
         assert_eq!(
             responses,
-            vec![("primary".to_string(), "ev1".to_string(), "tentative".to_string())]
+            vec![("primary".to_string(), "ev1".to_string(), "tentative".to_string(), true)]
         );
         let row = db
             .get_calendar_event_by_provider_id("a1", "primary", "ev1")
@@ -1043,7 +1161,7 @@ mod tests {
         let responses = provider.responses.lock().expect("lock").clone();
         assert_eq!(
             responses,
-            vec![("primary".to_string(), "m".to_string(), "declined".to_string())]
+            vec![("primary".to_string(), "m".to_string(), "declined".to_string(), true)]
         );
         assert_eq!(my_response(&db, "m_1").as_deref(), Some("declined"));
         assert_eq!(my_response(&db, "m_2").as_deref(), Some("declined"));
@@ -1140,7 +1258,7 @@ mod tests {
             async fn import_event(&self, e: &ImportableEvent) -> Result<String> {
                 self.0.import_event(e).await
             }
-            async fn respond_to_event(&self, _: &str, _: &str, _: RsvpResponse, _: &str) -> Result<()> {
+            async fn respond_to_event(&self, _: &str, _: &str, _: RsvpResponse, _: &str, _: bool) -> Result<()> {
                 Err(AppError::ReadOnlyCalendar)
             }
         }

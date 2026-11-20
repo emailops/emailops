@@ -1675,6 +1675,7 @@ mod tests {
             _: &str,
             _: crate::sync::calendar_provider::RsvpResponse,
             _: &str,
+            _: bool,
         ) -> Result<()> {
             unreachable!()
         }

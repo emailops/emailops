@@ -4950,3 +4950,22 @@ going back to the email. Composing a message does not touch the calendar, so it 
 CalDAV for IMAP accounts is a separate follow-up; the IMAP "CalDAV is out of scope" comment still
 holds for this change.
 **Rejected:** None recorded.
+
+## 2026-11-20 — Invite answers keep an imported copy in step without notifying anyone
+
+**Decision:** When the invitation is already in the calendar as an EmailOps copy, "Yes"/"Maybe"
+on a Google account first sets my status on the copy with `sendUpdates=none`, then sends the
+iTIP REPLY; when that status update fails, nothing is sent. Outlook copies have no attendees, so
+only the REPLY goes. An answer to a single occurrence (the invitation's VEVENT has
+`RECURRENCE-ID`) never changes the imported series: "No" deletes nothing and my status is left as
+it is; only the REPLY, carrying the `RECURRENCE-ID`, is sent. `respond_to_event` takes a `notify`
+flag like `delete_event`; the event detail still notifies the organizer.
+**Context:** The copy is found by UID, which an occurrence shares with its series, so deleting or
+re-answering the copy would change every occurrence while the REPLY speaks for one. A declined
+occurrence that stays visible can be deleted from the event detail ("only this event"); deleting
+the whole series is data loss. Changing my answer on the card must not email the copy's other
+attendees.
+**Rejected:**
+- *Deleting the series on a "No" to one occurrence*: loses every other occurrence.
+- *The notifying status update (`sendUpdates=all`) on the copy*: it could email every attendee.
+- *Deleting only the matching instance*: not taken for now; the event detail covers it.

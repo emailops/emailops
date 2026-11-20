@@ -6,6 +6,7 @@
 
 use crate::models::error::{AppError, Result};
 use crate::models::Account;
+use crate::services::calendar::create::looks_like_email;
 use crate::services::calendar::ics::{unescape_text, IcsProperty, RawVEvent};
 use crate::services::i18n::Language;
 use crate::sync::calendar_provider::RsvpResponse;
@@ -25,14 +26,21 @@ fn partstat(response: RsvpResponse) -> &'static str {
     }
 }
 
+/// `text` without ASCII control characters other than TAB: a lone CR or LF
+/// copied from the source would start a new content line in the reply.
+/// Folding happens later, in [`fold_line`].
+fn without_controls(text: &str) -> String {
+    text.chars().filter(|c| *c == '\t' || !c.is_ascii_control()).collect()
+}
+
 fn render_property(prop: &IcsProperty) -> String {
     let mut line = prop.name.clone();
     for param in &prop.params {
         line.push(';');
-        line.push_str(param);
+        line.push_str(&without_controls(param));
     }
     line.push(':');
-    line.push_str(&prop.value);
+    line.push_str(&without_controls(&prop.value));
     line
 }
 
@@ -71,7 +79,10 @@ pub fn build_itip_reply(event: &RawVEvent, attendee_email: &str, response: RsvpR
     if let Some(uid) = event.first("UID") {
         lines.push(render_property(uid));
     }
-    lines.push(format!("SEQUENCE:{}", event.first_value("SEQUENCE").unwrap_or("0")));
+    lines.push(format!(
+        "SEQUENCE:{}",
+        without_controls(event.first_value("SEQUENCE").unwrap_or("0"))
+    ));
     lines.push(format!("DTSTAMP:{stamp}"));
     for name in ["DTSTART", "RECURRENCE-ID"] {
         if let Some(prop) = event.first(name) {
@@ -120,16 +131,6 @@ pub fn itip_reply_subject(response: RsvpResponse, summary: &str, language: Langu
         .collect();
     let title: String = title.trim().chars().take(MAX_SUBJECT_TITLE_CHARS).collect();
     format!("{prefix}{title}")
-}
-
-pub(crate) fn looks_like_email(address: &str) -> bool {
-    let mut parts = address.split('@');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(local), Some(domain), None) => {
-            !local.is_empty() && domain.contains('.') && !address.chars().any(char::is_whitespace)
-        }
-        _ => false,
-    }
 }
 
 /// Email `ics` (a REPLY) to the organizer, and only to them, as raw MIME
@@ -210,6 +211,25 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("PARTSTAT=TENTATIVE"), "{out}");
+    }
+
+    #[test]
+    fn control_characters_in_copied_values_are_stripped() {
+        // `parse_vcalendar` splits lines on LF, so a lone CR survives in a value.
+        let ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:abc\r-1@example.org\r\nSEQUENCE:3\r\r\n\
+                   ORGANIZER;CN=Org\u{1}\u{7f} Example:mailto:org@example.org\r\n\
+                   SUMMARY:Plan\rning\tday\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let ev = parse_vcalendar(ics).events.remove(0);
+        let out = build_itip_reply(&ev, "me@example.com", RsvpResponse::Accepted, 0).expect("reply");
+        assert!(out.contains("UID:abc-1@example.org\r\n"), "{out:?}");
+        assert!(out.contains("SEQUENCE:3\r\n"), "{out:?}");
+        assert!(
+            out.contains("ORGANIZER;CN=Org Example:mailto:org@example.org\r\n"),
+            "{out:?}"
+        );
+        assert!(out.contains("SUMMARY:Planning\tday\r\n"), "{out:?}");
+        let body = out.replace("\r\n", "");
+        assert!(!body.chars().any(|c| c != '\t' && c.is_ascii_control()), "{out:?}");
     }
 
     #[test]

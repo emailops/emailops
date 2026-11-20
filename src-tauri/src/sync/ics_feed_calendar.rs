@@ -306,6 +306,7 @@ impl CalendarProvider for IcsFeedCalendarProvider {
         _provider_event_id: &str,
         _response: RsvpResponse,
         _self_email: &str,
+        _notify: bool,
     ) -> Result<()> {
         Err(AppError::ReadOnlyCalendar)
     }
@@ -1604,7 +1605,7 @@ mod tests {
         ));
         assert!(matches!(
             provider
-                .respond_to_event("feed-a", "ev1", RsvpResponse::Accepted, "me@example.com")
+                .respond_to_event("feed-a", "ev1", RsvpResponse::Accepted, "me@example.com", true)
                 .await,
             Err(AppError::ReadOnlyCalendar)
         ));

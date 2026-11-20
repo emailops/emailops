@@ -471,6 +471,7 @@ impl CalendarProvider for GoogleCalendarClient {
         provider_event_id: &str,
         response: RsvpResponse,
         self_email: &str,
+        notify: bool,
     ) -> Result<()> {
         let event_url = format!(
             "{}/calendars/{}/events/{}",
@@ -485,7 +486,7 @@ impl CalendarProvider for GoogleCalendarClient {
         let event: serde_json::Value = fetched.json().await?;
         // Google's PATCH replaces the whole attendees array.
         let attendees = attendees_with_self_response(event.get("attendees"), self_email, response.as_google_status());
-        let patch_url = format!("{event_url}?sendUpdates=all");
+        let patch_url = format!("{event_url}?sendUpdates={}", if notify { "all" } else { "none" });
         let body = serde_json::json!({ "attendees": attendees });
         let patched = self
             .send_request_with_retry("respond to event", |client, token| {
@@ -1602,6 +1603,42 @@ mod tests {
                 "ev1",
                 crate::sync::calendar_provider::RsvpResponse::Tentative,
                 "me@example.com",
+                true,
+            )
+            .await
+            .expect("respond");
+    }
+
+    #[tokio::test]
+    async fn google_respond_without_notify_sends_no_updates() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/calendars/primary/events/ev1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "ev1",
+                "attendees": [{"email": "me@example.com", "responseStatus": "accepted"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/calendars/primary/events/ev1"))
+            .and(query_param("sendUpdates", "none"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "ev1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .respond_to_event(
+                "primary",
+                "ev1",
+                crate::sync::calendar_provider::RsvpResponse::Tentative,
+                "me@example.com",
+                false,
             )
             .await
             .expect("respond");

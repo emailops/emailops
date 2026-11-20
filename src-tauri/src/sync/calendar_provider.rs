@@ -192,14 +192,16 @@ pub trait CalendarProvider: Send + Sync {
     /// calendar and return the provider's id of the master event.
     async fn import_event(&self, event: &ImportableEvent) -> Result<String>;
 
-    /// Set the account's own response on an existing event, notifying the
-    /// organizer. `self_email` is the attendee whose response changes.
+    /// Set the account's own response on an existing event. `self_email` is
+    /// the attendee whose response changes. When `notify` is true the
+    /// organizer is told (Google `sendUpdates=all`, Graph `sendResponse`).
     async fn respond_to_event(
         &self,
         calendar_id: &str,
         provider_event_id: &str,
         response: RsvpResponse,
         self_email: &str,
+        notify: bool,
     ) -> Result<()>;
 }
 
@@ -278,8 +280,10 @@ pub struct FakeCalendarProvider {
     /// UID -> message: `find_event_by_uid` fails with a sync error for that UID.
     pub find_errors: std::collections::HashMap<String, String>,
     pub imported: std::sync::Mutex<Vec<ImportableEvent>>,
-    /// `(calendar_id, provider_event_id, google_status)` per respond call.
-    pub responses: std::sync::Mutex<Vec<(String, String, String)>>,
+    /// `(calendar_id, provider_event_id, google_status, notify)` per respond call.
+    pub responses: std::sync::Mutex<Vec<(String, String, String, bool)>>,
+    /// Provider event id -> message: `respond_to_event` fails with a sync error.
+    pub respond_errors: std::collections::HashMap<String, String>,
     /// UID -> id of what `import_event` created, found again by later lookups.
     imported_ids: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
@@ -301,6 +305,7 @@ impl FakeCalendarProvider {
             find_errors: std::collections::HashMap::new(),
             imported: std::sync::Mutex::new(Vec::new()),
             responses: std::sync::Mutex::new(Vec::new()),
+            respond_errors: std::collections::HashMap::new(),
             imported_ids: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -529,9 +534,13 @@ impl CalendarProvider for FakeCalendarProvider {
         provider_event_id: &str,
         response: RsvpResponse,
         _self_email: &str,
+        notify: bool,
     ) -> Result<()> {
         if let Some(error) = &self.error {
             return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.respond_errors.get(provider_event_id) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
         }
         self.responses
             .lock()
@@ -540,6 +549,7 @@ impl CalendarProvider for FakeCalendarProvider {
                 calendar_id.to_string(),
                 provider_event_id.to_string(),
                 response.as_google_status().to_string(),
+                notify,
             ));
         Ok(())
     }
@@ -667,12 +677,12 @@ mod tests {
     #[tokio::test]
     async fn a_fake_response_is_recorded_with_the_google_status() {
         let fake = FakeCalendarProvider::with_events(Vec::new());
-        fake.respond_to_event("primary", "ev1", RsvpResponse::Tentative, "me@example.com")
+        fake.respond_to_event("primary", "ev1", RsvpResponse::Tentative, "me@example.com", false)
             .await
             .expect("respond");
         assert_eq!(
             *fake.responses.lock().expect("lock"),
-            vec![("primary".to_string(), "ev1".to_string(), "tentative".to_string())]
+            vec![("primary".to_string(), "ev1".to_string(), "tentative".to_string(), false)]
         );
     }
 
