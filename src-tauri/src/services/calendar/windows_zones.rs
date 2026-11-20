@@ -154,7 +154,7 @@ const WINDOWS_TO_IANA: &[(&str, &str)] = &[
     ("Yukon Standard Time", "America/Whitehorse"),
 ];
 
-/// Every IANA zone of CLDR's  (all territories) and the
+/// Every IANA zone of CLDR's `windowsZones.xml` (all territories) and the
 /// Windows name it belongs to, sorted by IANA id.
 const IANA_TO_WINDOWS: &[(&str, &str)] = &[
     ("Africa/Abidjan", "Greenwich Standard Time"),
@@ -603,7 +603,9 @@ const IANA_TO_WINDOWS: &[(&str, &str)] = &[
     ("Pacific/Wallis", "UTC+12"),
 ];
 
-/// Current IANA ids whose CLDR entry uses the legacy spelling.
+/// IANA ids CLDR does not list, each with a zone of the table above that
+/// shares its rules: legacy spellings of current zones (Asia/Kolkata) and
+/// tzdata's backward-compatibility links (US/Pacific).
 const IANA_ALIASES: &[(&str, &str)] = &[
     ("Asia/Kolkata", "Asia/Calcutta"),
     ("Asia/Kathmandu", "Asia/Katmandu"),
@@ -612,6 +614,152 @@ const IANA_ALIASES: &[(&str, &str)] = &[
     ("America/Nuuk", "America/Godthab"),
     ("America/Argentina/Buenos_Aires", "America/Buenos_Aires"),
     ("America/Indiana/Indianapolis", "America/Indianapolis"),
+    // Backward-compatibility links and zones tzdata renamed after CLDR's last
+    // spelling, each pointing at a zone of the table above.
+    ("Africa/Asmara", "Africa/Addis_Ababa"),
+    ("Africa/Timbuktu", "Africa/Abidjan"),
+    ("America/Argentina/Catamarca", "America/Catamarca"),
+    ("America/Argentina/ComodRivadavia", "America/Catamarca"),
+    ("America/Argentina/Cordoba", "America/Cordoba"),
+    ("America/Argentina/Jujuy", "America/Jujuy"),
+    ("America/Argentina/Mendoza", "America/Mendoza"),
+    ("America/Atikokan", "America/Cayman"),
+    ("America/Atka", "America/Adak"),
+    ("America/Ensenada", "America/Tijuana"),
+    ("America/Fort_Wayne", "America/Indianapolis"),
+    ("America/Kentucky/Louisville", "America/Louisville"),
+    ("America/Knox_IN", "America/Indiana/Knox"),
+    ("America/Montreal", "America/Nassau"),
+    ("America/Nipigon", "America/Nassau"),
+    ("America/Pangnirtung", "America/Iqaluit"),
+    ("America/Porto_Acre", "America/Rio_Branco"),
+    ("America/Rainy_River", "America/Winnipeg"),
+    ("America/Rosario", "America/Cordoba"),
+    ("America/Santa_Isabel", "America/Tijuana"),
+    ("America/Shiprock", "America/Denver"),
+    ("America/Thunder_Bay", "America/Nassau"),
+    ("America/Virgin", "America/Anguilla"),
+    ("America/Yellowknife", "America/Edmonton"),
+    ("Antarctica/South_Pole", "Antarctica/McMurdo"),
+    ("Asia/Ashkhabad", "Asia/Ashgabat"),
+    ("Asia/Choibalsan", "Asia/Ulaanbaatar"),
+    ("Asia/Chongqing", "Asia/Shanghai"),
+    ("Asia/Chungking", "Asia/Shanghai"),
+    ("Asia/Dacca", "Asia/Dhaka"),
+    ("Asia/Harbin", "Asia/Shanghai"),
+    ("Asia/Ho_Chi_Minh", "Asia/Saigon"),
+    ("Asia/Istanbul", "Europe/Istanbul"),
+    ("Asia/Kashgar", "Asia/Urumqi"),
+    ("Asia/Macao", "Asia/Macau"),
+    ("Asia/Tel_Aviv", "Asia/Jerusalem"),
+    ("Asia/Thimbu", "Asia/Thimphu"),
+    ("Asia/Ujung_Pandang", "Asia/Makassar"),
+    ("Asia/Ulan_Bator", "Asia/Ulaanbaatar"),
+    ("Atlantic/Faroe", "Atlantic/Faeroe"),
+    ("Atlantic/Jan_Mayen", "Europe/Oslo"),
+    ("Australia/ACT", "Australia/Sydney"),
+    ("Australia/Canberra", "Australia/Sydney"),
+    ("Australia/Currie", "Australia/Hobart"),
+    ("Australia/LHI", "Australia/Lord_Howe"),
+    ("Australia/NSW", "Australia/Sydney"),
+    ("Australia/North", "Australia/Darwin"),
+    ("Australia/Queensland", "Australia/Brisbane"),
+    ("Australia/South", "Australia/Adelaide"),
+    ("Australia/Tasmania", "Australia/Hobart"),
+    ("Australia/Victoria", "Australia/Melbourne"),
+    ("Australia/West", "Australia/Perth"),
+    ("Australia/Yancowinna", "Australia/Broken_Hill"),
+    ("Brazil/Acre", "America/Rio_Branco"),
+    ("Brazil/DeNoronha", "America/Noronha"),
+    ("Brazil/East", "America/Sao_Paulo"),
+    ("Brazil/West", "America/Manaus"),
+    ("CET", "Europe/Brussels"),
+    ("CST6CDT", "America/Chicago"),
+    ("Canada/Atlantic", "America/Halifax"),
+    ("Canada/Central", "America/Winnipeg"),
+    ("Canada/Eastern", "America/Nassau"),
+    ("Canada/Mountain", "America/Edmonton"),
+    ("Canada/Newfoundland", "America/St_Johns"),
+    ("Canada/Pacific", "America/Vancouver"),
+    ("Canada/Saskatchewan", "America/Regina"),
+    ("Canada/Yukon", "America/Whitehorse"),
+    ("Chile/Continental", "America/Santiago"),
+    ("Chile/EasterIsland", "Pacific/Easter"),
+    ("Cuba", "America/Havana"),
+    ("EET", "Europe/Athens"),
+    ("EST", "America/Cayman"),
+    ("EST5EDT", "America/New_York"),
+    ("Egypt", "Africa/Cairo"),
+    ("Eire", "Europe/Dublin"),
+    ("Etc/GMT+0", "Etc/GMT"),
+    ("Etc/GMT-0", "Etc/GMT"),
+    ("Etc/GMT0", "Etc/GMT"),
+    ("Etc/Greenwich", "Etc/GMT"),
+    ("Etc/UCT", "Etc/UTC"),
+    ("Etc/Universal", "Etc/UTC"),
+    ("Etc/Zulu", "Etc/UTC"),
+    ("Europe/Belfast", "Europe/Guernsey"),
+    ("Europe/Nicosia", "Asia/Nicosia"),
+    ("Europe/Tiraspol", "Europe/Chisinau"),
+    ("Europe/Uzhgorod", "Europe/Kiev"),
+    ("Europe/Zaporozhye", "Europe/Kiev"),
+    ("GB", "Europe/Guernsey"),
+    ("GB-Eire", "Europe/Guernsey"),
+    ("GMT", "Etc/GMT"),
+    ("GMT+0", "Etc/GMT"),
+    ("GMT-0", "Etc/GMT"),
+    ("GMT0", "Etc/GMT"),
+    ("Greenwich", "Etc/GMT"),
+    ("HST", "Pacific/Honolulu"),
+    ("Hongkong", "Asia/Hong_Kong"),
+    ("Iceland", "Africa/Abidjan"),
+    ("Iran", "Asia/Tehran"),
+    ("Israel", "Asia/Jerusalem"),
+    ("Jamaica", "America/Jamaica"),
+    ("Japan", "Asia/Tokyo"),
+    ("Kwajalein", "Pacific/Kwajalein"),
+    ("Libya", "Africa/Tripoli"),
+    ("MET", "Europe/Brussels"),
+    ("MST", "America/Creston"),
+    ("MST7MDT", "America/Denver"),
+    ("Mexico/BajaNorte", "America/Tijuana"),
+    ("Mexico/BajaSur", "America/Mazatlan"),
+    ("Mexico/General", "America/Mexico_City"),
+    ("NZ", "Antarctica/McMurdo"),
+    ("NZ-CHAT", "Pacific/Chatham"),
+    ("Navajo", "America/Denver"),
+    ("PRC", "Asia/Shanghai"),
+    ("PST8PDT", "America/Los_Angeles"),
+    ("Pacific/Chuuk", "Antarctica/DumontDUrville"),
+    ("Pacific/Johnston", "Pacific/Honolulu"),
+    ("Pacific/Kanton", "Pacific/Enderbury"),
+    ("Pacific/Pohnpei", "Pacific/Guadalcanal"),
+    ("Pacific/Samoa", "Pacific/Midway"),
+    ("Pacific/Yap", "Antarctica/DumontDUrville"),
+    ("Poland", "Europe/Warsaw"),
+    ("Portugal", "Europe/Lisbon"),
+    ("ROC", "Asia/Taipei"),
+    ("ROK", "Asia/Seoul"),
+    ("Singapore", "Asia/Kuala_Lumpur"),
+    ("Turkey", "Europe/Istanbul"),
+    ("UCT", "Etc/UTC"),
+    ("US/Alaska", "America/Anchorage"),
+    ("US/Aleutian", "America/Adak"),
+    ("US/Arizona", "America/Creston"),
+    ("US/Central", "America/Chicago"),
+    ("US/East-Indiana", "America/Indianapolis"),
+    ("US/Eastern", "America/New_York"),
+    ("US/Hawaii", "Pacific/Honolulu"),
+    ("US/Indiana-Starke", "America/Indiana/Knox"),
+    ("US/Michigan", "America/Detroit"),
+    ("US/Mountain", "America/Denver"),
+    ("US/Pacific", "America/Los_Angeles"),
+    ("US/Samoa", "Pacific/Midway"),
+    ("UTC", "Etc/UTC"),
+    ("Universal", "Etc/UTC"),
+    ("W-SU", "Europe/Moscow"),
+    ("WET", "Europe/Lisbon"),
+    ("Zulu", "Etc/UTC"),
 ];
 
 /// The Windows time zone name of an IANA zone, as Microsoft Graph expects it.
@@ -654,6 +802,19 @@ mod tests {
         assert_eq!(windows_name("Europe/Paris"), Some("Romance Standard Time"));
         assert_eq!(windows_name("America/New_York"), Some("Eastern Standard Time"));
         assert_eq!(windows_name("Asia/Kolkata"), Some("India Standard Time"));
+        assert_eq!(windows_name("Asia/Ho_Chi_Minh"), Some("SE Asia Standard Time"));
+        assert_eq!(windows_name("Atlantic/Faroe"), Some("GMT Standard Time"));
+        assert_eq!(windows_name("Pacific/Pohnpei"), Some("Central Pacific Standard Time"));
+        assert_eq!(windows_name("Africa/Asmara"), Some("E. Africa Standard Time"));
+        assert_eq!(
+            windows_name("America/Argentina/Cordoba"),
+            Some("Argentina Standard Time")
+        );
+        assert_eq!(
+            windows_name("America/Kentucky/Louisville"),
+            Some("Eastern Standard Time")
+        );
+        assert_eq!(windows_name("GMT"), Some("UTC"));
         assert_eq!(windows_name("Nowhere/Land"), None);
     }
 
@@ -664,8 +825,27 @@ mod tests {
         }
         for (current, legacy) in IANA_ALIASES {
             assert!(current.parse::<chrono_tz::Tz>().is_ok(), "{current}");
-            assert!(windows_name(current).is_some(), "{current} -> {legacy}");
+            assert!(
+                IANA_TO_WINDOWS.iter().any(|(zone, _)| zone == legacy),
+                "{current} points at {legacy}, which the table lacks"
+            );
         }
+    }
+
+    /// Zones CLDR has no Windows zone for.
+    const NO_WINDOWS_ZONE: &[&str] = &[
+        "America/Coyhaique", // newer than CLDR's table
+        "Antarctica/Troll",  // research station, no Windows zone
+    ];
+
+    #[test]
+    fn every_chrono_tz_zone_has_a_windows_name_unless_cldr_has_none() {
+        let missing: Vec<&str> = chrono_tz::TZ_VARIANTS
+            .iter()
+            .map(|tz| tz.name())
+            .filter(|name| windows_name(name).is_none() && !NO_WINDOWS_ZONE.contains(name))
+            .collect();
+        assert_eq!(missing, Vec::<&str>::new());
     }
 
     #[test]
