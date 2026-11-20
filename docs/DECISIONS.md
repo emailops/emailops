@@ -4888,3 +4888,65 @@ and #302).
 - *Restoring by replacing the tables*: it would drop rows added after the copy; merging by key
   keeps them, and the account-id check covers the one case where merging would point nowhere.
 - *More than three full copies*: each is the size of the whole database.
+
+## 2026-11-20 — .ics files import into the provider's primary calendar
+
+**Decision:** An imported `.ics` always lands in the real Google or Outlook primary calendar,
+never in a local-only calendar. From an email it is the account that received it; from a file,
+an account selector. Google uses `events.import` (rules carried verbatim, iCalUID kept, events
+marked with a private extended property). Outlook uses `POST /me/events` with the RRULE
+translated to `patternedRecurrence`; anything Outlook cannot express exactly is rejected in the
+preview with its reason, never approximated. Outlook imports never carry attendees (creating them
+would send invitations). A series is imported all-or-nothing (rolled back on partial failure).
+Limits: 10 MB and 500 series per file.
+**Context:** Imported events must show on the phone, survive the sync sweep and have one source
+of truth. This narrows the 2026-07-23 "never free-form RRULEs" stance: that rule is about what
+the user types in the create dialog; rules that come from an imported file are carried as-is
+where the provider can represent them. IMAP accounts wait for CalDAV (separate follow-up).
+**Rejected:**
+- *A local "Imported" calendar*: the events would exist only in EmailOps.
+- *Expanding occurrences into single events*: a series becomes dozens of loose events and an
+  open-ended one cannot be expanded.
+- *One-off events only*: fails on the weekly invitation that is missing from the calendar.
+
+## 2026-11-20 — Answering an invitation that is not in the calendar imports it and replies to the organizer by iTIP
+
+**Decision:** The invite card first tries the provider RSVP. When the event is missing it waits
+10 minutes after the email arrived (the provider may still be delivering it; importing earlier
+would duplicate it). After that, "Yes/Maybe" imports the event and then sends an RFC 5546 REPLY
+(`text/calendar; method=REPLY` inside a `multipart/alternative` body, sent as raw MIME so the
+organizer's calendar processes it) only to the ORGANIZER and only after a successful import.
+"No" removes the copy EmailOps imported (no notifications) and sends the decline. No reply goes
+to myself or to an invalid organizer address. PUBLISH invites (no organizer or METHOD:PUBLISH)
+get only "Add to calendar". A reply that fails after the calendar changed is reported to the user.
+**Context:** The old flow ended in "this invitation hasn't reached your calendar yet" for any
+invite the provider had not delivered; saying "yes" to someone without the event in the calendar
+would be wrong.
+**Rejected:**
+- *Attachment-only reply*: organizers' calendars do not process it.
+- *Importing immediately*: duplicates the event when the original invitation arrives later.
+- *Replying when the import failed*: it would accept an event that is not in the calendar.
+
+## 2026-11-20 — Outlook UID lookups match Exchange's GlobalObjectId encoding
+
+**Decision:** RSVP and duplicate checks on Outlook match `iCalUId` both as the plain UID and as
+the GlobalObjectId hex wrapping `vCal-Uid` (invites from non-Exchange organizers), plus the
+EmailOps extended property in a separate query. Graph `timeZone` uses Windows zone names from
+the full CLDR windowsZones mapping (plus modern IANA aliases) because Graph does not accept every
+IANA name.
+**Context:** For organizers outside Exchange, Graph exposes `iCalUId` as the hex GlobalObjectId,
+so the plain-UID lookup missed events that were in the calendar.
+**Rejected:** A single OR filter mixing `iCalUId` and the extended property: Graph support is
+unverified and it would put a path that works today at risk.
+
+## 2026-11-20 — The event detail lets me mail the organizer/participants and change my response
+
+**Decision:** The event detail has two compose icons (organizer; organizer + attendees minus me),
+shown on read-only calendars too. The "Your response" row appears only when I am an invited
+attendee, not the organizer, on a writable calendar; recurring events ask "only this event / all
+events" (default this event).
+**Context:** Users asked to write to the people of an event and to change their answer without
+going back to the email. Composing a message does not touch the calendar, so it is safe on feeds.
+CalDAV for IMAP accounts is a separate follow-up; the IMAP "CalDAV is out of scope" comment still
+holds for this change.
+**Rejected:** None recorded.
