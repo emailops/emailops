@@ -478,6 +478,193 @@ pub(crate) fn build_graph_create_request(
     Ok(body)
 }
 
+/// Graph day name for an iCalendar weekday code (`MO`..`SU`).
+fn graph_day_name(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "MO" => "monday",
+        "TU" => "tuesday",
+        "WE" => "wednesday",
+        "TH" => "thursday",
+        "FR" => "friday",
+        "SA" => "saturday",
+        "SU" => "sunday",
+        _ => return None,
+    })
+}
+
+/// Parse one `BYDAY` item (`TU`, `2TU`, `-1FR`) into (ordinal, Graph day).
+/// Ordinals Graph cannot express (0, 5+, below -1) are rejected.
+fn parse_byday_item(item: &str) -> Option<(Option<i32>, &'static str)> {
+    let split = item.len().checked_sub(2)?;
+    if !item.is_char_boundary(split) {
+        return None;
+    }
+    let (ordinal, code) = item.split_at(split);
+    let day = graph_day_name(code)?;
+    if ordinal.is_empty() {
+        return Some((None, day));
+    }
+    match ordinal.parse::<i32>().ok()? {
+        n @ (-1 | 1..=4) => Some((Some(n), day)),
+        _ => None,
+    }
+}
+
+fn graph_index_name(ordinal: i32) -> &'static str {
+    match ordinal {
+        1 => "first",
+        2 => "second",
+        3 => "third",
+        4 => "fourth",
+        _ => "last",
+    }
+}
+
+/// `UNTIL` value → local end date in `tz`. A trailing `Z` is converted from
+/// UTC; floating and date-only values are taken as the local date already.
+fn rrule_until_date(value: &str, tz: chrono_tz::Tz) -> Option<chrono::NaiveDate> {
+    use chrono::TimeZone;
+    if let Some(utc) = value.strip_suffix('Z') {
+        let naive = chrono::NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S").ok()?;
+        return Some(tz.from_utc_datetime(&naive).date_naive());
+    }
+    let date_part = value.get(..8)?;
+    chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()
+}
+
+/// iCalendar `RRULE` → Graph `patternedRecurrence` (`{pattern, range}`).
+/// `tz` is an IANA zone name or `"UTC"`. Rules Graph cannot express return
+/// `Err(<offending rule part>)`, e.g. `"FREQ=HOURLY"` or `"BYMONTHDAY=1,15"`.
+// Used by the ICS import planner and request builder in later tasks.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn graph_recurrence_from_rrule(
+    rrule: &str,
+    first_start: chrono::NaiveDate,
+    tz: &str,
+) -> std::result::Result<serde_json::Value, String> {
+    use chrono::Datelike;
+
+    let zone: chrono_tz::Tz = tz.parse().map_err(|_| format!("TZID={tz}"))?;
+    let mut freq = None;
+    let (mut interval, mut count, mut until) = (1u32, None, None);
+    let (mut byday, mut bymonthday, mut bymonth, mut wkst) = (None, None, None, None);
+    for part in rrule.split(';').filter(|p| !p.is_empty()) {
+        let (key, value) = part.split_once('=').ok_or_else(|| part.to_string())?;
+        let key = key.to_ascii_uppercase();
+        let bad = || format!("{key}={value}");
+        match key.as_str() {
+            "FREQ" => freq = Some(value.to_ascii_uppercase()),
+            "INTERVAL" => interval = value.parse().ok().filter(|n| *n >= 1).ok_or_else(bad)?,
+            "COUNT" => count = Some(value.parse::<u32>().ok().filter(|n| *n >= 1).ok_or_else(bad)?),
+            "UNTIL" => until = Some(rrule_until_date(value, zone).ok_or_else(bad)?),
+            "BYDAY" => byday = Some(value.to_ascii_uppercase()),
+            "BYMONTHDAY" => {
+                bymonthday = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|d| (1..=31).contains(d))
+                        .ok_or_else(bad)?,
+                )
+            }
+            "BYMONTH" => {
+                bymonth = Some(
+                    value
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|m| (1..=12).contains(m))
+                        .ok_or_else(bad)?,
+                )
+            }
+            "WKST" => wkst = Some(graph_day_name(&value.to_ascii_uppercase()).ok_or_else(bad)?),
+            // BYSETPOS, BYWEEKNO, BYYEARDAY, BYHOUR, ...: not expressible.
+            _ => return Err(key),
+        }
+    }
+    let freq = freq.ok_or_else(|| "FREQ".to_string())?;
+
+    // BYDAY items: (ordinal, day). Ordinal items only make sense monthly/yearly.
+    let by_day_text = byday.unwrap_or_default();
+    let mut days: Vec<(Option<i32>, &'static str)> = Vec::new();
+    if !by_day_text.is_empty() {
+        for item in by_day_text.split(',') {
+            days.push(parse_byday_item(item).ok_or_else(|| format!("BYDAY={by_day_text}"))?);
+        }
+    }
+    let ordinal = match days.first() {
+        Some((Some(first), _)) if days.iter().all(|(o, _)| *o == Some(*first)) => Some(*first),
+        Some((Some(_), _)) => return Err(format!("BYDAY={by_day_text}")),
+        _ => None,
+    };
+    let day_names: Vec<&str> = days.iter().map(|(_, d)| *d).collect();
+    let anchor_day = match first_start.weekday() {
+        chrono::Weekday::Mon => "monday",
+        chrono::Weekday::Tue => "tuesday",
+        chrono::Weekday::Wed => "wednesday",
+        chrono::Weekday::Thu => "thursday",
+        chrono::Weekday::Fri => "friday",
+        chrono::Weekday::Sat => "saturday",
+        chrono::Weekday::Sun => "sunday",
+    };
+
+    let mut pattern = match freq.as_str() {
+        "DAILY" => serde_json::json!({"type": "daily", "interval": interval}),
+        "WEEKLY" => {
+            if ordinal.is_some() {
+                return Err(format!("BYDAY={by_day_text}"));
+            }
+            let names = if day_names.is_empty() {
+                vec![anchor_day]
+            } else {
+                day_names
+            };
+            serde_json::json!({"type": "weekly", "interval": interval, "daysOfWeek": names})
+        }
+        "MONTHLY" => match (ordinal, bymonthday) {
+            (Some(n), None) => serde_json::json!({
+                "type": "relativeMonthly", "interval": interval,
+                "daysOfWeek": day_names, "index": graph_index_name(n)
+            }),
+            (None, _) if day_names.is_empty() => serde_json::json!({
+                "type": "absoluteMonthly", "interval": interval,
+                "dayOfMonth": bymonthday.unwrap_or_else(|| first_start.day())
+            }),
+            _ => return Err(format!("BYDAY={by_day_text}")),
+        },
+        "YEARLY" => {
+            let month = bymonth.unwrap_or_else(|| first_start.month());
+            match (ordinal, bymonthday) {
+                (Some(n), None) => serde_json::json!({
+                    "type": "relativeYearly", "interval": interval, "month": month,
+                    "daysOfWeek": day_names, "index": graph_index_name(n)
+                }),
+                (None, _) if day_names.is_empty() => serde_json::json!({
+                    "type": "absoluteYearly", "interval": interval, "month": month,
+                    "dayOfMonth": bymonthday.unwrap_or_else(|| first_start.day())
+                }),
+                _ => return Err(format!("BYDAY={by_day_text}")),
+            }
+        }
+        _ => return Err(format!("FREQ={freq}")),
+    };
+    if let Some(first_day) = wkst {
+        pattern["firstDayOfWeek"] = serde_json::json!(first_day);
+    }
+
+    let start_date = first_start.format("%Y-%m-%d").to_string();
+    let range = match (count, until) {
+        (Some(n), _) => serde_json::json!({
+            "type": "numbered", "startDate": start_date, "numberOfOccurrences": n
+        }),
+        (None, Some(end)) => serde_json::json!({
+            "type": "endDate", "startDate": start_date,
+            "endDate": end.format("%Y-%m-%d").to_string(), "recurrenceTimeZone": tz
+        }),
+        (None, None) => serde_json::json!({"type": "noEnd", "startDate": start_date}),
+    };
+    Ok(serde_json::json!({"pattern": pattern, "range": range}))
+}
+
 /// Rewrite a Graph `recurrence` object so the series ends before
 /// `first_removed_start`: the pattern is preserved, the range becomes
 /// `endDate` with the UTC day *before* the first removed occurrence (Graph's
@@ -937,6 +1124,101 @@ mod tests {
         });
         let event = parse_graph_event(&raw).expect("parse");
         assert_eq!(event.recurring_event_id.as_deref(), Some("master-1"));
+    }
+
+    // ── graph_recurrence_from_rrule ────────────────────────────────────────
+
+    fn from_rrule(rrule: &str) -> std::result::Result<serde_json::Value, String> {
+        // 2026-12-01 is a Tuesday.
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 1).expect("date");
+        graph_recurrence_from_rrule(rrule, first, "Europe/Madrid")
+    }
+
+    #[test]
+    fn weekly_byday_list_maps_to_days_of_week() {
+        let rec = from_rrule("FREQ=WEEKLY;BYDAY=TU,TH").expect("rule");
+        assert_eq!(rec["pattern"]["type"], "weekly");
+        assert_eq!(rec["pattern"]["daysOfWeek"], serde_json::json!(["tuesday", "thursday"]));
+        assert_eq!(rec["pattern"]["interval"], 1);
+        assert_eq!(rec["range"]["type"], "noEnd");
+        assert_eq!(rec["range"]["startDate"], "2026-12-01");
+    }
+
+    #[test]
+    fn interval_and_count_map_to_numbered_range() {
+        let rec = from_rrule("FREQ=DAILY;INTERVAL=2;COUNT=10").expect("rule");
+        assert_eq!(rec["pattern"]["type"], "daily");
+        assert_eq!(rec["pattern"]["interval"], 2);
+        assert_eq!(rec["range"]["type"], "numbered");
+        assert_eq!(rec["range"]["numberOfOccurrences"], 10);
+    }
+
+    #[test]
+    fn until_maps_to_end_date_in_event_zone() {
+        let rec = from_rrule("FREQ=WEEKLY;UNTIL=20261231T225959Z").expect("rule");
+        assert_eq!(rec["range"]["type"], "endDate");
+        assert_eq!(rec["range"]["endDate"], "2026-12-31");
+        assert_eq!(rec["range"]["recurrenceTimeZone"], "Europe/Madrid");
+    }
+
+    #[test]
+    fn second_tuesday_monthly_is_relative_monthly() {
+        let rec = from_rrule("FREQ=MONTHLY;BYDAY=2TU").expect("rule");
+        assert_eq!(rec["pattern"]["type"], "relativeMonthly");
+        assert_eq!(rec["pattern"]["index"], "second");
+        assert_eq!(rec["pattern"]["daysOfWeek"], serde_json::json!(["tuesday"]));
+    }
+
+    #[test]
+    fn last_friday_is_index_last() {
+        let rec = from_rrule("FREQ=MONTHLY;BYDAY=-1FR").expect("rule");
+        assert_eq!(rec["pattern"]["index"], "last");
+    }
+
+    #[test]
+    fn monthday_maps_to_absolute_monthly() {
+        let rec = from_rrule("FREQ=MONTHLY;BYMONTHDAY=15").expect("rule");
+        assert_eq!(rec["pattern"]["type"], "absoluteMonthly");
+        assert_eq!(rec["pattern"]["dayOfMonth"], 15);
+    }
+
+    #[test]
+    fn yearly_with_month_and_day() {
+        let rec = from_rrule("FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=9").expect("rule");
+        assert_eq!(rec["pattern"]["type"], "absoluteYearly");
+        assert_eq!(rec["pattern"]["month"], 3);
+        assert_eq!(rec["pattern"]["dayOfMonth"], 9);
+    }
+
+    #[test]
+    fn wkst_sets_first_day_of_week() {
+        let rec = from_rrule("FREQ=WEEKLY;BYDAY=MO;WKST=SU").expect("rule");
+        assert_eq!(rec["pattern"]["firstDayOfWeek"], "sunday");
+    }
+
+    #[test]
+    fn missing_by_parts_anchor_on_first_start() {
+        let weekly = from_rrule("FREQ=WEEKLY").expect("rule");
+        assert_eq!(weekly["pattern"]["daysOfWeek"], serde_json::json!(["tuesday"]));
+        let monthly = from_rrule("FREQ=MONTHLY").expect("rule");
+        assert_eq!(monthly["pattern"]["dayOfMonth"], 1);
+        let yearly = from_rrule("FREQ=YEARLY").expect("rule");
+        assert_eq!(yearly["pattern"]["month"], 12);
+        assert_eq!(yearly["pattern"]["dayOfMonth"], 1);
+    }
+
+    #[test]
+    fn unsupported_parts_are_named() {
+        for (rule, part) in [
+            ("FREQ=HOURLY", "FREQ=HOURLY"),
+            ("FREQ=MONTHLY;BYDAY=MO;BYSETPOS=-1", "BYSETPOS"),
+            ("FREQ=MONTHLY;BYMONTHDAY=1,15", "BYMONTHDAY=1,15"),
+            ("FREQ=YEARLY;BYWEEKNO=20", "BYWEEKNO"),
+            ("FREQ=YEARLY;BYYEARDAY=100", "BYYEARDAY"),
+            ("FREQ=MONTHLY;BYDAY=5MO", "BYDAY=5MO"),
+        ] {
+            assert_eq!(from_rrule(rule), Err(part.to_string()), "{rule}");
+        }
     }
 
     // ── graph_recurrence_with_end ──────────────────────────────────────────
