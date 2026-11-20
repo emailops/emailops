@@ -449,7 +449,15 @@ impl CalendarProvider for GoogleCalendarClient {
                 // All or nothing: drop the half-imported series. The rollback
                 // is best effort; the import error is what the caller needs.
                 if let Err(rollback) = self.delete_event("primary", &master_id, false, "").await {
-                    eprintln!("[calendar] import rollback failed: {rollback}");
+                    // Code only: the error text can embed a provider response body.
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!(
+                            "Google Calendar import rollback failed ({}); an orphan event may remain",
+                            rollback.code()
+                        ),
+                    );
                 }
                 return Err(error);
             }
@@ -1461,6 +1469,55 @@ mod tests {
             Some("sendUpdates=none"),
             "the rollback must not notify anyone"
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
+    async fn a_failed_rollback_is_logged_without_event_content() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _guard = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .and(body_partial_json(json!({"recurringEventId": "master-1"})))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "master-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/calendars/primary/events/master-1"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Planning leaked body"))
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let result = client.import_event(&event_with_override()).await;
+
+        let imports = server
+            .received_requests()
+            .await
+            .expect("requests")
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count();
+        assert_eq!(imports, 2, "the override error, not the rollback, is returned");
+        assert!(result.is_err());
+        let entries = logger.events();
+        let errors: Vec<_> = entries
+            .iter()
+            .filter(|e| e.level == "error" && e.source == "sync")
+            .collect();
+        assert_eq!(errors.len(), 1, "got: {entries:?}");
+        assert!(errors[0].message.contains("rollback"));
+        assert!(!errors[0].message.contains("Planning"), "no event or body content");
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
     }
 
     #[tokio::test]
