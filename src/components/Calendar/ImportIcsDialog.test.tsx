@@ -1,7 +1,7 @@
 // "Import .ics": pick a file, see what each event would do, import it into the
 // chosen account's primary calendar and read the summary.
 
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -95,8 +95,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function render(list: CreateAccountChoice[] = choices, initialAccountId = 'work') {
-  act(() => {
+async function render(list: CreateAccountChoice[] = choices, initialAccountId = 'work') {
+  await act(async () => {
     root.render(<ImportIcsDialog choices={list} initialAccountId={initialAccountId} {...props} />);
   });
 }
@@ -105,10 +105,6 @@ function button(label: string): HTMLButtonElement {
   const found = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.startsWith(label));
   if (!found) throw new Error(`button ${label} not rendered`);
   return found;
-}
-
-async function chooseFile() {
-  await act(async () => button('calendar:import.choose').click());
 }
 
 function pickAccount(email: string) {
@@ -121,9 +117,32 @@ function pickAccount(email: string) {
 }
 
 describe('ImportIcsDialog', () => {
+  it('opens_the_picker_once_on_mount', async () => {
+    await render();
+    expect(dialog.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens_the_picker_once_under_strict_mode', async () => {
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <ImportIcsDialog choices={choices} initialAccountId="work" {...props} />
+        </StrictMode>,
+      );
+    });
+    expect(dialog.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps_the_choose_button_and_skips_the_preview_when_the_picker_is_cancelled', async () => {
+    dialog.open.mockResolvedValue(null);
+    await render();
+    expect(api.previewIcsImport).not.toHaveBeenCalled();
+    await act(async () => button('calendar:import.choose').click());
+    expect(dialog.open).toHaveBeenCalledTimes(2);
+  });
+
   it('shows_each_item_with_its_status', async () => {
-    render();
-    await chooseFile();
+    await render();
     const text = document.body.textContent ?? '';
     expect(text).toContain('Event a');
     expect(text).toContain('calendar:import.status.importable');
@@ -136,8 +155,7 @@ describe('ImportIcsDialog', () => {
   });
 
   it('changing_account_requests_a_new_preview', async () => {
-    render();
-    await chooseFile();
+    await render();
     await pickAccount('home@mail.example');
     expect(api.previewIcsImport).toHaveBeenCalledTimes(2);
     expect(api.previewIcsImport).toHaveBeenLastCalledWith('home', '/tmp/agenda.ics', expect.any(String));
@@ -145,8 +163,7 @@ describe('ImportIcsDialog', () => {
 
   it('import_button_disabled_when_nothing_importable', async () => {
     api.previewIcsImport.mockResolvedValue({ fileName: 'x.ics', items: [item('b', 'alreadyInCalendar')] });
-    render();
-    await chooseFile();
+    await render();
     expect(button('calendar:import.importN').disabled).toBe(true);
   });
 
@@ -157,8 +174,7 @@ describe('ImportIcsDialog', () => {
       unsupported: 1,
       failed: [{ title: 'Event d', reason: 'provider said no' }],
     });
-    render();
-    await chooseFile();
+    await render();
     await act(async () => button('calendar:import.importN').click());
     expect(api.importIcs).toHaveBeenCalledWith('work', '/tmp/agenda.ics', expect.any(String));
     const text = document.body.textContent ?? '';
@@ -171,8 +187,7 @@ describe('ImportIcsDialog', () => {
 
   it('pins_a_failed_preview_at_the_top_and_logs_it_without_the_path', async () => {
     api.previewIcsImport.mockRejectedValue(new Error('file too large'));
-    render();
-    await chooseFile();
+    await render();
     const alert = document.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('file too large');
     expect(useLogStore.getState().entries.some((l) => l.level === 'error' && !l.message.includes('/tmp/'))).toBe(true);
@@ -180,8 +195,7 @@ describe('ImportIcsDialog', () => {
 
   it('hands_an_auth_error_to_the_view', async () => {
     api.previewIcsImport.mockRejectedValue(new Error('Authentication required'));
-    render();
-    await chooseFile();
+    await render();
     expect(props.onAuthError).toHaveBeenCalledWith('work');
   });
 });

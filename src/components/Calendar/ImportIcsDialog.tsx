@@ -77,6 +77,17 @@ export function ImportIcsDialog({ choices, initialAccountId, onClose, onImported
     }
   };
 
+  // The dialog opens straight onto the picker; a cancelled picker leaves the
+  // "Choose file…" button. The ref keeps StrictMode's second mount from
+  // opening a second native picker.
+  const pickerAskedRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once, on mount
+  useEffect(() => {
+    if (pickerAskedRef.current) return;
+    pickerAskedRef.current = true;
+    void chooseFile();
+  }, []);
+
   const importable = preview?.items.filter((i) => i.status === 'importable').length ?? 0;
   const busy = isReading || isImporting;
 

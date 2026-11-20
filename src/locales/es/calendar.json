@@ -148,7 +148,7 @@
       "imported_other": "{{count}} eventos importados",
       "alreadyPresent": "Ya estaban en el calendario: {{count}}",
       "unsupported": "No se pueden importar: {{count}}",
-      "failed": "Con error: {{count}}"
+      "failed": "Fallidos: {{count}}"
     },
     "reason": {
       "missingUidOrStart": "El evento no tiene identificador u hora de inicio",
