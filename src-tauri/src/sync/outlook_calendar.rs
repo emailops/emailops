@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
-use crate::services::calendar::import::ImportableEvent;
+use crate::services::calendar::import::{EventTime, ImportableEvent};
 use crate::sync::calendar_provider::{
     CalendarProvider, FoundEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
@@ -72,6 +72,109 @@ impl OutlookCalendarClient {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = std::mem::take(&mut new_tokens.access_token);
         Ok(())
+    }
+
+    /// The provider error for a non-success response.
+    async fn failure(&self, response: Response) -> AppError {
+        let status = response.status().as_u16();
+        let error_text = response.text().await.unwrap_or_default();
+        crate::sync::calendar_provider::classify_calendar_fetch_error(
+            "Outlook",
+            status,
+            &error_text,
+            self.account_id.as_deref(),
+        )
+    }
+
+    /// The id of the first event of the primary mailbox matching `filter`.
+    async fn first_event_id(&self, filter: &str) -> Result<Option<String>> {
+        let url = format!(
+            "{}/me/events?$filter={}&$select=id&$top=1",
+            self.base_url,
+            urlencoding::encode(filter)
+        );
+        let response = self.send_get_with_retry(&url, "find event by uid").await?;
+        if !response.status().is_success() {
+            return Err(self.failure(response).await);
+        }
+        let page: serde_json::Value = response.json().await?;
+        Ok(page
+            .get("value")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())
+            .and_then(|e| e.get("id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string))
+    }
+
+    /// Delete the instances an EXDATE removes and patch the ones an override
+    /// replaces, on a series that was just created.
+    async fn apply_exceptions(&self, series_id: &str, event: &ImportableEvent) -> Result<()> {
+        for exdate in &event.exdates {
+            let instance_id = self.find_instance_id(series_id, exdate).await?;
+            self.delete_event("primary", &instance_id, false, "").await?;
+        }
+        for over in &event.overrides {
+            let original = over.recurrence_id.as_ref().ok_or_else(|| {
+                AppError::InvalidInput("an override without a RECURRENCE-ID cannot be imported".to_string())
+            })?;
+            let instance_id = self.find_instance_id(series_id, original).await?;
+            let body = build_graph_override_patch(over)?;
+            let url = format!("{}/me/events/{}", self.base_url, urlencoding::encode(&instance_id));
+            let response = self
+                .send_request_with_retry("patch instance", |client, token| {
+                    client
+                        .patch(&url)
+                        .bearer_auth(token)
+                        .header("Prefer", "outlook.timezone=\"UTC\"")
+                        .json(&body)
+                })
+                .await?;
+            if !response.status().is_success() {
+                return Err(self.failure(response).await);
+            }
+        }
+        Ok(())
+    }
+
+    /// The id of the series instance whose original start is `original`.
+    async fn find_instance_id(&self, series_id: &str, original: &EventTime) -> Result<String> {
+        let (from, to) = match original {
+            EventTime::AllDay(date) => (
+                date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() - SECONDS_PER_DAY,
+                date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() + 2 * SECONDS_PER_DAY,
+            ),
+            EventTime::Timed { .. } => {
+                let at = original.to_epoch();
+                (at - SECONDS_PER_DAY, at + SECONDS_PER_DAY)
+            }
+        };
+        let url = format!(
+            "{}/me/events/{}/instances?startDateTime={}&endDateTime={}",
+            self.base_url,
+            urlencoding::encode(series_id),
+            iso_utc(from)?,
+            iso_utc(to)?
+        );
+        let response = self.send_get_with_retry(&url, "list instances").await?;
+        if !response.status().is_success() {
+            return Err(self.failure(response).await);
+        }
+        let page: serde_json::Value = response.json().await?;
+        page.get("value")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .find(|instance| {
+                instance
+                    .get("originalStart")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|start| instance_starts_at(start, original))
+            })
+            .and_then(|instance| instance.get("id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| AppError::SyncError("Outlook has no instance at the original start of an exception".into()))
     }
 
     async fn send_get_with_retry(&self, url: &str, operation: &str) -> Result<Response> {
@@ -409,29 +512,167 @@ impl CalendarProvider for OutlookCalendarClient {
         Ok(())
     }
 
-    async fn find_event_by_uid(&self, _ical_uid: &str) -> Result<Option<FoundEvent>> {
-        Err(AppError::SyncError(
-            "Finding events by UID is not supported for Outlook yet".into(),
-        ))
+    async fn find_event_by_uid(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
+        // Our own copy first: an event we imported is what a re-import must
+        // recognise even if its iCalUId differs from the file's UID.
+        if let Some(id) = self.first_event_id(&outlook_imported_uid_filter(ical_uid)).await? {
+            return Ok(Some(FoundEvent {
+                provider_event_id: id,
+                imported_by_emailops: true,
+            }));
+        }
+        Ok(self
+            .first_event_id(&outlook_uid_filter(ical_uid))
+            .await?
+            .map(|id| FoundEvent {
+                provider_event_id: id,
+                imported_by_emailops: false,
+            }))
     }
 
-    async fn import_event(&self, _event: &ImportableEvent) -> Result<String> {
-        Err(AppError::SyncError(
-            "Importing events is not supported for Outlook yet".into(),
-        ))
+    async fn import_event(&self, event: &ImportableEvent) -> Result<String> {
+        let body = build_graph_import_request(event)?;
+        let url = format!("{}/me/events", self.base_url);
+        let response = self.send_post_json_no_resend(&url, &body, "import event").await?;
+        if !response.status().is_success() {
+            return Err(self.failure(response).await);
+        }
+        let created: serde_json::Value = response.json().await?;
+        let series_id = created
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::SyncError("Outlook returned an imported event without an id".to_string()))?
+            .to_string();
+        if let Err(error) = self.apply_exceptions(&series_id, event).await {
+            // All or nothing: drop the half-imported series. The rollback is
+            // best effort; the import error is what the caller needs.
+            if let Err(rollback) = self.delete_event("primary", &series_id, false, "").await {
+                // Code only: the error text can embed a provider response body.
+                crate::services::logger::log(
+                    "error",
+                    "sync",
+                    format!(
+                        "Outlook Calendar import rollback failed ({}); an orphan event may remain",
+                        rollback.code()
+                    ),
+                );
+            }
+            return Err(error);
+        }
+        Ok(series_id)
     }
 
     async fn respond_to_event(
         &self,
+        // Graph ids are mailbox-global, so the calendar is not part of the URL.
         _calendar_id: &str,
-        _provider_event_id: &str,
-        _response: RsvpResponse,
+        provider_event_id: &str,
+        response: RsvpResponse,
         _self_email: &str,
     ) -> Result<()> {
-        Err(AppError::SyncError(
-            "Responding to events is not supported for Outlook yet".into(),
-        ))
+        let url = format!(
+            "{}/me/events/{}/{}",
+            self.base_url,
+            urlencoding::encode(provider_event_id),
+            response.as_graph_action()
+        );
+        let body = serde_json::json!({ "sendResponse": true });
+        let acted = self.send_post_json_no_resend(&url, &body, "rsvp").await?;
+        if !acted.status().is_success() {
+            return Err(self.failure(acted).await);
+        }
+        Ok(())
     }
+}
+
+const SECONDS_PER_DAY: i64 = 86_400;
+
+fn iso_utc(epoch: i64) -> Result<String> {
+    chrono::DateTime::from_timestamp(epoch, 0)
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .ok_or_else(|| AppError::InvalidInput("event time out of range".to_string()))
+}
+
+/// Whether a Graph `originalStart` (UTC, with or without fraction and `Z`) is
+/// the occurrence `original` names: the same instant, or the same date for an
+/// all-day occurrence.
+fn instance_starts_at(original_start: &str, original: &EventTime) -> bool {
+    let Some(stamp) = original_start.get(..19) else {
+        return false;
+    };
+    let Ok(start) = chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%dT%H:%M:%S") else {
+        return false;
+    };
+    match original {
+        EventTime::AllDay(date) => start.date() == *date,
+        EventTime::Timed { .. } => start.and_utc().timestamp() == original.to_epoch(),
+    }
+}
+
+/// The Windows zone name Graph expects for an event's IANA zone (or "UTC").
+fn graph_zone_name(tz: &str) -> Result<&'static str> {
+    if tz == "UTC" {
+        return Ok("UTC");
+    }
+    crate::services::calendar::windows_zones::windows_name(tz)
+        .ok_or_else(|| AppError::InvalidInput(format!("no Windows time zone for {tz}")))
+}
+
+fn graph_time(time: &EventTime) -> Result<serde_json::Value> {
+    let (local, zone) = match time {
+        EventTime::AllDay(date) => (date.and_time(chrono::NaiveTime::MIN), "UTC"),
+        EventTime::Timed { local, tz } => (*local, graph_zone_name(tz)?),
+    };
+    Ok(serde_json::json!({"dateTime": local.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": zone}))
+}
+
+/// Body of `POST /me/events` for an import. Never carries attendees (Graph
+/// would email them an invitation); the UID goes in an extended property so a
+/// later import finds the event again.
+pub(crate) fn build_graph_import_request(event: &ImportableEvent) -> Result<serde_json::Value> {
+    if !event.rdates.is_empty() {
+        return Err(AppError::InvalidInput(
+            "Outlook cannot import events with RDATE".to_string(),
+        ));
+    }
+    let mut body = serde_json::json!({
+        "subject": event.summary,
+        "start": graph_time(&event.start)?,
+        "end": graph_time(&event.end)?,
+        "isAllDay": matches!(event.start, EventTime::AllDay(_)),
+        "singleValueExtendedProperties": [{"id": EMAILOPS_UID_PROPERTY, "value": event.uid}],
+    });
+    if !event.description.is_empty() {
+        body["body"] = serde_json::json!({"contentType": "text", "content": event.description});
+    }
+    if !event.location.is_empty() {
+        body["location"] = serde_json::json!({"displayName": event.location});
+    }
+    if let Some(rrule) = &event.rrule {
+        let (first_start, tz) = match &event.start {
+            EventTime::AllDay(date) => (*date, "UTC"),
+            EventTime::Timed { local, tz } => (local.date(), tz.as_str()),
+        };
+        let mut recurrence = graph_recurrence_from_rrule(rrule, first_start, tz)
+            .map_err(|part| AppError::InvalidInput(format!("Outlook cannot represent the recurrence ({part})")))?;
+        // The converter works in IANA (it converts UNTIL); Graph wants Windows.
+        recurrence["range"]["recurrenceTimeZone"] = serde_json::json!(graph_zone_name(tz)?);
+        body["recurrence"] = recurrence;
+    }
+    Ok(body)
+}
+
+/// `PATCH` body that makes one instance look like its override. Empty text is
+/// sent as empty so it replaces the series' text; attendees are never sent.
+fn build_graph_override_patch(over: &ImportableEvent) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "subject": over.summary,
+        "body": {"contentType": "text", "content": over.description},
+        "location": {"displayName": over.location},
+        "start": graph_time(&over.start)?,
+        "end": graph_time(&over.end)?,
+        "isAllDay": matches!(over.start, EventTime::AllDay(_)),
+    }))
 }
 
 /// Extended property EmailOps stamps on events it imports, so a later import
@@ -474,8 +715,6 @@ pub(crate) fn outlook_uid_filter(ical_uid: &str) -> String {
 
 /// OData `$filter` matching an event EmailOps imported, by the UID stored in
 /// its extended property. Meant as a separate query from [`outlook_uid_filter`].
-// Used by the import path (a later task); unused in non-test builds until then.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn outlook_imported_uid_filter(ical_uid: &str) -> String {
     let plain = ical_uid.replace('\'', "''");
     format!("singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq '{plain}')")
@@ -1520,5 +1759,430 @@ mod tests {
             .rsvp_by_ical_uid("abc123@example.com", RsvpResponse::Accepted, "me@example.com")
             .await
             .expect("rsvp");
+    }
+
+    // ── ICS import ─────────────────────────────────────────────────────────
+
+    fn import_timed(uid: &str) -> ImportableEvent {
+        use crate::services::calendar::import::EventTime;
+        let day = |d, h| {
+            chrono::NaiveDate::from_ymd_opt(2026, 12, d)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap()
+        };
+        ImportableEvent {
+            uid: uid.into(),
+            summary: "Planning sync".into(),
+            description: "Agenda".into(),
+            location: "Room 4".into(),
+            start: EventTime::Timed {
+                local: day(1, 10),
+                tz: "Europe/Madrid".into(),
+            },
+            end: EventTime::Timed {
+                local: day(1, 11),
+                tz: "Europe/Madrid".into(),
+            },
+            rrule: None,
+            exdates: vec![],
+            rdates: vec![],
+            recurrence_id: None,
+            overrides: vec![],
+            organizer: Some("boss@example.com".into()),
+            attendees: vec![],
+            sequence: 0,
+        }
+    }
+
+    fn weekly_with_exdate() -> ImportableEvent {
+        use crate::services::calendar::import::EventTime;
+        let mut event = import_timed("series@example.com");
+        event.rrule = Some("FREQ=WEEKLY;COUNT=4".into());
+        event.exdates = vec![EventTime::Timed {
+            local: chrono::NaiveDate::from_ymd_opt(2026, 12, 8)
+                .unwrap()
+                .and_hms_opt(10, 0, 0)
+                .unwrap(),
+            tz: "Europe/Madrid".into(),
+        }];
+        event
+    }
+
+    #[test]
+    fn graph_import_body_has_no_attendees() {
+        let mut event = import_timed("a@example.com");
+        event.attendees = (1..=3)
+            .map(|n| crate::models::CalendarAttendee {
+                email: format!("p{n}@example.com"),
+                response: "needsAction".into(),
+            })
+            .collect();
+        let body = build_graph_import_request(&event).expect("body");
+        assert!(body.get("attendees").is_none());
+    }
+
+    #[test]
+    fn graph_import_body_uses_the_windows_zone_of_the_event() {
+        let mut event = import_timed("a@example.com");
+        event.rrule = Some("FREQ=WEEKLY;COUNT=3".into());
+        let body = build_graph_import_request(&event).expect("body");
+        assert_eq!(
+            body["start"],
+            serde_json::json!({"dateTime": "2026-12-01T10:00:00", "timeZone": "Romance Standard Time"})
+        );
+        assert_eq!(
+            body["end"],
+            serde_json::json!({"dateTime": "2026-12-01T11:00:00", "timeZone": "Romance Standard Time"})
+        );
+        assert_eq!(body["isAllDay"], false);
+        assert_eq!(body["subject"], "Planning sync");
+        assert_eq!(body["location"]["displayName"], "Room 4");
+        assert_eq!(body["body"]["contentType"], "text");
+        assert_eq!(body["body"]["content"], "Agenda");
+        assert_eq!(
+            body["singleValueExtendedProperties"][0],
+            serde_json::json!({"id": EMAILOPS_UID_PROPERTY, "value": "a@example.com"})
+        );
+        let mut expected = graph_recurrence_from_rrule(
+            "FREQ=WEEKLY;COUNT=3",
+            chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+            "Europe/Madrid",
+        )
+        .expect("recurrence");
+        expected["range"]["recurrenceTimeZone"] = serde_json::json!("Romance Standard Time");
+        assert_eq!(body["recurrence"], expected);
+    }
+
+    #[test]
+    fn graph_import_utc_event_keeps_utc_and_empty_fields_are_omitted() {
+        use crate::services::calendar::import::EventTime;
+        let mut event = import_timed("a@example.com");
+        event.description.clear();
+        event.location.clear();
+        if let EventTime::Timed { tz, .. } = &mut event.start {
+            *tz = "UTC".into();
+        }
+        let body = build_graph_import_request(&event).expect("body");
+        assert_eq!(body["start"]["timeZone"], "UTC");
+        assert!(body.get("body").is_none());
+        assert!(body.get("location").is_none());
+    }
+
+    #[test]
+    fn graph_all_day_import() {
+        use crate::services::calendar::import::EventTime;
+        let mut event = import_timed("a@example.com");
+        event.start = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 5).unwrap());
+        event.end = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 6).unwrap());
+        let body = build_graph_import_request(&event).expect("body");
+        assert_eq!(body["isAllDay"], true);
+        assert_eq!(body["start"]["dateTime"], "2026-12-05T00:00:00");
+        assert_eq!(body["end"]["dateTime"], "2026-12-06T00:00:00");
+    }
+
+    #[test]
+    fn graph_import_rejects_a_zone_without_a_windows_name() {
+        use crate::services::calendar::import::EventTime;
+        let mut event = import_timed("a@example.com");
+        if let EventTime::Timed { tz, .. } = &mut event.start {
+            *tz = "Nowhere/Land".into();
+        }
+        let error = build_graph_import_request(&event).expect_err("must fail");
+        assert!(matches!(error, AppError::InvalidInput(ref m) if m.contains("no Windows time zone for Nowhere/Land")));
+    }
+
+    #[test]
+    fn graph_import_rejects_rdates_instead_of_dropping_them() {
+        let mut event = import_timed("a@example.com");
+        event.rdates = vec!["RDATE:20261210T100000Z".into()];
+        assert!(build_graph_import_request(&event).is_err());
+    }
+
+    fn instances_page(id: &str, original_start: &str) -> serde_json::Value {
+        serde_json::json!({"value": [
+            {"id": "other", "originalStart": "2026-12-01T09:00:00Z"},
+            {"id": id, "originalStart": original_start}
+        ]})
+    }
+
+    #[tokio::test]
+    async fn outlook_import_deletes_exdate_instances() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "series-1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .and(query_param("startDateTime", "2026-12-07T09:00:00Z"))
+            .and(query_param("endDateTime", "2026-12-09T09:00:00Z"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(instances_page("inst-2", "2026-12-08T09:00:00.0000000Z")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/inst-2"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let id = client.import_event(&weekly_with_exdate()).await.expect("import");
+        assert_eq!(id, "series-1");
+    }
+
+    #[tokio::test]
+    async fn outlook_import_patches_overrides() {
+        use crate::services::calendar::import::EventTime;
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let at = |d, h| {
+            chrono::NaiveDate::from_ymd_opt(2026, 12, d)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap()
+        };
+        let mut event = import_timed("series@example.com");
+        event.rrule = Some("FREQ=WEEKLY;COUNT=4".into());
+        let mut over = import_timed("series@example.com");
+        over.summary = "Moved sync".into();
+        over.recurrence_id = Some(EventTime::Timed {
+            local: at(8, 10),
+            tz: "Europe/Madrid".into(),
+        });
+        over.start = EventTime::Timed {
+            local: at(8, 14),
+            tz: "Europe/Madrid".into(),
+        };
+        over.end = EventTime::Timed {
+            local: at(8, 15),
+            tz: "Europe/Madrid".into(),
+        };
+        over.attendees = vec![crate::models::CalendarAttendee {
+            email: "p@example.com".into(),
+            response: "needsAction".into(),
+        }];
+        event.overrides = vec![over];
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "series-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(instances_page("inst-2", "2026-12-08T09:00:00Z")))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/events/inst-2"))
+            .and(body_partial_json(serde_json::json!({
+                "subject": "Moved sync",
+                "start": {"dateTime": "2026-12-08T14:00:00", "timeZone": "Romance Standard Time"},
+                "end": {"dateTime": "2026-12-08T15:00:00", "timeZone": "Romance Standard Time"}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client.import_event(&event).await.expect("import");
+        let requests = server.received_requests().await.expect("requests");
+        let patch = requests.iter().find(|r| r.method.as_str() == "PATCH").expect("patch");
+        let body: serde_json::Value = serde_json::from_slice(&patch.body).expect("json");
+        assert!(body.get("attendees").is_none());
+    }
+
+    #[tokio::test]
+    async fn outlook_import_rolls_back_on_partial_failure() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "series-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(instances_page("inst-2", "2026-12-08T09:00:00Z")))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/inst-2"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/series-1"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        assert!(client.import_event(&weekly_with_exdate()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn outlook_import_fails_and_rolls_back_when_no_instance_matches() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "series-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/series-1"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        assert!(client.import_event(&weekly_with_exdate()).await.is_err());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
+    async fn a_failed_outlook_rollback_is_logged_without_event_content() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _guard = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "series-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/series-1"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Planning sync leaked body"))
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        assert!(client.import_event(&weekly_with_exdate()).await.is_err());
+        let entries = logger.events();
+        let errors: Vec<_> = entries
+            .iter()
+            .filter(|e| {
+                e.level == "error" && e.source == "sync" && e.message.contains("Outlook Calendar import rollback")
+            })
+            .collect();
+        // Other tests log to the global logger too, so look only at ours.
+        assert_eq!(errors.len(), 1, "got: {entries:?}");
+        assert!(!errors[0].message.contains("Planning"), "no event or body content");
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+    }
+
+    #[tokio::test]
+    async fn outlook_find_checks_our_copies_first_then_the_uid() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_imported_uid_filter("u@example.com")))
+            .and(query_param("$select", "id"))
+            .and(query_param("$top", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"id": "ours"}]})))
+            .mount(&server)
+            .await;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let found = client.find_event_by_uid("u@example.com").await.expect("find");
+        assert_eq!(
+            found,
+            Some(FoundEvent {
+                provider_event_id: "ours".into(),
+                imported_by_emailops: true
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn outlook_find_falls_back_to_the_ical_uid_and_then_none() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_uid_filter("u@example.com")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"id": "invite"}]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let found = client.find_event_by_uid("u@example.com").await.expect("find");
+        assert_eq!(
+            found,
+            Some(FoundEvent {
+                provider_event_id: "invite".into(),
+                imported_by_emailops: false
+            })
+        );
+        assert_eq!(client.find_event_by_uid("none@example.com").await.expect("find"), None);
+    }
+
+    #[tokio::test]
+    async fn outlook_respond_acts_on_the_given_event() {
+        use crate::sync::calendar_provider::{CalendarProvider, RsvpResponse};
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events/evt1/tentativelyAccept"))
+            .and(body_json(serde_json::json!({"sendResponse": true})))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .respond_to_event("primary", "evt1", RsvpResponse::Tentative, "me@example.com")
+            .await
+            .expect("respond");
     }
 }

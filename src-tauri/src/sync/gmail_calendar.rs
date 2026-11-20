@@ -1512,10 +1512,12 @@ mod tests {
         let entries = logger.events();
         let errors: Vec<_> = entries
             .iter()
-            .filter(|e| e.level == "error" && e.source == "sync")
+            .filter(|e| {
+                e.level == "error" && e.source == "sync" && e.message.contains("Google Calendar import rollback")
+            })
             .collect();
+        // Other tests log to the global logger too, so look only at ours.
         assert_eq!(errors.len(), 1, "got: {entries:?}");
-        assert!(errors[0].message.contains("rollback"));
         assert!(!errors[0].message.contains("Planning"), "no event or body content");
         crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
     }
