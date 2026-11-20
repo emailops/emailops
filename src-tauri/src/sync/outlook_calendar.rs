@@ -355,12 +355,10 @@ impl CalendarProvider for OutlookCalendarClient {
     ) -> Result<()> {
         // Graph's accept/decline/tentativelyAccept actions operate on "me" —
         // no attendee surgery needed (`_self_email` unused by design).
-        // OData string literals escape single quotes by doubling them.
-        let escaped_uid = ical_uid.replace('\'', "''");
         let lookup_url = format!(
-            "{}/me/events?$filter=iCalUId%20eq%20'{}'&$select=id&$top=1",
+            "{}/me/events?$filter={}&$select=id&$top=1",
             self.base_url,
-            urlencoding::encode(&escaped_uid)
+            urlencoding::encode(&outlook_uid_filter(ical_uid))
         );
         let lookup = self.send_get_with_retry(&lookup_url, "find invite event").await?;
         if !lookup.status().is_success() {
@@ -407,6 +405,47 @@ impl CalendarProvider for OutlookCalendarClient {
         }
         Ok(())
     }
+}
+
+/// Extended property EmailOps stamps on events it imports, so a later import
+/// of the same `.ics` UID finds the event again.
+pub(crate) const EMAILOPS_UID_PROPERTY: &str = "String {6f5a6c1e-8d2b-4f0e-9a3c-2b7e1d4c5a90} Name EmailOpsIcalUid";
+
+/// Hex of the MS-OXOCAL `PidLidGlobalObjectId` class id.
+const GLOBAL_OBJECT_ID_CLASS: &str = "040000008200E00074C5B7101A82E008";
+
+/// Exchange exposes `iCalUId` for events organized outside Exchange as the hex
+/// of a GlobalObjectId wrapping the original UID: class id, instance date,
+/// creation time and reserved bytes (all zero here), a little-endian size and
+/// `"vCal-Uid" 01 00 00 00 <uid> 00`. A UID that already is such an id passes
+/// through (uppercased).
+pub(crate) fn exchange_global_object_id(ical_uid: &str) -> String {
+    let is_hex = ical_uid.bytes().all(|b| b.is_ascii_hexdigit());
+    if is_hex && ical_uid.to_ascii_uppercase().starts_with(&GLOBAL_OBJECT_ID_CLASS[..16]) {
+        return ical_uid.to_ascii_uppercase();
+    }
+    let mut data = b"vCal-Uid\x01\x00\x00\x00".to_vec();
+    data.extend_from_slice(ical_uid.as_bytes());
+    data.push(0);
+    let mut bytes = Vec::with_capacity(40 + data.len());
+    bytes.extend_from_slice(&[
+        0x04, 0x00, 0x00, 0x00, 0x82, 0x00, 0xE0, 0x00, 0x74, 0xC5, 0xB7, 0x10, 0x1A, 0x82, 0xE0, 0x08,
+    ]);
+    bytes.extend_from_slice(&[0u8; 20]); // instance date, creation time, reserved
+    bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&data);
+    bytes.iter().map(|b| format!("{b:02X}")).collect()
+}
+
+/// OData `$filter` matching an event by its iCalendar UID: the plain
+/// `iCalUId`, the Exchange-wrapped one, or the EmailOps extended property.
+pub(crate) fn outlook_uid_filter(ical_uid: &str) -> String {
+    let plain = ical_uid.replace('\'', "''");
+    let wrapped = exchange_global_object_id(ical_uid).replace('\'', "''");
+    format!(
+        "iCalUId eq '{plain}' or iCalUId eq '{wrapped}' or \
+         singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq '{plain}')"
+    )
 }
 
 /// Recurrence preset → Graph `patternedRecurrence`. Pattern anchors (weekday,
@@ -1361,5 +1400,84 @@ mod tests {
         assert_eq!(body["attendees"][0]["emailAddress"]["address"], "ana@example.com");
         assert_eq!(body["attendees"][0]["type"], "required");
         assert_eq!(body["recurrence"]["pattern"]["type"], "daily");
+    }
+
+    // ── UID lookup ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn global_object_id_wraps_vcal_uid() {
+        let uid = "abc123@example.com";
+        let id = exchange_global_object_id(uid);
+        let uid_hex: String = uid.bytes().map(|b| format!("{b:02X}")).collect();
+
+        assert!(id.starts_with("040000008200E00074C5B7101A82E008"));
+        assert_eq!(id, id.to_uppercase());
+        // 16-byte class id + 4 instance + 8 creation + 8 reserved = 36 bytes.
+        let size = (("vCal-Uid".len() + 4 + uid.len() + 1) as u32).to_le_bytes();
+        let expected_size: String = size.iter().map(|b| format!("{b:02X}")).collect();
+        assert_eq!(&id[72..80], expected_size);
+        assert_eq!(
+            &id[32..72],
+            "0".repeat(40),
+            "instance, creation time and reserved are zero"
+        );
+        assert_eq!(&id[80..], format!("7643616C2D55696401000000{uid_hex}00"));
+    }
+
+    #[test]
+    fn hex_global_object_ids_pass_through() {
+        let already = "040000008200e00074c5b7101a82e008000000000000000000000000000000001234";
+        assert_eq!(exchange_global_object_id(already), already.to_uppercase());
+    }
+
+    #[test]
+    fn uid_filter_matches_plain_encoded_and_property() {
+        let filter = outlook_uid_filter("abc123@example.com");
+        let encoded = exchange_global_object_id("abc123@example.com");
+
+        assert!(filter.contains("iCalUId eq 'abc123@example.com'"));
+        assert!(filter.contains(&format!("iCalUId eq '{encoded}'")));
+        assert!(filter.contains(&format!(
+            "singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq 'abc123@example.com')"
+        )));
+    }
+
+    #[test]
+    fn uid_filter_doubles_single_quotes() {
+        let filter = outlook_uid_filter("o'brien@example.com");
+        assert!(filter.contains("iCalUId eq 'o''brien@example.com'"));
+        assert!(filter.contains("ep/value eq 'o''brien@example.com'"));
+    }
+
+    #[tokio::test]
+    async fn rsvp_finds_an_invite_organized_outside_exchange() {
+        use crate::sync::calendar_provider::{CalendarProvider, RsvpResponse};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        let encoded = exchange_global_object_id("abc123@example.com");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(move |req: &Request| req.url.query().unwrap_or("").contains(encoded.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"value":[{"id":"evt1"}]}"#, "application/json"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"value":[]}"#, "application/json"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/me/events/evt1/accept"))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .rsvp_by_ical_uid("abc123@example.com", RsvpResponse::Accepted, "me@example.com")
+            .await
+            .expect("rsvp");
     }
 }
