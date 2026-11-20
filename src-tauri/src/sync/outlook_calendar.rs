@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
-use crate::services::calendar::import::{EventTime, ImportableEvent};
+use crate::services::calendar::import::{is_auth_error, EventTime, ImportableEvent};
 use crate::sync::calendar_provider::{
     CalendarProvider, FoundEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
@@ -110,15 +110,25 @@ impl OutlookCalendarClient {
     /// Delete the instances an EXDATE removes and patch the ones an override
     /// replaces, on a series that was just created.
     async fn apply_exceptions(&self, series_id: &str, event: &ImportableEvent) -> Result<()> {
+        // One delete per instant: a file can list it twice, or as an EXDATE
+        // and a cancelled override (which the planner turns into an EXDATE).
+        let mut excluded = std::collections::HashSet::new();
         for exdate in &event.exdates {
-            let instance_id = self.find_instance_id(series_id, exdate).await?;
-            self.delete_event("primary", &instance_id, false, "").await?;
+            if !excluded.insert((matches!(exdate, EventTime::AllDay(_)), exdate.to_epoch())) {
+                continue;
+            }
+            // RFC 5545 ignores an EXDATE that matches no occurrence.
+            if let Some(instance_id) = self.find_instance_id(series_id, exdate).await? {
+                self.delete_event("primary", &instance_id, false, "").await?;
+            }
         }
         for over in &event.overrides {
             let original = over.recurrence_id.as_ref().ok_or_else(|| {
                 AppError::InvalidInput("an override without a RECURRENCE-ID cannot be imported".to_string())
             })?;
-            let instance_id = self.find_instance_id(series_id, original).await?;
+            let instance_id = self.find_instance_id(series_id, original).await?.ok_or_else(|| {
+                AppError::SyncError("Outlook has no instance at the original start of an exception".into())
+            })?;
             let body = build_graph_override_patch(over)?;
             let url = format!("{}/me/events/{}", self.base_url, urlencoding::encode(&instance_id));
             let response = self
@@ -137,8 +147,9 @@ impl OutlookCalendarClient {
         Ok(())
     }
 
-    /// The id of the series instance whose original start is `original`.
-    async fn find_instance_id(&self, series_id: &str, original: &EventTime) -> Result<String> {
+    /// The id of the series instance whose original start is `original`, or
+    /// `None` when the series has no instance there.
+    async fn find_instance_id(&self, series_id: &str, original: &EventTime) -> Result<Option<String>> {
         let (from, to) = match original {
             EventTime::AllDay(date) => (
                 date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp() - SECONDS_PER_DAY,
@@ -161,7 +172,8 @@ impl OutlookCalendarClient {
             return Err(self.failure(response).await);
         }
         let page: serde_json::Value = response.json().await?;
-        page.get("value")
+        Ok(page
+            .get("value")
             .and_then(|v| v.as_array())
             .into_iter()
             .flatten()
@@ -173,8 +185,7 @@ impl OutlookCalendarClient {
             })
             .and_then(|instance| instance.get("id"))
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .ok_or_else(|| AppError::SyncError("Outlook has no instance at the original start of an exception".into()))
+            .map(str::to_string))
     }
 
     async fn send_get_with_retry(&self, url: &str, operation: &str) -> Result<Response> {
@@ -514,12 +525,28 @@ impl CalendarProvider for OutlookCalendarClient {
 
     async fn find_event_by_uid(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
         // Our own copy first: an event we imported is what a re-import must
-        // recognise even if its iCalUId differs from the file's UID.
-        if let Some(id) = self.first_event_id(&outlook_imported_uid_filter(ical_uid)).await? {
-            return Ok(Some(FoundEvent {
-                provider_event_id: id,
-                imported_by_emailops: true,
-            }));
+        // recognise even if its iCalUId differs from the file's UID. The
+        // extended-property filter is not known to work on every account type,
+        // so a failure other than an auth one counts as "no copy of ours" and
+        // the iCalUId lookup that invite answers rely on still runs.
+        match self.first_event_id(&outlook_imported_uid_filter(ical_uid)).await {
+            Ok(Some(id)) => {
+                return Ok(Some(FoundEvent {
+                    provider_event_id: id,
+                    imported_by_emailops: true,
+                }))
+            }
+            Ok(None) => {}
+            Err(e) if is_auth_error(&e) => return Err(e),
+            // Code only: the error text can embed a provider response body.
+            Err(e) => crate::services::logger::log(
+                "error",
+                "sync",
+                format!(
+                    "Outlook Calendar copy lookup failed ({}); checking the invite UID",
+                    e.code()
+                ),
+            ),
         }
         Ok(self
             .first_event_id(&outlook_uid_filter(ical_uid))
@@ -1876,6 +1903,26 @@ mod tests {
         event
     }
 
+    /// A weekly series whose 08/12 10:00 occurrence moves to 14:00.
+    fn weekly_with_override() -> ImportableEvent {
+        use crate::services::calendar::import::EventTime;
+        let at = |h| EventTime::Timed {
+            local: chrono::NaiveDate::from_ymd_opt(2026, 12, 8)
+                .unwrap()
+                .and_hms_opt(h, 0, 0)
+                .unwrap(),
+            tz: "Europe/Madrid".into(),
+        };
+        let mut event = import_timed("series@example.com");
+        event.rrule = Some("FREQ=WEEKLY;COUNT=4".into());
+        let mut over = import_timed("series@example.com");
+        over.recurrence_id = Some(at(10));
+        over.start = at(14);
+        over.end = at(15);
+        event.overrides = vec![over];
+        event
+    }
+
     #[test]
     fn graph_import_body_has_no_attendees() {
         let mut event = import_timed("a@example.com");
@@ -2046,6 +2093,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn outlook_import_deletes_each_excluded_instant_once_and_skips_missing_ones() {
+        use crate::services::calendar::import::EventTime;
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mut event = weekly_with_exdate();
+        // 09:00Z is the 10:00 Madrid EXDATE again, as a cancelled override arrives.
+        event.exdates.push(EventTime::Timed {
+            local: chrono::NaiveDate::from_ymd_opt(2026, 12, 8)
+                .unwrap()
+                .and_hms_opt(9, 0, 0)
+                .unwrap(),
+            tz: "UTC".into(),
+        });
+        // After COUNT=4: no instance there, which RFC 5545 ignores.
+        event.exdates.push(EventTime::Timed {
+            local: chrono::NaiveDate::from_ymd_opt(2026, 12, 29)
+                .unwrap()
+                .and_hms_opt(10, 0, 0)
+                .unwrap(),
+            tz: "Europe/Madrid".into(),
+        });
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/events"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "series-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .and(query_param("startDateTime", "2026-12-07T09:00:00Z"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(instances_page("inst-2", "2026-12-08T09:00:00Z")))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events/series-1/instances"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": []})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/inst-2"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/me/events/series-1"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        assert_eq!(client.import_event(&event).await.expect("import"), "series-1");
+    }
+
+    #[tokio::test]
     async fn outlook_import_patches_overrides() {
         use crate::services::calendar::import::EventTime;
         use crate::sync::calendar_provider::CalendarProvider;
@@ -2145,7 +2251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn outlook_import_fails_and_rolls_back_when_no_instance_matches() {
+    async fn outlook_import_fails_and_rolls_back_when_no_instance_matches_an_override() {
         use crate::sync::calendar_provider::CalendarProvider;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -2169,7 +2275,7 @@ mod tests {
             .await;
 
         let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
-        assert!(client.import_event(&weekly_with_exdate()).await.is_err());
+        assert!(client.import_event(&weekly_with_override()).await.is_err());
     }
 
     #[tokio::test]
@@ -2199,7 +2305,7 @@ mod tests {
             .await;
 
         let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
-        assert!(client.import_event(&weekly_with_exdate()).await.is_err());
+        assert!(client.import_event(&weekly_with_override()).await.is_err());
         let entries = logger.events();
         let errors: Vec<_> = entries
             .iter()
@@ -2267,6 +2373,79 @@ mod tests {
             })
         );
         assert_eq!(client.find_event_by_uid("none@example.com").await.expect("find"), None);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
+    async fn outlook_find_falls_back_to_the_ical_uid_when_the_copy_query_fails() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _guard = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_imported_uid_filter("u@example.com")))
+            .respond_with(ResponseTemplate::new(400).set_body_string("unsupported filter on u@example.com"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_uid_filter("u@example.com")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"id": "invite"}]})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let found = client.find_event_by_uid("u@example.com").await;
+        let entries = logger.events();
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+        assert_eq!(
+            found.expect("find"),
+            Some(FoundEvent {
+                provider_event_id: "invite".into(),
+                imported_by_emailops: false
+            })
+        );
+        let ours: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == "sync" && e.message.contains("Outlook Calendar copy lookup failed"))
+            .collect();
+        assert_eq!(ours.len(), 1, "got: {entries:?}");
+        assert!(!ours[0].message.contains("example.com"), "{}", ours[0].message);
+    }
+
+    #[tokio::test]
+    async fn outlook_find_keeps_auth_errors_of_the_copy_query_fatal() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_imported_uid_filter("u@example.com")))
+            .respond_with(ResponseTemplate::new(403).set_body_string(r#"{"error":{"code":"ErrorAccessDenied"}}"#))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_uid_filter("u@example.com")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"id": "invite"}]})))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let err = client
+            .find_event_by_uid("u@example.com")
+            .await
+            .expect_err("auth is fatal");
+        assert!(matches!(err, AppError::CalendarPermissionDenied { .. }), "{err:?}");
     }
 
     #[tokio::test]

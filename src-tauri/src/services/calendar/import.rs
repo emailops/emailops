@@ -623,7 +623,7 @@ pub(crate) fn reason_code(reason: &UnsupportedReason) -> (&'static str, Option<S
 }
 
 /// Errors that mean "sign in again": they abort the whole run.
-fn is_auth_error(e: &AppError) -> bool {
+pub(crate) fn is_auth_error(e: &AppError) -> bool {
     matches!(
         e,
         AppError::NeedsReauth { .. } | AppError::CalendarPermissionDenied { .. }
