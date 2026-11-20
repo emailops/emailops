@@ -4888,3 +4888,24 @@ and #302).
 - *Restoring by replacing the tables*: it would drop rows added after the copy; merging by key
   keeps them, and the account-id check covers the one case where merging would point nowhere.
 - *More than three full copies*: each is the size of the whole database.
+
+## 2026-11-19 — The security-audit skill is vendored and refreshed by script, not installed
+
+**Decision:** `.claude/skills/security-audit/` is an unmodified copy of
+cloudflare/security-audit-skill pinned to the commit in its `SOURCE` file.
+`make security-audit-skill [REF=<commit or tag>]` (`scripts/update_security_audit_skill.sh`)
+refreshes it: it lists the upstream commits since the pin, refuses a tree with a
+symlink, rewrites `SOURCE`, and leaves the change as a working-tree diff to review
+and commit.
+**Context:** The skill's instructions drive many agents with shell access and ship
+validators that run under node, so an upstream change alters what those agents do.
+An update must arrive as a reviewable diff, every developer and agent must run the
+same version, and the skill's own supply-chain guidance treats unpinned inputs as a
+risk. This follows the
+existing pattern for `src-tauri/bundled-skills` (`make bundled-skills`, `SOURCE`).
+**Rejected:** Installing with `npx skills add` and refreshing with `npx skills update`
+from a committed `skills-lock.json` — it adds a third-party npm tool, still copies the
+files, applies upstream changes without a review step, and its lock-file handling has
+reported failures (old lock versions wiped, update not finding the lock, Windows
+issues). A git submodule — the skill lives in a subdirectory of the upstream repo, so
+it would need a symlink into `.claude/skills/`, which is fragile on Windows.
