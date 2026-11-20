@@ -1269,9 +1269,6 @@ mod tests {
 
     use crate::sync::calendar_provider::{CalendarProvider, FakeCalendarProvider, FoundEvent};
 
-    /// The logger is global: tests that install and inspect it take turns.
-    static LOGGER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
     fn fake() -> FakeCalendarProvider {
         FakeCalendarProvider::with_events(vec![])
     }
@@ -1391,7 +1388,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn import_skips_present_and_unsupported_and_counts() {
+        let _guard = crate::services::events::seam_test_lock();
         let mut p = fake();
         p.found_by_uid.insert(
             "a@example.com".into(),
@@ -1408,7 +1407,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn reimporting_the_same_file_imports_nothing() {
+        let _guard = crate::services::events::seam_test_lock();
         let p = fake();
         let ics = file(&[EV_A, EV_B]);
         let first = import_ics(&p, CalendarKind::Google, &ics, "UTC").await.unwrap();
@@ -1418,7 +1419,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn a_failed_event_does_not_stop_the_rest() {
+        let _guard = crate::services::events::seam_test_lock();
         let mut p = fake();
         p.import_errors.insert("a@example.com".into(), "boom".into());
         let s = import_ics(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "UTC")
@@ -1430,7 +1433,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn an_auth_error_aborts_the_import() {
+        let _guard = crate::services::events::seam_test_lock();
         // `error` on the fake fails find_event_by_uid; reauth needs a custom provider.
         let p = AuthFailing { on_find: true };
         let err = import_ics(&p, CalendarKind::Google, &file(&[EV_A]), "UTC")
@@ -1449,8 +1454,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn import_logs_counts_only() {
-        let _guard = LOGGER_LOCK.lock().await;
+        let _guard = crate::services::events::seam_test_lock();
         let logger = crate::services::logger::install_for_testing();
         import_ics(&fake(), CalendarKind::Google, &file(&[EV_A, EV_B]), "UTC")
             .await
@@ -1468,7 +1474,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn preview_reports_a_failed_lookup() {
+        let _guard = crate::services::events::seam_test_lock();
         let mut p = fake();
         p.find_errors.insert("a@example.com".into(), "lookup boom".into());
         let pv = preview_ics_import(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "f.ics", "UTC")
@@ -1481,8 +1489,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
     async fn import_skips_an_event_whose_lookup_failed() {
-        let _guard = LOGGER_LOCK.lock().await;
+        let _guard = crate::services::events::seam_test_lock();
         let logger = crate::services::logger::install_for_testing();
         let mut p = fake();
         p.find_errors.insert("a@example.com".into(), "lookup boom".into());
