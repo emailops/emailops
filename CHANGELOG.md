@@ -7,12 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.20] — 2026-11-20
+
 ### Added
 
+- **Scheduled backups in a new Data & Backups tab.** **Settings → Data &
+  Backups** holds Data location and Backups. Copies run while the app is open,
+  at the time of day you choose (03:00 by default), and a copy missed while the
+  computer was off or asleep is made at the next check. The **local data copy**
+  (daily by default, the newest 7 kept) holds what exists only on this
+  computer, such as accounts without their passwords, settings, rules, memory,
+  tasks, Lenses, chats and shared documents, and Settings can restore one. The
+  **full database copy** can be daily, weekly or off and keeps 1 to 3 copies,
+  1 by default; Time Machine now skips its folder.
 - **The chat panel reads the email you are writing.** With a compose tab or a
   reply open, a chip above the chat input offers the draft as context: ask
   whether it answers every question, or for a better version to copy. Switch
   the chip off to leave the draft out. The chat never writes into the draft.
+- **Word documents open in the app.** A `.docx` attachment opens read-only in a
+  tab or in the Attachments view, and the chat can use it as context the way
+  it already uses an open PDF.
+- **Drafts saved elsewhere show up on IMAP accounts.** The sync reads the
+  Drafts folder of an IMAP account, so a draft another mail client saved there
+  appears in Drafts. EmailOps only reads that folder; it never writes to it.
+- **Choose the account new messages come from.** **Settings → Appearance →
+  Send new messages from** picks a fixed account, or keeps following the view
+  you are in. Replies, forwards and drafts keep their own account, and every
+  From list now puts the accounts you send from most at the top.
+- **Undo window for archive and delete.** **Settings → Appearance → Undo
+  archive and delete** offers Off, 6, 10, 20 or 30 seconds; 6 stays the
+  default. The Undo of a snooze lasts as long.
+- **Resizable columns and a compact sidebar.** Drag the right edge of the
+  folder sidebar or of the email list, or use the arrow keys on it, to resize
+  them; the widths are kept across restarts. **Settings → Appearance → Sidebar
+  density** offers Compact, the new default, and Comfortable, the sidebar as it
+  was.
+- **Paste files into a message.** Files copied in Finder (PDFs, spreadsheets,
+  any file) and pasted into the body of a message are attached, the same as a
+  dropped file. Pasted images are still placed in the text, all of them now,
+  not only the first.
+- **Text colour and Clear formatting in the composer.** A colour picker with
+  colours that read on white, and a button that turns the selection back into
+  plain text. The toolbar is more compact.
+- **Batched Embeddings requests to your own server.** When an OpenAI-compatible
+  server computes the email index, **Settings → AI Backend & Models → Chunks
+  per Embeddings request** (1 to 64) sends several chunks per request. A new
+  **Email index** section shows how many emails are waiting to be indexed and,
+  while indexing runs, how many it gets through per minute.
+
+### Changed
+
+- **Meeting reminders come only from your own calendars.** A calendar someone
+  shared with you no longer reminds you of their meetings.
+- **The email list writes dates in your regional format.** An English UI shows
+  `08/12/2026` on a US system and `12/08/2026` on a UK one.
+- **Pasted text keeps only readable colours.** A pasted colour too close to its
+  background is dropped; readable colours stay.
+- **Spreadsheet import takes `.xlsx` only.** `.xls` and `.ods` files are refused
+  with a hint to save them as `.xlsx` first.
+
+### Fixed
+
+- **Opening a draft no longer saves it.** A Gmail or Outlook draft you only
+  opened is no longer rewritten on the provider.
+- An empty category tab, such as Updates right after adding a Gmail account,
+  stays empty during a sync instead of showing Primary mail.
+- Previews in the email list no longer show HTML codes such as `&#39;`; the
+  ones already stored are repaired once at startup.
+- Invitations and calendar feeds whose time zone is a fixed offset with a
+  non-standard name show at the right time. A recurring event with an
+  unreadable extra date keeps the rest of its series, and a cancelled
+  occurrence never comes back.
+- A drop that mixes images and other files no longer loses the files.
+
+### Security
+
+- **A forged sender is harder to pass off.** An address hidden in a comment of
+  the From header is no longer taken as the sender, a DMARC pass vouches only
+  for the domain it names, and Outlook's authentication results are now read.
+- Message-ID values are quoted in IMAP search commands, so a crafted
+  Message-ID cannot add commands of its own.
+- A message that repeats one inline image thousands of times, or a small
+  spreadsheet with a far-away cell, no longer makes the app do huge amounts of
+  work.
+- lettre 0.11.24 (RUSTSEC-2026-0560..0565) and ammonia 4.2.5
+  (RUSTSEC-2026-0533; EmailOps was not exploitable).
 
 ## [0.6.19] — 2026-11-12
 
