@@ -51,6 +51,9 @@ import type {
   EmbeddingsConfig,
   FilteredEmailsResult,
   FilterSuggestion,
+  IcsImportPreview,
+  IcsImportSummary,
+  InviteResponseOutcome,
   JunkConfig,
   JunkStats,
   JunkVerdict,
@@ -78,6 +81,7 @@ import type {
   QuickFilterStats,
   RefreshServerTotalResponse,
   ResearchEstimate,
+  RsvpChoice,
   SendChatResponse,
   SenderMoveReport,
   SenderStatus,
@@ -2127,14 +2131,48 @@ export async function getCalendarInvite(accountId: string, emailId: string): Pro
   return invoke('get_calendar_invite', { accountId, emailId });
 }
 
-/** RSVP to a calendar invite on the provider (invite card in the email
- *  view). Auth-class errors are possible — classify with `isAuthError`. */
+/** RSVP to a calendar invite (invite card in the email view). The outcome
+ *  says what happened: answered on the provider, imported into the calendar
+ *  (with the reply to the organizer), removed, or not possible yet.
+ *  Auth-class errors are possible — classify with `isAuthError`. */
 export async function rsvpCalendarInvite(
   accountId: string,
-  icalUid: string,
-  response: 'accepted' | 'declined' | 'tentative',
+  emailId: string,
+  response: RsvpChoice,
+  timeZone: string,
+): Promise<InviteResponseOutcome> {
+  return invoke('rsvp_calendar_invite', { accountId, emailId, response, timeZone });
+}
+
+/** Import the invite of an email into the primary calendar without answering it. */
+export async function addInviteToCalendar(
+  accountId: string,
+  emailId: string,
+  timeZone: string,
+): Promise<InviteResponseOutcome> {
+  return invoke('add_invite_to_calendar', { accountId, emailId, timeZone });
+}
+
+/** Change my answer to an event already in the calendar (event-detail dialog). */
+export async function respondToCalendarEvent(
+  accountId: string,
+  calendarId: string,
+  providerEventId: string,
+  response: RsvpChoice,
+  scope: 'instance' | 'series',
 ): Promise<void> {
-  return invoke('rsvp_calendar_invite', { accountId, icalUid, response });
+  return invoke('respond_to_calendar_event', { accountId, calendarId, providerEventId, response, scope });
+}
+
+/** What importing the .ics file at `path` into the account's primary
+ *  calendar would do, item by item. Nothing is written. */
+export async function previewIcsImport(accountId: string, path: string, timeZone: string): Promise<IcsImportPreview> {
+  return invoke('preview_ics_import', { accountId, path, timeZone });
+}
+
+/** Import the .ics file at `path` into the account's primary calendar. */
+export async function importIcs(accountId: string, path: string, timeZone: string): Promise<IcsImportSummary> {
+  return invoke('import_ics', { accountId, path, timeZone });
 }
 
 /** Run one calendar sync cycle for the account right now (view open / manual

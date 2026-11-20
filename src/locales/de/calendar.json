@@ -104,7 +104,8 @@
     },
     "change": "Ändern",
     "authError": "Deine Antwort konnte nicht gesendet werden. Melde dich erneut bei diesem Konto an, um Kalenderzugriff zu gewähren.",
-    "error": "Deine Antwort konnte nicht gesendet werden: {{message}}"
+    "error": "Deine Antwort konnte nicht gesendet werden: {{message}}",
+    "notYetInCalendar": "Diese Einladung ist noch nicht in deinem Kalender angekommen — versuche es gleich noch einmal."
   },
   "calendars": {
     "hideOne": "{{name}} ausblenden",
@@ -120,5 +121,45 @@
     "setupBody": "IMAP-Konten zeigen einen Kalender, sobald du in Einstellungen → Kalender einen Kalender-Feed abonnierst (bei Proton Calendar den Link zum Teilen).",
     "setupButton": "In den Einstellungen einrichten",
     "addEvent": "Neuer Termin an diesem Tag"
+  },
+  "import": {
+    "button": ".ics importieren",
+    "title": "Kalenderdatei importieren",
+    "account": "Importieren in",
+    "choose": "Datei wählen…",
+    "chooseAnother": "Andere Datei wählen",
+    "noFile": "Wähle eine .ics-Datei, um ihren Inhalt zu sehen.",
+    "loading": "Datei wird gelesen…",
+    "fileName": "Datei: {{name}}",
+    "empty": "Die Datei enthält keine Termine.",
+    "importN_one": "{{count}} Termin importieren",
+    "importN_other": "{{count}} Termine importieren",
+    "importing": "Importiere…",
+    "error": "Import nicht möglich: {{message}}",
+    "status": {
+      "importable": "Wird importiert",
+      "alreadyInCalendar": "Bereits im Kalender",
+      "unsupported": "Kann nicht importiert werden"
+    },
+    "allDay": "Ganztägig",
+    "summary": {
+      "title": "Import abgeschlossen",
+      "imported_one": "{{count}} Termin importiert",
+      "imported_other": "{{count}} Termine importiert",
+      "alreadyPresent": "Bereits im Kalender: {{count}}",
+      "unsupported": "Nicht importierbar: {{count}}",
+      "failed": "Fehlgeschlagen: {{count}}"
+    },
+    "reason": {
+      "missingUidOrStart": "Der Termin hat keine Kennung oder Startzeit",
+      "cancelled": "Der Termin ist abgesagt",
+      "outlookRecurrence": "Outlook kann ihn so nicht wiederholen",
+      "outlookRdate": "Outlook unterstützt keine zusätzlichen Daten in einem Serientermin",
+      "outlookOrphanOverride": "Zu einem geänderten Termin fehlt die Serie in dieser Datei",
+      "unsupportedRecurrence": "Dieses Wiederholungsmuster wird nicht unterstützt",
+      "invalidProperty": "Der Termin hat eine ungültige Eigenschaft",
+      "unknownTimezone": "Der Termin verwendet eine unbekannte Zeitzone",
+      "lookupFailed": "Es konnte nicht geprüft werden, ob er schon im Kalender ist"
+    }
   }
 }

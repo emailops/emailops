@@ -7,9 +7,7 @@ import { errorText, isAuthError } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
-import type { CalendarInvite, Email } from '@/types';
-
-type RsvpChoice = 'accepted' | 'declined' | 'tentative';
+import type { CalendarInvite, Email, RsvpChoice } from '@/types';
 
 /** Inline note under the RSVP buttons. `info` covers the "invite hasn't
  *  reached your calendar yet" case, `auth` suggests re-authenticating. */
@@ -75,17 +73,27 @@ export function CalendarInviteCard({ email }: { email: Email }) {
     setRsvpBusy(choice);
     setRsvpNote(null);
     try {
-      await api.rsvpCalendarInvite(email.accountId, invite.uid, choice);
-      setRsvpDone(choice);
-      addLog('success', 'sync', `Calendar invite response sent (${choice})`);
+      const outcome = await api.rsvpCalendarInvite(
+        email.accountId,
+        email.id,
+        choice,
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
+      );
+      if (outcome.kind === 'notYetInCalendar') {
+        // The invite can take a minute to land in the provider calendar.
+        setRsvpNote({ kind: 'info', message: t('calendar:invite.notYetInCalendar') });
+      } else if (outcome.kind === 'cannotImport') {
+        const text = t(`calendar:import.reason.${outcome.reason}` as const, { defaultValue: outcome.reason });
+        const reason = outcome.reasonDetail ? `${text} (${outcome.reasonDetail})` : text;
+        setRsvpNote({ kind: 'error', message: t('calendar:invite.error', { message: reason }) });
+      } else {
+        setRsvpDone(choice);
+        addLog('success', 'sync', `Calendar invite response sent (${choice})`);
+      }
     } catch (e) {
       const msg = errorText(e);
       addLog('error', 'sync', `Failed to respond to calendar invite: ${msg}`);
-      if (msg.includes("hasn't reached your calendar")) {
-        // The invite can take a minute to land in the provider calendar —
-        // show the backend's explanation rather than a scary failure.
-        setRsvpNote({ kind: 'info', message: msg });
-      } else if (isAuthError(e, msg)) {
+      if (isAuthError(e, msg)) {
         setRsvpNote({ kind: 'auth', message: t('calendar:invite.authError') });
       } else {
         setRsvpNote({ kind: 'error', message: t('calendar:invite.error', { message: msg }) });

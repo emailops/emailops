@@ -21,6 +21,7 @@ import { calendarPanelState, useCalendarIntegrationStore } from '@/stores/calend
 import { useLogStore } from '@/stores/logStore';
 import type { Account, Calendar, CalendarEvent } from '@/types';
 import { EventDetailDialog } from './EventDetailDialog';
+import { ImportIcsDialog } from './ImportIcsDialog';
 import { MonthGrid } from './MonthGrid';
 import { NewEventDialog } from './NewEventDialog';
 import { TimeGrid } from './TimeGrid';
@@ -80,6 +81,8 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
     null,
   );
 
+  const [importOpen, setImportOpen] = useState(false);
+
   // Visible range for the current view/anchor, in unix seconds.
   const { rangeStart, rangeEnd } = useMemo(() => {
     if (viewMode === 'month') {
@@ -124,6 +127,11 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
   const shownAccounts = useMemo(
     () => calendarAccounts.filter((a) => shownAccountIds.includes(a.id)),
     [calendarAccounts, shownAccountIds],
+  );
+  // "Import .ics" writes to the primary calendar, so only accounts the app can write to.
+  const importChoices = useMemo(
+    () => createAccountChoices(shownAccounts, calendars, 0).filter((c) => c.plan.kind === 'dialog'),
+    [shownAccounts, calendars],
   );
 
   const enableCalendar = useCallback(() => {
@@ -370,6 +378,14 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
             </button>
           ))}
         </div>
+        {importChoices.length > 0 && (
+          <button
+            onClick={() => setImportOpen(true)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            {t('calendar:import.button')}
+          </button>
+        )}
         <button
           onClick={() => void runSync()}
           disabled={isSyncing || shownAccountIds.length === 0}
@@ -471,6 +487,19 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
           onAuthError={() => {
             setSelectedEvent(null);
             markNeedsReauth(selectedEvent.accountId);
+          }}
+        />
+      )}
+
+      {importOpen && importChoices.length > 0 && (
+        <ImportIcsDialog
+          choices={importChoices}
+          initialAccountId={selectedAccountId ?? ''}
+          onClose={() => setImportOpen(false)}
+          onImported={() => void runSync()}
+          onAuthError={(accountId) => {
+            setImportOpen(false);
+            markNeedsReauth(accountId);
           }}
         />
       )}

@@ -104,7 +104,8 @@
     },
     "change": "Cambiar",
     "authError": "No se pudo enviar tu respuesta. Inicia sesión de nuevo en esta cuenta para conceder acceso al calendario.",
-    "error": "No se pudo enviar tu respuesta: {{message}}"
+    "error": "No se pudo enviar tu respuesta: {{message}}",
+    "notYetInCalendar": "Esta invitación aún no ha llegado a tu calendario; inténtalo de nuevo en un momento."
   },
   "calendars": {
     "hideOne": "Ocultar {{name}}",
@@ -120,5 +121,45 @@
     "setupBody": "Las cuentas IMAP muestran un calendario cuando te suscribes a un feed de calendario (en Proton Calendar, su enlace de compartir) en Ajustes → Calendario.",
     "setupButton": "Configurar en Ajustes",
     "addEvent": "Nuevo evento en este día"
+  },
+  "import": {
+    "button": "Importar .ics",
+    "title": "Importar archivo de calendario",
+    "account": "Importar en",
+    "choose": "Elegir archivo…",
+    "chooseAnother": "Elegir otro archivo",
+    "noFile": "Elige un archivo .ics para ver qué contiene.",
+    "loading": "Leyendo el archivo…",
+    "fileName": "Archivo: {{name}}",
+    "empty": "El archivo no tiene eventos.",
+    "importN_one": "Importar {{count}} evento",
+    "importN_other": "Importar {{count}} eventos",
+    "importing": "Importando…",
+    "error": "No se pudo importar: {{message}}",
+    "status": {
+      "importable": "Se importará",
+      "alreadyInCalendar": "Ya está en el calendario",
+      "unsupported": "No se puede importar"
+    },
+    "allDay": "Todo el día",
+    "summary": {
+      "title": "Importación terminada",
+      "imported_one": "{{count}} evento importado",
+      "imported_other": "{{count}} eventos importados",
+      "alreadyPresent": "Ya estaban en el calendario: {{count}}",
+      "unsupported": "No se pueden importar: {{count}}",
+      "failed": "Con error: {{count}}"
+    },
+    "reason": {
+      "missingUidOrStart": "El evento no tiene identificador u hora de inicio",
+      "cancelled": "El evento está cancelado",
+      "outlookRecurrence": "Outlook no puede repetirlo así",
+      "outlookRdate": "Outlook no admite fechas adicionales en un evento recurrente",
+      "outlookOrphanOverride": "Una ocurrencia modificada no tiene su evento recurrente en este archivo",
+      "unsupportedRecurrence": "Esta repetición no es compatible",
+      "invalidProperty": "El evento tiene una propiedad no válida",
+      "unknownTimezone": "El evento usa una zona horaria desconocida",
+      "lookupFailed": "No se pudo comprobar si ya está en el calendario"
+    }
   }
 }

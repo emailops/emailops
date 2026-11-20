@@ -199,6 +199,59 @@ export interface CalendarInvite {
   recurrence: string | null;
   /** iCalendar METHOD — "REQUEST" | "CANCEL" | … */
   method: string;
+  /** A broadcast (`METHOD:PUBLISH`) or an event without ORGANIZER: nobody to answer. */
+  isPublish: boolean;
+  /** Where an answer goes: the organizer, unless this is a publish or I am the organizer. */
+  replyTo: string | null;
+  /** The organizer sent this very email. */
+  organizerIsSender: boolean;
+}
+
+/** An answer to a calendar invite. */
+export type RsvpChoice = 'accepted' | 'declined' | 'tentative';
+
+/** What `rsvp_calendar_invite` / `add_invite_to_calendar` did. */
+export type InviteResponseOutcome =
+  | { kind: 'responded'; replySentTo: string | null }
+  | { kind: 'imported'; replySentTo: string | null; replyError: string | null }
+  | { kind: 'removed'; replySentTo: string | null; replyError: string | null }
+  | { kind: 'alreadyInCalendar' }
+  | { kind: 'notYetInCalendar' }
+  | { kind: 'cannotImport'; reason: string; reasonDetail: string | null };
+
+export type IcsImportItemStatus = 'importable' | 'alreadyInCalendar' | 'unsupported';
+
+export interface IcsImportPreviewItem {
+  uid: string;
+  title: string;
+  /** UTC epoch seconds. */
+  startTime: number;
+  endTime: number;
+  isAllDay: boolean;
+  /** Raw RRULE value; null when one-off. */
+  recurrence: string | null;
+  status: IcsImportItemStatus;
+  /** Code of why the item is unsupported (`calendar:import.reason.*`). */
+  reason: string | null;
+  reasonDetail: string | null;
+}
+
+/** What importing an .ics file would do, without doing it. */
+export interface IcsImportPreview {
+  fileName: string;
+  items: IcsImportPreviewItem[];
+}
+
+export interface IcsImportFailure {
+  title: string;
+  reason: string;
+}
+
+export interface IcsImportSummary {
+  imported: number;
+  alreadyPresent: number;
+  unsupported: number;
+  failed: IcsImportFailure[];
 }
 export type EmailCategory = 'primary' | 'social' | 'updates' | 'forums' | 'promotions';
 

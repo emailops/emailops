@@ -1,7 +1,7 @@
 // Contract: the calendar commands are called from api.ts with the argument
 // names their Rust signatures declare (see ./contract.ts).
 import { describe, expect, it } from 'vitest';
-import { itMatchesRustArguments, rustStructFields, tsInterfaceFields } from './contract';
+import { itMatchesRustArguments, rustStructFields, rustTaggedEnum, tsInterfaceFields, tsTaggedUnion } from './contract';
 
 describe('api.ts ↔ Rust: calendar commands', () => {
   itMatchesRustArguments(['calendar.rs']);
@@ -20,5 +20,18 @@ describe('calendar responses have the shape the frontend types declare', () => {
 
   it('list_calendar_feeds answers CalendarFeed', () => {
     expect(rustStructFields('models/mod.rs', 'CalendarFeed')).toEqual(tsInterfaceFields('CalendarFeed'));
+  });
+
+  it.each([['IcsImportPreview'], ['IcsImportPreviewItem'], ['IcsImportSummary'], ['IcsImportFailure']])(
+    'import_ics and preview_ics_import answer %s',
+    (name) => {
+      expect(rustStructFields('services/calendar/import.rs', name)).toEqual(tsInterfaceFields(name));
+    },
+  );
+
+  it('the invite commands answer InviteResponseOutcome', () => {
+    expect(rustTaggedEnum('services/calendar/respond.rs', 'InviteResponseOutcome')).toEqual(
+      tsTaggedUnion('InviteResponseOutcome'),
+    );
   });
 });

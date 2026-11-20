@@ -104,7 +104,8 @@
     },
     "change": "Modifier",
     "authError": "Impossible d'envoyer votre réponse. Reconnectez-vous à ce compte pour accorder l'accès au calendrier.",
-    "error": "Impossible d'envoyer votre réponse : {{message}}"
+    "error": "Impossible d'envoyer votre réponse : {{message}}",
+    "notYetInCalendar": "Cette invitation n'est pas encore arrivée dans votre calendrier — réessayez dans un instant."
   },
   "calendars": {
     "hideOne": "Masquer {{name}}",
@@ -120,5 +121,45 @@
     "setupBody": "Les comptes IMAP affichent un calendrier dès que vous vous abonnez à un flux de calendrier (pour Proton Calendar, son lien de partage) dans Paramètres → Calendrier.",
     "setupButton": "Configurer dans les paramètres",
     "addEvent": "Nouvel événement ce jour-là"
+  },
+  "import": {
+    "button": "Importer un .ics",
+    "title": "Importer un fichier de calendrier",
+    "account": "Importer dans",
+    "choose": "Choisir un fichier…",
+    "chooseAnother": "Choisir un autre fichier",
+    "noFile": "Choisissez un fichier .ics pour voir son contenu.",
+    "loading": "Lecture du fichier…",
+    "fileName": "Fichier : {{name}}",
+    "empty": "Le fichier ne contient aucun événement.",
+    "importN_one": "Importer {{count}} événement",
+    "importN_other": "Importer {{count}} événements",
+    "importing": "Importation…",
+    "error": "Importation impossible : {{message}}",
+    "status": {
+      "importable": "Sera importé",
+      "alreadyInCalendar": "Déjà dans le calendrier",
+      "unsupported": "Ne peut pas être importé"
+    },
+    "allDay": "Toute la journée",
+    "summary": {
+      "title": "Importation terminée",
+      "imported_one": "{{count}} événement importé",
+      "imported_other": "{{count}} événements importés",
+      "alreadyPresent": "Déjà dans le calendrier : {{count}}",
+      "unsupported": "Impossibles à importer : {{count}}",
+      "failed": "En échec : {{count}}"
+    },
+    "reason": {
+      "missingUidOrStart": "L'événement n'a pas d'identifiant ni d'heure de début",
+      "cancelled": "L'événement est annulé",
+      "outlookRecurrence": "Outlook ne peut pas le répéter ainsi",
+      "outlookRdate": "Outlook ne gère pas les dates supplémentaires dans un événement récurrent",
+      "outlookOrphanOverride": "Une occurrence modifiée n'a pas son événement récurrent dans ce fichier",
+      "unsupportedRecurrence": "Cette récurrence n'est pas prise en charge",
+      "invalidProperty": "L'événement a une propriété non valide",
+      "unknownTimezone": "L'événement utilise un fuseau horaire inconnu",
+      "lookupFailed": "Impossible de vérifier s'il est déjà dans le calendrier"
+    }
   }
 }

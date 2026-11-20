@@ -104,7 +104,8 @@
     },
     "change": "Change",
     "authError": "Couldn't send your response. Sign in to this account again to grant calendar access.",
-    "error": "Couldn't send your response: {{message}}"
+    "error": "Couldn't send your response: {{message}}",
+    "notYetInCalendar": "This invitation hasn't reached your calendar yet — try again in a moment."
   },
   "calendars": {
     "hideOne": "Hide {{name}}",
@@ -120,5 +121,45 @@
     "setupBody": "IMAP accounts show a calendar once you subscribe to a calendar feed (for Proton Calendar, its share-via-link URL) in Settings → Calendar.",
     "setupButton": "Set up in Settings",
     "addEvent": "New event on this day"
+  },
+  "import": {
+    "button": "Import .ics",
+    "title": "Import calendar file",
+    "account": "Import into",
+    "choose": "Choose file…",
+    "chooseAnother": "Choose another file",
+    "noFile": "Choose an .ics file to see what it contains.",
+    "loading": "Reading the file…",
+    "fileName": "File: {{name}}",
+    "empty": "The file has no events.",
+    "importN_one": "Import {{count}} event",
+    "importN_other": "Import {{count}} events",
+    "importing": "Importing…",
+    "error": "Couldn't import: {{message}}",
+    "status": {
+      "importable": "Will be imported",
+      "alreadyInCalendar": "Already in the calendar",
+      "unsupported": "Can't be imported"
+    },
+    "allDay": "All day",
+    "summary": {
+      "title": "Import finished",
+      "imported_one": "{{count}} event imported",
+      "imported_other": "{{count}} events imported",
+      "alreadyPresent": "Already in the calendar: {{count}}",
+      "unsupported": "Can't be imported: {{count}}",
+      "failed": "Failed: {{count}}"
+    },
+    "reason": {
+      "missingUidOrStart": "The event has no identifier or start time",
+      "cancelled": "The event is cancelled",
+      "outlookRecurrence": "Outlook can't repeat this way",
+      "outlookRdate": "Outlook doesn't support extra dates in a repeating event",
+      "outlookOrphanOverride": "A changed occurrence has no repeating event in this file",
+      "unsupportedRecurrence": "This repeat pattern isn't supported",
+      "invalidProperty": "The event has an invalid property",
+      "unknownTimezone": "The event uses an unknown time zone",
+      "lookupFailed": "Couldn't check whether it is already in the calendar"
+    }
   }
 }
