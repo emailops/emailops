@@ -437,15 +437,21 @@ pub(crate) fn exchange_global_object_id(ical_uid: &str) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
-/// OData `$filter` matching an event by its iCalendar UID: the plain
-/// `iCalUId`, the Exchange-wrapped one, or the EmailOps extended property.
+/// OData `$filter` matching an invite event by its iCalendar UID: the plain
+/// `iCalUId` or the Exchange-wrapped one.
 pub(crate) fn outlook_uid_filter(ical_uid: &str) -> String {
     let plain = ical_uid.replace('\'', "''");
     let wrapped = exchange_global_object_id(ical_uid).replace('\'', "''");
-    format!(
-        "iCalUId eq '{plain}' or iCalUId eq '{wrapped}' or \
-         singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq '{plain}')"
-    )
+    format!("iCalUId eq '{plain}' or iCalUId eq '{wrapped}'")
+}
+
+/// OData `$filter` matching an event EmailOps imported, by the UID stored in
+/// its extended property. Meant as a separate query from [`outlook_uid_filter`].
+// Used by the import path (a later task); unused in non-test builds until then.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn outlook_imported_uid_filter(ical_uid: &str) -> String {
+    let plain = ical_uid.replace('\'', "''");
+    format!("singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq '{plain}')")
 }
 
 /// Recurrence preset → Graph `patternedRecurrence`. Pattern anchors (weekday,
@@ -1431,22 +1437,30 @@ mod tests {
     }
 
     #[test]
-    fn uid_filter_matches_plain_encoded_and_property() {
+    fn uid_filter_matches_plain_and_encoded() {
         let filter = outlook_uid_filter("abc123@example.com");
         let encoded = exchange_global_object_id("abc123@example.com");
 
         assert!(filter.contains("iCalUId eq 'abc123@example.com'"));
         assert!(filter.contains(&format!("iCalUId eq '{encoded}'")));
-        assert!(filter.contains(&format!(
-            "singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq 'abc123@example.com')"
-        )));
+        assert!(!filter.contains("singleValueExtendedProperties"));
     }
 
     #[test]
     fn uid_filter_doubles_single_quotes() {
         let filter = outlook_uid_filter("o'brien@example.com");
         assert!(filter.contains("iCalUId eq 'o''brien@example.com'"));
-        assert!(filter.contains("ep/value eq 'o''brien@example.com'"));
+    }
+
+    #[test]
+    fn imported_uid_filter_targets_the_emailops_property() {
+        assert_eq!(
+            outlook_imported_uid_filter("abc123@example.com"),
+            format!(
+                "singleValueExtendedProperties/Any(ep: ep/id eq '{EMAILOPS_UID_PROPERTY}' and ep/value eq 'abc123@example.com')"
+            )
+        );
+        assert!(outlook_imported_uid_filter("o'brien@example.com").contains("ep/value eq 'o''brien@example.com'"));
     }
 
     #[tokio::test]
