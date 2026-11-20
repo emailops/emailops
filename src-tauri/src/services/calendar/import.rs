@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use chrono::{NaiveDate, NaiveDateTime, TimeZone};
 
 use super::ics::{
-    param_value, resolve_tzid, skipped_local_time, unescape_text, IcsProperty, IcsZone, ParsedCalendar, RawVEvent,
+    param_value, resolve_tzid, skipped_local_time, unescape_text, with_iana_tzid, IcsProperty, IcsZone, ParsedCalendar,
+    RawVEvent,
 };
 use crate::models::error::{AppError, Result};
 use crate::models::CalendarAttendee;
@@ -43,7 +44,7 @@ pub struct ImportableEvent {
     pub end: EventTime,
     pub rrule: Option<String>,
     pub exdates: Vec<EventTime>,
-    /// Raw RDATE values, one per date.
+    /// One `RDATE[;params]:value` content line per property, TZID as IANA name.
     pub rdates: Vec<String>,
     pub recurrence_id: Option<EventTime>,
     pub overrides: Vec<ImportableEvent>,
@@ -186,23 +187,31 @@ impl Ctx<'_> {
             master,
             overrides: raw_overrides,
         } = group;
+        // An override we cannot place would be lost silently: refuse the series.
+        if let Some(broken) = raw_overrides.iter().find(|raw| self.event(raw).is_none()) {
+            return self.missing_uid_or_start(master.as_ref().unwrap_or(broken));
+        }
         let mut overrides = raw_overrides.iter().filter_map(|raw| self.event(raw));
         let Some(raw_master) = master else {
             // Only overrides: the first one stands for the item.
-            return match overrides.next() {
-                Some(mut event) => {
-                    event.overrides = overrides.collect();
-                    let status = if target == CalendarKind::Outlook {
-                        ImportItemStatus::Unsupported(UnsupportedReason::OutlookOrphanOverride)
-                    } else {
-                        ImportItemStatus::Importable
-                    };
-                    ImportItem { event, status }
-                }
-                None => match raw_overrides.first() {
-                    Some(raw) => self.missing_uid_or_start(raw),
-                    None => unreachable_empty(),
-                },
+            let Some(mut event) = overrides.next() else {
+                return unreachable_empty();
+            };
+            event.overrides = overrides.collect();
+            let status = if target == CalendarKind::Outlook {
+                UnsupportedReason::OutlookOrphanOverride
+            } else if !event.overrides.is_empty() {
+                // Google cannot import several standalone events with one iCalUID.
+                UnsupportedReason::UnsupportedRecurrence("RECURRENCE-ID".into())
+            } else {
+                return ImportItem {
+                    event,
+                    status: ImportItemStatus::Importable,
+                };
+            };
+            return ImportItem {
+                event,
+                status: ImportItemStatus::Unsupported(status),
             };
         };
         let Some(mut event) = self.event(&raw_master) else {
@@ -278,12 +287,7 @@ impl Ctx<'_> {
                 .all("EXDATE")
                 .flat_map(|p| p.value.split(',').filter_map(|v| self.time(p, v)))
                 .collect(),
-            rdates: raw
-                .all("RDATE")
-                .flat_map(|p| p.value.split(','))
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .collect(),
+            rdates: raw.all("RDATE").map(|p| self.recurrence_line(p)).collect(),
             recurrence_id: raw.first("RECURRENCE-ID").and_then(|p| self.time(p, &p.value)),
             overrides: Vec::new(),
             organizer: raw
@@ -302,6 +306,17 @@ impl Ctx<'_> {
                 .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(0),
         }
+    }
+
+    /// `NAME[;params]:value` with any TZID rewritten to its IANA name, the form
+    /// Google's `recurrence` array takes.
+    fn recurrence_line(&self, prop: &IcsProperty) -> String {
+        let mut line = prop.name.clone();
+        for param in &prop.params {
+            line.push(';');
+            line.push_str(&with_iana_tzid(param, &self.cal.fixed_zones));
+        }
+        format!("{line}:{}", prop.value.trim())
     }
 
     /// DTEND, else DURATION, else RFC 5545 §3.6.1: one day for all-day events,
@@ -787,5 +802,52 @@ mod tests {
         // 2026-10-25 02:30 happens twice in Madrid; the first is +02:00.
         let t = timed(at(2026, 10, 25, 2, 30), "Europe/Madrid");
         assert_eq!(t.to_epoch(), at(2026, 10, 25, 0, 30).and_utc().timestamp());
+    }
+
+    #[test]
+    fn rdate_keeps_params_with_iana_tzid() {
+        let item = one(
+            "UID:a@example.com\nDTSTART:20261205T083000Z\nRDATE;TZID=Romance Standard Time:20261210T100000\nRDATE;VALUE=DATE:20261224",
+            CalendarKind::Google,
+        );
+        assert_eq!(
+            item.event.rdates,
+            ["RDATE;TZID=Europe/Paris:20261210T100000", "RDATE;VALUE=DATE:20261224"]
+        );
+    }
+
+    #[test]
+    fn override_without_start_makes_the_series_unsupported() {
+        let items = plan(
+            &[
+                "UID:a@example.com\nDTSTART:20261205T083000Z\nRRULE:FREQ=WEEKLY",
+                "UID:a@example.com\nRECURRENCE-ID:20261212T083000Z\nSUMMARY:No start",
+            ],
+            CalendarKind::Google,
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].status,
+            ImportItemStatus::Unsupported(UnsupportedReason::MissingUidOrStart)
+        );
+    }
+
+    #[test]
+    fn several_orphan_overrides_are_unsupported() {
+        let bodies = [
+            "UID:a@example.com\nRECURRENCE-ID:20261212T083000Z\nDTSTART:20261212T090000Z",
+            "UID:a@example.com\nRECURRENCE-ID:20261219T083000Z\nDTSTART:20261219T090000Z",
+        ];
+        let google = plan(&bodies, CalendarKind::Google);
+        assert_eq!(google.len(), 1);
+        assert_eq!(
+            google[0].status,
+            ImportItemStatus::Unsupported(UnsupportedReason::UnsupportedRecurrence("RECURRENCE-ID".into()))
+        );
+        let outlook = plan(&bodies, CalendarKind::Outlook);
+        assert_eq!(
+            outlook[0].status,
+            ImportItemStatus::Unsupported(UnsupportedReason::OutlookOrphanOverride)
+        );
     }
 }
