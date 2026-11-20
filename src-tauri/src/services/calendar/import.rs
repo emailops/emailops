@@ -73,6 +73,8 @@ pub enum ImportItemStatus {
     Importable,
     /// Set by the executor, never by the planner.
     AlreadyInCalendar,
+    /// Set by the executor when the duplicate check failed (not an auth error).
+    LookupFailed(String),
     Unsupported(UnsupportedReason),
 }
 
@@ -628,17 +630,40 @@ fn plan_text(ics: &str, kind: CalendarKind, default_tz: &str) -> Result<Vec<Impo
 }
 
 /// Mark the importable items the calendar already holds. An auth error aborts;
-/// any other lookup error leaves the item importable (the import reports it).
+/// any other lookup error is logged (code only) and marks the item
+/// `LookupFailed`, so it is never imported blind.
 async fn mark_present(provider: &dyn CalendarProvider, items: &mut [ImportItem]) -> Result<()> {
     for item in items.iter_mut().filter(|i| i.status == ImportItemStatus::Importable) {
         match provider.find_event_by_uid(&item.event.uid).await {
             Ok(Some(_)) => item.status = ImportItemStatus::AlreadyInCalendar,
             Ok(None) => {}
             Err(e) if is_auth_error(&e) => return Err(e),
-            Err(_) => {}
+            Err(e) => {
+                logger::log(
+                    "error",
+                    "sync",
+                    format!("Calendar duplicate check failed: {}", e.code()),
+                );
+                item.status = ImportItemStatus::LookupFailed(e.to_string());
+            }
         }
     }
     Ok(())
+}
+
+/// Read the file at `path` and preview its import.
+pub async fn preview_ics_file(
+    provider: &dyn CalendarProvider,
+    kind: CalendarKind,
+    path: &std::path::Path,
+    default_tz: &str,
+) -> Result<IcsImportPreview> {
+    let ics = read_ics_file(path)?;
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    preview_ics_import(provider, kind, &ics, &file_name, default_tz).await
 }
 
 pub async fn preview_ics_import(
@@ -656,6 +681,7 @@ pub async fn preview_ics_import(
             let (status, reason, reason_detail) = match &item.status {
                 ImportItemStatus::Importable => ("importable", None, None),
                 ImportItemStatus::AlreadyInCalendar => ("alreadyInCalendar", None, None),
+                ImportItemStatus::LookupFailed(d) => ("unsupported", Some("lookupFailed".to_string()), Some(d.clone())),
                 ImportItemStatus::Unsupported(r) => {
                     let (code, detail) = reason_code(r);
                     ("unsupported", Some(code.to_string()), detail)
@@ -724,6 +750,10 @@ async fn run_import(
         match &item.status {
             ImportItemStatus::AlreadyInCalendar => summary.already_present += 1,
             ImportItemStatus::Unsupported(_) => summary.unsupported += 1,
+            ImportItemStatus::LookupFailed(reason) => summary.failed.push(IcsImportFailure {
+                title: item.event.summary.clone(),
+                reason: reason.clone(),
+            }),
             ImportItemStatus::Importable => match provider.import_event(&item.event).await {
                 Ok(_) => summary.imported += 1,
                 Err(e) if is_auth_error(&e) => return Err(e),
@@ -1239,6 +1269,9 @@ mod tests {
 
     use crate::sync::calendar_provider::{CalendarProvider, FakeCalendarProvider, FoundEvent};
 
+    /// The logger is global: tests that install and inspect it take turns.
+    static LOGGER_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn fake() -> FakeCalendarProvider {
         FakeCalendarProvider::with_events(vec![])
     }
@@ -1417,6 +1450,7 @@ mod tests {
 
     #[tokio::test]
     async fn import_logs_counts_only() {
+        let _guard = LOGGER_LOCK.lock().await;
         let logger = crate::services::logger::install_for_testing();
         import_ics(&fake(), CalendarKind::Google, &file(&[EV_A, EV_B]), "UTC")
             .await
@@ -1431,6 +1465,39 @@ mod tests {
                 e.message
             );
         }
+    }
+
+    #[tokio::test]
+    async fn preview_reports_a_failed_lookup() {
+        let mut p = fake();
+        p.find_errors.insert("a@example.com".into(), "lookup boom".into());
+        let pv = preview_ics_import(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "f.ics", "UTC")
+            .await
+            .unwrap();
+        assert_eq!(pv.items[0].status, "unsupported");
+        assert_eq!(pv.items[0].reason.as_deref(), Some("lookupFailed"));
+        assert!(pv.items[0].reason_detail.as_deref().unwrap().contains("lookup boom"));
+        assert_eq!(pv.items[1].status, "importable");
+    }
+
+    #[tokio::test]
+    async fn import_skips_an_event_whose_lookup_failed() {
+        let _guard = LOGGER_LOCK.lock().await;
+        let logger = crate::services::logger::install_for_testing();
+        let mut p = fake();
+        p.find_errors.insert("a@example.com".into(), "lookup boom".into());
+        let s = import_ics(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "UTC")
+            .await
+            .unwrap();
+        assert_eq!((s.imported, s.failed.len()), (1, 1));
+        assert_eq!(s.failed[0].title, "Quarterly Zebra Review");
+        let imported = p.imported.lock().unwrap();
+        assert!(imported.iter().all(|e| e.uid != "a@example.com"));
+        let errors: Vec<_> = logger.events().into_iter().filter(|e| e.level == "error").collect();
+        assert!(errors.iter().any(|e| e.message.contains("duplicate check failed")));
+        assert!(errors
+            .iter()
+            .all(|e| !e.message.contains("Zebra") && !e.message.contains("a@example.com")));
     }
 
     /// A provider whose lookups (or imports) fail with an auth-class error.

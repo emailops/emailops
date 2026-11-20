@@ -203,14 +203,8 @@ pub async fn preview_ics_import(
     time_zone: String,
 ) -> Result<services::calendar::import::IcsImportPreview, AppError> {
     let (account, kind) = ics_import_target(&state, &account_id)?;
-    let path = std::path::Path::new(&path);
-    let ics = services::calendar::import::read_ics_file(path)?;
-    let file_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let provider = services::calendar::sync::build_calendar_provider(&state.db, &account)?;
-    services::calendar::import::preview_ics_import(provider.as_ref(), kind, &ics, &file_name, &time_zone).await
+    services::calendar::import::preview_ics_file(provider.as_ref(), kind, std::path::Path::new(&path), &time_zone).await
 }
 
 /// Import an `.ics` file into the account's primary calendar, then mirror the

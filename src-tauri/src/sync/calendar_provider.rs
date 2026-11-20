@@ -275,6 +275,8 @@ pub struct FakeCalendarProvider {
     pub found_by_uid: std::collections::HashMap<String, FoundEvent>,
     /// UID -> message: `import_event` fails with a sync error for that UID.
     pub import_errors: std::collections::HashMap<String, String>,
+    /// UID -> message: `find_event_by_uid` fails with a sync error for that UID.
+    pub find_errors: std::collections::HashMap<String, String>,
     pub imported: std::sync::Mutex<Vec<ImportableEvent>>,
     /// `(calendar_id, provider_event_id, google_status)` per respond call.
     pub responses: std::sync::Mutex<Vec<(String, String, String)>>,
@@ -296,6 +298,7 @@ impl FakeCalendarProvider {
             rsvps: std::sync::Mutex::new(Vec::new()),
             found_by_uid: std::collections::HashMap::new(),
             import_errors: std::collections::HashMap::new(),
+            find_errors: std::collections::HashMap::new(),
             imported: std::sync::Mutex::new(Vec::new()),
             responses: std::sync::Mutex::new(Vec::new()),
             imported_ids: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -483,6 +486,9 @@ impl CalendarProvider for FakeCalendarProvider {
     async fn find_event_by_uid(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
         if let Some(error) = &self.error {
             return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.find_errors.get(ical_uid) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
         }
         if let Some(found) = self.found_by_uid.get(ical_uid) {
             return Ok(Some(found.clone()));
