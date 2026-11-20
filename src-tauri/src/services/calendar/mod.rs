@@ -3,6 +3,7 @@ pub mod create;
 pub mod delete;
 pub mod feeds;
 pub mod ics;
+pub mod import;
 pub mod invite;
 pub mod meeting_link;
 pub mod notify;
