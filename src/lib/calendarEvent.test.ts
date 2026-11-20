@@ -4,6 +4,7 @@ import {
   cancellationMessage,
   describeRecurrence,
   eventsAfterDelete,
+  eventsAfterResponse,
   isValidInviteeEmail,
   linkifySegments,
   recurrenceOptions,
@@ -313,5 +314,51 @@ describe('linkifySegments', () => {
       { kind: 'link', value: 'https://example.com/path' },
       { kind: 'text', value: '> now' },
     ]);
+  });
+});
+
+describe('eventsAfterResponse', () => {
+  interface Ev {
+    id: string;
+    providerEventId: string;
+    recurringEventId: string | null;
+    attendees: { email: string; response: string }[];
+  }
+  const ev = (id: string, recurringEventId: string | null, attendees: Ev['attendees'] = []): Ev => ({
+    id,
+    providerEventId: id,
+    recurringEventId,
+    attendees,
+  });
+  const me = { email: 'Me@example.com', response: 'needsAction' };
+  const ana = { email: 'ana@example.com', response: 'accepted' };
+  const answers = (events: Ev[]) => events.map((e) => e.attendees.find((a) => a.email === 'Me@example.com')?.response);
+
+  it('instance scope answers only the clicked event', () => {
+    const events = [ev('a1', 's1', [me, ana]), ev('a2', 's1', [me, ana]), ev('b1', 's2', [me])];
+    const result = eventsAfterResponse(events, events[0], 'declined', 'instance', 'me@example.com');
+    expect(answers(result)).toEqual(['declined', 'needsAction', 'needsAction']);
+    expect(result[0].attendees[1]).toEqual(ana);
+  });
+
+  it('series scope answers every event of the series, including the master', () => {
+    const events = [ev('s1', null, [me]), ev('a1', 's1', [me]), ev('a2', 's1', [me]), ev('b1', 's2', [me])];
+    const result = eventsAfterResponse(events, events[1], 'accepted', 'series', 'me@example.com');
+    expect(answers(result)).toEqual(['accepted', 'accepted', 'accepted', 'needsAction']);
+  });
+
+  it('series scope on a non-recurring event answers only that event', () => {
+    const events = [ev('solo', null, [me]), ev('a1', 's1', [me])];
+    expect(answers(eventsAfterResponse(events, events[0], 'tentative', 'series', 'me@example.com'))).toEqual([
+      'tentative',
+      'needsAction',
+    ]);
+  });
+
+  it('appends me when I am not among the attendees, and does not mutate', () => {
+    const events = [ev('a1', null, [ana])];
+    const result = eventsAfterResponse(events, events[0], 'accepted', 'instance', 'me@example.com');
+    expect(result[0].attendees).toEqual([ana, { email: 'me@example.com', response: 'accepted' }]);
+    expect(events[0].attendees).toEqual([ana]);
   });
 });

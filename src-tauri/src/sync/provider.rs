@@ -518,6 +518,16 @@ pub trait EmailProvider: Send + Sync {
         attachments: &[EmailAttachment],
     ) -> Result<SentMessageMeta>;
 
+    /// Send an already-built RFC 5322 message as is (the recipients come from
+    /// its headers). Used for iTIP replies, whose `text/calendar` part must
+    /// travel inside the body, which the structured send paths cannot do.
+    /// Gmail and Outlook override it; other accounts cannot send one.
+    async fn send_raw_mime(&self, _mime: &[u8]) -> Result<()> {
+        Err(AppError::SyncError(
+            "sending calendar replies is not supported for this account".into(),
+        ))
+    }
+
     /// Fetch raw attachment bytes by message ID and attachment ID.
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>>;
 
@@ -896,6 +906,8 @@ pub struct FakeEmailProvider {
     profile_name: String,
     /// Messages available to `list_messages` / `get_message`, keyed by id.
     messages: std::sync::RwLock<Vec<FakeStoredMessage>>,
+    /// Raw MIME messages recorded by `send_raw_mime`.
+    raw_sent: std::sync::Mutex<Vec<Vec<u8>>>,
     /// Outbound mail recorded by `send_reply` / `send_new_email`.
     sent: std::sync::RwLock<Vec<FakeSentMessage>>,
     /// Bytes returned by `fetch_attachment_bytes`, keyed by `(message_id, attachment_id)`.
@@ -1105,6 +1117,7 @@ impl FakeEmailProvider {
             profile_email: profile_email.into(),
             profile_name: profile_name.into(),
             messages: std::sync::RwLock::new(Vec::new()),
+            raw_sent: std::sync::Mutex::new(Vec::new()),
             sent: std::sync::RwLock::new(Vec::new()),
             attachment_bytes: std::sync::RwLock::new(std::collections::HashMap::new()),
             drafts: std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -1233,6 +1246,11 @@ impl FakeEmailProvider {
     /// Make `list_messages` fail (`Some`) or answer again (`None`).
     pub fn fail_message_listing(&self, message: Option<&str>) {
         *self.listing_failure.write().unwrap_or_else(PoisonError::into_inner) = message.map(str::to_string);
+    }
+
+    /// Raw MIME messages sent through `send_raw_mime`, oldest first.
+    pub fn raw_sent(&self) -> Vec<Vec<u8>> {
+        self.raw_sent.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     fn send_refusal(&self) -> Result<()> {
@@ -1532,6 +1550,15 @@ fn pushed_attachments(attachments: &[EmailAttachment], seq: u64) -> Vec<crate::m
 impl EmailProvider for FakeEmailProvider {
     async fn get_profile(&self) -> Result<(String, String)> {
         Ok((self.profile_email.clone(), self.profile_name.clone()))
+    }
+
+    async fn send_raw_mime(&self, mime: &[u8]) -> Result<()> {
+        self.send_refusal()?;
+        self.raw_sent
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(mime.to_vec());
+        Ok(())
     }
 
     async fn get_signature(&self, email: &str) -> Result<Option<String>> {
@@ -2677,6 +2704,17 @@ mod tests {
                 }
                 other => panic!("expected InvalidInput, got {other:?}"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_without_raw_send_support_refuses_calendar_replies() {
+        let err = BareProvider.send_raw_mime(b"x").await.expect_err("unsupported");
+        match err {
+            AppError::SyncError(msg) => {
+                assert_eq!(msg, "sending calendar replies is not supported for this account")
+            }
+            other => panic!("expected SyncError, got {other}"),
         }
     }
 

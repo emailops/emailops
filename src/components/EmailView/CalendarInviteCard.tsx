@@ -7,15 +7,21 @@ import { errorText, isAuthError } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
-import type { CalendarInvite, Email } from '@/types';
-
-type RsvpChoice = 'accepted' | 'declined' | 'tentative';
+import type { CalendarInvite, Email, InviteResponseOutcome, RsvpChoice } from '@/types';
 
 /** Inline note under the RSVP buttons. `info` covers the "invite hasn't
  *  reached your calendar yet" case, `auth` suggests re-authenticating. */
 interface RsvpNote {
-  kind: 'info' | 'auth' | 'error';
+  kind: 'info' | 'auth' | 'error' | 'warn';
   message: string;
+}
+
+/** What the card shows once an answer (or "Add to calendar") went through.
+ *  `choice` is null for a publish, which has no answer to confirm. */
+interface InviteDone {
+  choice: RsvpChoice | null;
+  added: boolean;
+  alreadyInCalendar: boolean;
 }
 
 /**
@@ -44,7 +50,8 @@ export function CalendarInviteCard({ email }: { email: Email }) {
   const [loaded, setLoaded] = useState<{ emailId: string; invite: CalendarInvite | null } | null>(null);
 
   const [rsvpBusy, setRsvpBusy] = useState<RsvpChoice | null>(null);
-  const [rsvpDone, setRsvpDone] = useState<RsvpChoice | null>(null);
+  const [rsvpDone, setRsvpDone] = useState<InviteDone | null>(null);
+  const [addBusy, setAddBusy] = useState(false);
   const [rsvpNote, setRsvpNote] = useState<RsvpNote | null>(null);
 
   useEffect(() => {
@@ -70,28 +77,76 @@ export function CalendarInviteCard({ email }: { email: Email }) {
   const invite = loaded?.emailId === email.id ? loaded.invite : null;
   if (!hasCalendar || !invite) return null;
 
+  const applyOutcome = (outcome: InviteResponseOutcome, choice: RsvpChoice | null) => {
+    switch (outcome.kind) {
+      case 'notYetInCalendar':
+        // The invite can take a minute to land in the provider calendar.
+        setRsvpNote({ kind: 'info', message: t('calendar:invite.notYetInCalendar') });
+        return;
+      case 'cannotImport': {
+        const text = t(`calendar:import.reason.${outcome.reason}` as const, { defaultValue: outcome.reason });
+        const reason = outcome.reasonDetail ? `${text} (${outcome.reasonDetail})` : text;
+        setRsvpNote({ kind: 'error', message: t('calendar:invite.addError', { message: reason }) });
+        return;
+      }
+      case 'alreadyInCalendar':
+        setRsvpDone({ choice, added: false, alreadyInCalendar: true });
+        return;
+      case 'responded':
+        setRsvpDone({ choice, added: false, alreadyInCalendar: false });
+        addLog('success', 'sync', `Calendar invite response sent (${choice})`);
+        return;
+      case 'imported':
+      case 'removed':
+        setRsvpDone({ choice, added: outcome.kind === 'imported', alreadyInCalendar: false });
+        if (outcome.replyError) {
+          setRsvpNote({ kind: 'warn', message: t(`calendar:invite.replyNotSent.${outcome.kind}` as const) });
+          // Fixed text: the error can name the organizer; the backend logged its code.
+          addLog('error', 'sync', 'Calendar invite reply failed');
+        } else {
+          addLog('success', 'sync', `Calendar invite ${outcome.kind} (${choice ?? 'publish'})`);
+        }
+        return;
+    }
+  };
+
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   const handleRsvp = async (choice: RsvpChoice) => {
     if (rsvpBusy) return;
     setRsvpBusy(choice);
     setRsvpNote(null);
     try {
-      await api.rsvpCalendarInvite(email.accountId, invite.uid, choice);
-      setRsvpDone(choice);
-      addLog('success', 'sync', `Calendar invite response sent (${choice})`);
+      applyOutcome(await api.rsvpCalendarInvite(email.accountId, email.id, choice, timeZone), choice);
     } catch (e) {
       const msg = errorText(e);
       addLog('error', 'sync', `Failed to respond to calendar invite: ${msg}`);
-      if (msg.includes("hasn't reached your calendar")) {
-        // The invite can take a minute to land in the provider calendar —
-        // show the backend's explanation rather than a scary failure.
-        setRsvpNote({ kind: 'info', message: msg });
-      } else if (isAuthError(e, msg)) {
+      if (isAuthError(e, msg)) {
         setRsvpNote({ kind: 'auth', message: t('calendar:invite.authError') });
       } else {
         setRsvpNote({ kind: 'error', message: t('calendar:invite.error', { message: msg }) });
       }
     } finally {
       setRsvpBusy(null);
+    }
+  };
+
+  const handleAdd = async () => {
+    if (addBusy) return;
+    setAddBusy(true);
+    setRsvpNote(null);
+    try {
+      applyOutcome(await api.addInviteToCalendar(email.accountId, email.id, timeZone), null);
+    } catch (e) {
+      const msg = errorText(e);
+      addLog('error', 'sync', `Failed to add calendar invite: ${msg}`);
+      if (isAuthError(e, msg)) {
+        setRsvpNote({ kind: 'auth', message: t('calendar:invite.authError') });
+      } else {
+        setRsvpNote({ kind: 'error', message: t('calendar:invite.addError', { message: msg }) });
+      }
+    } finally {
+      setAddBusy(false);
     }
   };
 
@@ -145,49 +200,79 @@ export function CalendarInviteCard({ email }: { email: Email }) {
           <p className="pt-1 text-sm text-gray-500 italic">{t('calendar:invite.cancelled')}</p>
         ) : rsvpDone ? (
           <p className="pt-1 text-sm text-gray-700">
-            {t(`calendar:invite.confirmed.${rsvpDone}` as const)}{' '}
-            <button
-              type="button"
-              onClick={() => {
-                setRsvpDone(null);
-                setRsvpNote(null);
-              }}
-              className="text-primary-600 hover:text-primary-700 hover:underline"
-            >
-              {t('calendar:invite.change')}
-            </button>
+            {rsvpDone.alreadyInCalendar
+              ? t('calendar:invite.alreadyInCalendar')
+              : rsvpDone.choice
+                ? t(`calendar:invite.confirmed.${rsvpDone.choice}` as const)
+                : t('calendar:invite.addedToCalendar')}
+            {rsvpDone.choice && rsvpDone.added && <> {t('calendar:invite.addedToCalendar')}</>}{' '}
+            {rsvpDone.choice && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRsvpDone(null);
+                  setRsvpNote(null);
+                }}
+                className="text-primary-600 hover:text-primary-700 hover:underline"
+              >
+                {t('calendar:invite.change')}
+              </button>
+            )}
           </p>
-        ) : (
-          <div className="pt-1.5 flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-gray-700 mr-1">{t('calendar:invite.going')}</span>
+        ) : invite.isPublish ? (
+          <div className="pt-1.5">
             <RsvpButton
-              label={t('calendar:invite.yes')}
+              label={t('calendar:invite.addToCalendar')}
               variant="filled"
-              busy={rsvpBusy === 'accepted'}
-              disabled={rsvpBusy !== null}
-              onClick={() => void handleRsvp('accepted')}
-            />
-            <RsvpButton
-              label={t('calendar:invite.no')}
-              variant="outline"
-              busy={rsvpBusy === 'declined'}
-              disabled={rsvpBusy !== null}
-              onClick={() => void handleRsvp('declined')}
-            />
-            <RsvpButton
-              label={t('calendar:invite.maybe')}
-              variant="outline"
-              busy={rsvpBusy === 'tentative'}
-              disabled={rsvpBusy !== null}
-              onClick={() => void handleRsvp('tentative')}
+              busy={addBusy}
+              disabled={addBusy}
+              onClick={() => void handleAdd()}
             />
           </div>
+        ) : (
+          <>
+            <div className="pt-1.5 flex items-center gap-2 flex-wrap">
+              <span className="text-sm text-gray-700 mr-1">{t('calendar:invite.going')}</span>
+              <RsvpButton
+                label={t('calendar:invite.yes')}
+                variant="filled"
+                busy={rsvpBusy === 'accepted'}
+                disabled={rsvpBusy !== null}
+                onClick={() => void handleRsvp('accepted')}
+              />
+              <RsvpButton
+                label={t('calendar:invite.no')}
+                variant="outline"
+                busy={rsvpBusy === 'declined'}
+                disabled={rsvpBusy !== null}
+                onClick={() => void handleRsvp('declined')}
+              />
+              <RsvpButton
+                label={t('calendar:invite.maybe')}
+                variant="outline"
+                busy={rsvpBusy === 'tentative'}
+                disabled={rsvpBusy !== null}
+                onClick={() => void handleRsvp('tentative')}
+              />
+            </div>
+            {invite.replyTo && (
+              <p className={`pt-1 text-xs break-all ${invite.organizerIsSender ? 'text-gray-500' : 'text-amber-700'}`}>
+                {t(invite.organizerIsSender ? 'calendar:invite.replyTo' : 'calendar:invite.replyToNotSender', {
+                  address: invite.replyTo,
+                })}
+              </p>
+            )}
+          </>
         )}
 
         {rsvpNote && (
           <p
             className={`pt-1 text-xs break-words ${
-              rsvpNote.kind === 'error' ? 'text-red-700' : rsvpNote.kind === 'auth' ? 'text-amber-700' : 'text-gray-500'
+              rsvpNote.kind === 'error'
+                ? 'text-red-700'
+                : rsvpNote.kind === 'auth' || rsvpNote.kind === 'warn'
+                  ? 'text-amber-700'
+                  : 'text-gray-500'
             }`}
           >
             {rsvpNote.message}

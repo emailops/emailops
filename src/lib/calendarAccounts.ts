@@ -59,6 +59,15 @@ export function createAccountChoices(
   });
 }
 
+/** The accounts "Import .ics" can write to: every calendar-enabled Gmail or
+ *  Outlook account, whichever accounts the view shows. Feed accounts (Proton
+ *  included) are read only. */
+export function importAccountChoices(calendarAccounts: readonly Account[]): CreateAccountChoice[] {
+  return calendarAccounts
+    .filter((account) => account.provider === 'gmail' || account.provider === 'outlook')
+    .map((account) => ({ account, plan: { kind: 'dialog' } }));
+}
+
 /** An event's colour: its account's in "All accounts" (several accounts on
  *  one grid), its calendar's when one account is shown. */
 export function eventColorFor(

@@ -23,9 +23,10 @@ use crate::services::calendar::ics::{
     param_value, parse_ics_time_with_fixed_zones, parse_vcalendar, resolve_tzid, unescape_text, with_iana_tzid,
     IcsZone, ParsedCalendar, RawVEvent,
 };
+use crate::services::calendar::import::ImportableEvent;
 use crate::services::unsubscribe::{host_may_be_public, PublicOnlyResolver};
 use crate::sync::calendar_provider::{
-    CalendarProvider, NewCalendarEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
+    CalendarProvider, FoundEvent, NewCalendarEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
 };
 
 /// Secrets-vault service under which each feed URL is stored (account = feed id).
@@ -288,6 +289,25 @@ impl CalendarProvider for IcsFeedCalendarProvider {
     }
 
     async fn rsvp_by_ical_uid(&self, _ical_uid: &str, _response: RsvpResponse, _self_email: &str) -> Result<()> {
+        Err(AppError::ReadOnlyCalendar)
+    }
+
+    async fn find_event_by_uid(&self, _ical_uid: &str) -> Result<Option<FoundEvent>> {
+        Ok(None)
+    }
+
+    async fn import_event(&self, _event: &ImportableEvent) -> Result<String> {
+        Err(AppError::ReadOnlyCalendar)
+    }
+
+    async fn respond_to_event(
+        &self,
+        _calendar_id: &str,
+        _provider_event_id: &str,
+        _response: RsvpResponse,
+        _self_email: &str,
+        _notify: bool,
+    ) -> Result<()> {
         Err(AppError::ReadOnlyCalendar)
     }
 }
@@ -1555,6 +1575,41 @@ mod tests {
             let url = reqwest::Url::parse(url).unwrap();
             assert_eq!(redirect_allowed(&url, followed), allowed, "{url} after {followed}");
         }
+    }
+
+    #[tokio::test]
+    async fn feed_calendars_refuse_imports_and_responses() {
+        use crate::services::calendar::import::{EventTime, ImportableEvent};
+        let provider = IcsFeedCalendarProvider::new(feeds(), Arc::new(FakeIcsFetcher::default()));
+        let when = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 5).expect("date"));
+        let event = ImportableEvent {
+            uid: "u1@example.com".into(),
+            summary: "Planning".into(),
+            description: String::new(),
+            location: String::new(),
+            start: when.clone(),
+            end: when,
+            rrule: None,
+            exdates: Vec::new(),
+            rdates: Vec::new(),
+            recurrence_id: None,
+            overrides: Vec::new(),
+            organizer: None,
+            attendees: Vec::new(),
+            sequence: 0,
+            fallback_tz: "UTC".into(),
+        };
+        assert!(matches!(
+            provider.import_event(&event).await,
+            Err(AppError::ReadOnlyCalendar)
+        ));
+        assert!(matches!(
+            provider
+                .respond_to_event("feed-a", "ev1", RsvpResponse::Accepted, "me@example.com", true)
+                .await,
+            Err(AppError::ReadOnlyCalendar)
+        ));
+        assert_eq!(provider.find_event_by_uid("u1@example.com").await.expect("find"), None);
     }
 
     #[tokio::test]

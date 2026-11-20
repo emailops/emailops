@@ -1,12 +1,12 @@
 {
- "commit": "667ef57f",
- "date": "2026-11-03",
+ "commit": "358a9bbe",
+ "date": "2026-11-20",
  "counts": {
-  "ok": 8974,
-  "fail": 76,
-  "skip": 8,
-  "info": 1
+  "ok": 10014,
+  "fail": 8,
+  "skip": 9,
+  "info": 0
  },
- "tests": 9059,
- "run": "20261103-104959-full"
+ "tests": 10031,
+ "run": "20261120-161042-full"
 }
