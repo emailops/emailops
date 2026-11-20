@@ -105,7 +105,17 @@
     "change": "Ändern",
     "authError": "Deine Antwort konnte nicht gesendet werden. Melde dich erneut bei diesem Konto an, um Kalenderzugriff zu gewähren.",
     "error": "Deine Antwort konnte nicht gesendet werden: {{message}}",
-    "notYetInCalendar": "Diese Einladung ist noch nicht in deinem Kalender angekommen — versuche es gleich noch einmal."
+    "notYetInCalendar": "Diese Einladung ist noch nicht in deinem Kalender angekommen — versuche es gleich noch einmal.",
+    "addToCalendar": "Zum Kalender hinzufügen",
+    "addedToCalendar": "Zu deinem Kalender hinzugefügt",
+    "alreadyInCalendar": "Bereits in deinem Kalender",
+    "replyTo": "Deine Antwort wird an {{address}} gesendet",
+    "replyToNotSender": "Deine Antwort wird an {{address}} gesendet, der nicht der Absender dieser E-Mail ist",
+    "addError": "Konnte nicht zu deinem Kalender hinzugefügt werden: {{message}}",
+    "replyNotSent": {
+      "imported": "Zu deinem Kalender hinzugefügt, aber der Organisator konnte nicht benachrichtigt werden. Antworte erneut, um es nochmal zu versuchen.",
+      "removed": "Aus deinem Kalender entfernt, aber der Organisator konnte nicht benachrichtigt werden. Antworte erneut, um es nochmal zu versuchen."
+    }
   },
   "calendars": {
     "hideOne": "{{name}} ausblenden",

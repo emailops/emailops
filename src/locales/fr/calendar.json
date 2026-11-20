@@ -105,7 +105,17 @@
     "change": "Modifier",
     "authError": "Impossible d'envoyer votre réponse. Reconnectez-vous à ce compte pour accorder l'accès au calendrier.",
     "error": "Impossible d'envoyer votre réponse : {{message}}",
-    "notYetInCalendar": "Cette invitation n'est pas encore arrivée dans votre calendrier — réessayez dans un instant."
+    "notYetInCalendar": "Cette invitation n'est pas encore arrivée dans votre calendrier — réessayez dans un instant.",
+    "addToCalendar": "Ajouter au calendrier",
+    "addedToCalendar": "Ajouté à votre calendrier",
+    "alreadyInCalendar": "Déjà dans votre calendrier",
+    "replyTo": "Votre réponse sera envoyée à {{address}}",
+    "replyToNotSender": "Votre réponse sera envoyée à {{address}}, qui n'est pas l'expéditeur de ce message",
+    "addError": "Impossible de l'ajouter à votre calendrier : {{message}}",
+    "replyNotSent": {
+      "imported": "Ajouté à votre calendrier, mais l'organisateur n'a pas pu être prévenu. Répondez à nouveau pour réessayer.",
+      "removed": "Retiré de votre calendrier, mais l'organisateur n'a pas pu être prévenu. Répondez à nouveau pour réessayer."
+    }
   },
   "calendars": {
     "hideOne": "Masquer {{name}}",

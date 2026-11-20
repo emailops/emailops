@@ -105,7 +105,17 @@
     "change": "Change",
     "authError": "Couldn't send your response. Sign in to this account again to grant calendar access.",
     "error": "Couldn't send your response: {{message}}",
-    "notYetInCalendar": "This invitation hasn't reached your calendar yet — try again in a moment."
+    "notYetInCalendar": "This invitation hasn't reached your calendar yet — try again in a moment.",
+    "addToCalendar": "Add to calendar",
+    "addedToCalendar": "Added to your calendar",
+    "alreadyInCalendar": "Already in your calendar",
+    "replyTo": "Your reply will be sent to {{address}}",
+    "replyToNotSender": "Your reply will be sent to {{address}}, who isn't the sender of this email",
+    "addError": "Couldn't add it to your calendar: {{message}}",
+    "replyNotSent": {
+      "imported": "Added to your calendar, but the organizer couldn't be notified. Answer again to retry.",
+      "removed": "Removed from your calendar, but the organizer couldn't be notified. Answer again to retry."
+    }
   },
   "calendars": {
     "hideOne": "Hide {{name}}",

@@ -105,7 +105,17 @@
     "change": "Cambiar",
     "authError": "No se pudo enviar tu respuesta. Inicia sesión de nuevo en esta cuenta para conceder acceso al calendario.",
     "error": "No se pudo enviar tu respuesta: {{message}}",
-    "notYetInCalendar": "Esta invitación aún no ha llegado a tu calendario; inténtalo de nuevo en un momento."
+    "notYetInCalendar": "Esta invitación aún no ha llegado a tu calendario; inténtalo de nuevo en un momento.",
+    "addToCalendar": "Añadir al calendario",
+    "addedToCalendar": "Añadido a tu calendario",
+    "alreadyInCalendar": "Ya está en tu calendario",
+    "replyTo": "Tu respuesta se enviará a {{address}}",
+    "replyToNotSender": "Tu respuesta se enviará a {{address}}, que no es quien te envió este correo",
+    "addError": "No se pudo añadir a tu calendario: {{message}}",
+    "replyNotSent": {
+      "imported": "Añadido a tu calendario, pero no se pudo avisar al organizador. Responde de nuevo para reintentar.",
+      "removed": "Eliminado de tu calendario, pero no se pudo avisar al organizador. Responde de nuevo para reintentar."
+    }
   },
   "calendars": {
     "hideOne": "Ocultar {{name}}",
