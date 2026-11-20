@@ -1,4 +1,4 @@
-.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models bundled-skills record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
+.PHONY: eval-plan eval-research-mode eval-forms eval-lenses eval-classify bench-oneshot-kv report-oneshot bench-models bench-ab dev dev-fresh dev-trace demo demo-db demo-embed demo-es demo-db-es demo-embed-es check gates lint fmt test test-fast lint-fast check-fast clippy-fast cli cli-run cli-fast install-cli cli-demo cli-eval cli-bench build clean link-target disk-report disk-clean install hooks eval-index eval-all eval-junk bootstrap-mac build-mac verify-mac dist-mac build-cli-mac verify-cli-mac dist-cli-mac cask fetch-bundled-models bundled-skills record-cassette list-cassette-accounts bootstrap-linux build-linux verify-linux dist-linux bootstrap-windows build-windows verify-windows dist-windows testvm-status testvm-linux testvm-windows testvm-start testvm-stop testvm-destroy docs-check docs-gen model-memory coverage coverage-rust coverage-ts mutants
 
 # ── Shell requirements ───────────────────────────────────────────────────────
 # Every recipe here assumes GNU make plus a POSIX shell: targets use `VAR=x cmd`
@@ -268,6 +268,14 @@ cli-bench:
 bench-models:
 	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
 	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" scripts/model_bench.sh $(ARGS)
+
+# Prefill-speed A/B between two emailops-cli builds: control/candidate/control
+# runs interleaved, 3 candidate runs (6 when 3 are within noise). Copy each
+# build's binary out of src-tauri/target first. Logic in scripts/bench_ab.py.
+#   make bench-ab ARGS="--control before=/tmp/cli-a --candidate after=/tmp/cli-b --model qwen3.5-4b-q4_k_m"
+bench-ab:
+	@scripts/ensure_demo_db.sh "$(EMAILOPS_DEMO_DIR)" demo-db demo-embed
+	EMAILOPS_DEMO_DIR="$(EMAILOPS_DEMO_DIR)" python3 scripts/bench_ab.py $(ARGS)
 
 # Before/after table for the one-shot prefix slot: runs the planner eval twice
 # from the same build (slot off via EMAILOPS_AUX_PREFIX=0, then on) plus the
