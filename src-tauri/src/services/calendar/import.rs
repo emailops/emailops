@@ -65,6 +65,10 @@ pub enum UnsupportedReason {
     OutlookOrphanOverride,
     /// More than one RRULE (`"RRULE"`) or any EXRULE (`"EXRULE"`).
     UnsupportedRecurrence(String),
+    /// A property whose value cannot be carried faithfully (named).
+    InvalidProperty(String),
+    /// A TZID that no known zone or document definition resolves.
+    UnknownTimezone(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +111,18 @@ impl EventTime {
 struct Group {
     master: Option<RawVEvent>,
     overrides: Vec<RawVEvent>,
+    /// A second VEVENT with the same UID and no RECURRENCE-ID.
+    duplicate_master: bool,
 }
+
+/// Why a value could not be read.
+enum TimeError {
+    Invalid,
+    UnknownTzid(String),
+}
+
+/// A series the planner refuses, with the VEVENT to show in the preview.
+type Rejection<'a> = (UnsupportedReason, &'a RawVEvent);
 
 enum Entry {
     Group(String),
@@ -150,6 +165,8 @@ pub fn plan_ics_import(cal: &ParsedCalendar, target: CalendarKind, default_tz: &
             group.overrides.push(raw.clone());
         } else if group.master.is_none() {
             group.master = Some(raw.clone());
+        } else {
+            group.duplicate_master = true;
         }
     }
     if groups.len() > MAX_IMPORT_SERIES {
@@ -162,7 +179,7 @@ pub fn plan_ics_import(cal: &ParsedCalendar, target: CalendarKind, default_tz: &
     Ok(order
         .into_iter()
         .filter_map(|entry| match entry {
-            Entry::NoUid(raw) => Some(ctx.missing_uid_or_start(&raw)),
+            Entry::NoUid(raw) => Some(ctx.rejected(&raw, UnsupportedReason::MissingUidOrStart)),
             Entry::Group(uid) => groups.remove(&uid).map(|group| ctx.plan_group(group, target)),
         })
         .collect())
@@ -175,59 +192,79 @@ struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
-    fn missing_uid_or_start(&self, raw: &RawVEvent) -> ImportItem {
+    fn rejected(&self, raw: &RawVEvent, reason: UnsupportedReason) -> ImportItem {
         ImportItem {
-            event: self.event(raw).unwrap_or_else(|| self.placeholder(raw)),
-            status: ImportItemStatus::Unsupported(UnsupportedReason::MissingUidOrStart),
+            event: self.event(raw).unwrap_or_else(|_| self.placeholder(raw)),
+            status: ImportItemStatus::Unsupported(reason),
         }
     }
 
     fn plan_group(&self, group: Group, target: CalendarKind) -> ImportItem {
+        match self.try_group(&group, target) {
+            Ok(item) => item,
+            Err((reason, raw)) => self.rejected(raw, reason),
+        }
+    }
+
+    fn try_group<'g>(&self, group: &'g Group, target: CalendarKind) -> std::result::Result<ImportItem, Rejection<'g>> {
         let Group {
             master,
             overrides: raw_overrides,
+            ..
         } = group;
-        // An override we cannot place would be lost silently: refuse the series.
-        if let Some(broken) = raw_overrides.iter().find(|raw| self.event(raw).is_none()) {
-            return self.missing_uid_or_start(master.as_ref().unwrap_or(broken));
+        if group.duplicate_master {
+            if let Some(master) = master {
+                return Err((UnsupportedReason::InvalidProperty("UID".into()), master));
+            }
         }
-        let mut overrides = raw_overrides.iter().filter_map(|raw| self.event(raw));
+        // An override we cannot carry would be lost silently: refuse the series.
+        let preview = |raw: &'g RawVEvent| master.as_ref().unwrap_or(raw);
+        let mut kept = Vec::new();
+        let mut cancelled = Vec::new();
+        for raw in raw_overrides {
+            let event = self.event(raw).map_err(|reason| (reason, preview(raw)))?;
+            if !is_cancelled(raw) {
+                kept.push(event);
+            } else if master.is_none() {
+                return Err((UnsupportedReason::Cancelled, raw));
+            } else if let Some(id) = event.recurrence_id {
+                // A cancelled instance of a series is an excluded date.
+                cancelled.push(id);
+            }
+        }
         let Some(raw_master) = master else {
             // Only overrides: the first one stands for the item.
-            let Some(mut event) = overrides.next() else {
-                return unreachable_empty();
+            let mut kept = kept.into_iter();
+            let Some(mut event) = kept.next() else {
+                return Ok(unreachable_empty());
             };
-            event.overrides = overrides.collect();
+            event.overrides = kept.collect();
             let status = if target == CalendarKind::Outlook {
                 UnsupportedReason::OutlookOrphanOverride
             } else if !event.overrides.is_empty() {
                 // Google cannot import several standalone events with one iCalUID.
                 UnsupportedReason::UnsupportedRecurrence("RECURRENCE-ID".into())
             } else {
-                return ImportItem {
+                return Ok(ImportItem {
                     event,
                     status: ImportItemStatus::Importable,
-                };
+                });
             };
-            return ImportItem {
+            return Ok(ImportItem {
                 event,
                 status: ImportItemStatus::Unsupported(status),
-            };
+            });
         };
-        let Some(mut event) = self.event(&raw_master) else {
-            return self.missing_uid_or_start(&raw_master);
-        };
-        event.overrides = overrides.collect();
-        let status = self.master_status(&raw_master, &event, target);
-        ImportItem { event, status }
+        let mut event = self.event(raw_master).map_err(|reason| (reason, raw_master))?;
+        event.overrides = kept;
+        event.exdates.extend(cancelled);
+        let status = self.master_status(raw_master, &event, target);
+        Ok(ImportItem { event, status })
     }
 
     fn master_status(&self, raw: &RawVEvent, event: &ImportableEvent, target: CalendarKind) -> ImportItemStatus {
         use ImportItemStatus::{Importable, Unsupported};
-        if raw
-            .first_value("STATUS")
-            .is_some_and(|s| s.trim().eq_ignore_ascii_case("CANCELLED"))
-        {
+        if is_cancelled(raw) {
             return Unsupported(UnsupportedReason::Cancelled);
         }
         if raw.all("RRULE").count() > 1 {
@@ -235,6 +272,11 @@ impl Ctx<'_> {
         }
         if raw.first("EXRULE").is_some() {
             return Unsupported(UnsupportedReason::UnsupportedRecurrence("EXRULE".into()));
+        }
+        let recurring = event.rrule.is_some() || !event.rdates.is_empty();
+        if recurring && self.starts_in_offset_zone(raw) {
+            // Converted to UTC, BYDAY/BYMONTHDAY would be evaluated on the wrong date.
+            return Unsupported(UnsupportedReason::UnsupportedRecurrence("TZID".into()));
         }
         if target == CalendarKind::Outlook {
             if !event.rdates.is_empty() {
@@ -253,6 +295,14 @@ impl Ctx<'_> {
         Importable
     }
 
+    /// DTSTART names a fixed-offset zone that no IANA zone represents.
+    fn starts_in_offset_zone(&self, raw: &RawVEvent) -> bool {
+        raw.first("DTSTART")
+            .filter(|p| !p.value.trim().ends_with('Z'))
+            .and_then(|p| param_value(&p.params, "TZID"))
+            .is_some_and(|id| matches!(resolve_tzid(id, &self.cal.fixed_zones), Some(IcsZone::Offset(_))))
+    }
+
     /// Epoch-1970 times for an event without DTSTART, so it still shows in the preview.
     fn placeholder(&self, raw: &RawVEvent) -> ImportableEvent {
         let epoch = EventTime::Timed {
@@ -262,13 +312,27 @@ impl Ctx<'_> {
         self.build(raw, epoch.clone(), epoch)
     }
 
-    /// The event, or `None` when DTSTART is missing or unreadable.
-    fn event(&self, raw: &RawVEvent) -> Option<ImportableEvent> {
-        let start = self.time(raw.first("DTSTART")?, &raw.first("DTSTART")?.value)?;
-        let end = self.end_time(raw, &start);
-        Some(self.build(raw, start, end))
+    /// The event, or the reason it cannot be carried faithfully.
+    fn event(&self, raw: &RawVEvent) -> std::result::Result<ImportableEvent, UnsupportedReason> {
+        let prop = raw.first("DTSTART").ok_or(UnsupportedReason::MissingUidOrStart)?;
+        let start = self.time(prop, &prop.value).map_err(|e| match e {
+            TimeError::Invalid => UnsupportedReason::MissingUidOrStart,
+            TimeError::UnknownTzid(tzid) => UnsupportedReason::UnknownTimezone(tzid),
+        })?;
+        let end = self.end_time(raw, &start)?;
+        let mut event = self.build(raw, start, end);
+        for prop in raw.all("EXDATE") {
+            for value in prop.value.split(',') {
+                event.exdates.push(self.time_of(prop, value, "EXDATE")?);
+            }
+        }
+        if let Some(prop) = raw.first("RECURRENCE-ID") {
+            event.recurrence_id = Some(self.time_of(prop, &prop.value, "RECURRENCE-ID")?);
+        }
+        Ok(event)
     }
 
+    /// The fields that cannot fail; EXDATE and RECURRENCE-ID are left to `event`.
     fn build(&self, raw: &RawVEvent, start: EventTime, end: EventTime) -> ImportableEvent {
         let text = |name: &str| {
             raw.first_value(name)
@@ -283,12 +347,9 @@ impl Ctx<'_> {
             start,
             end,
             rrule: raw.first_value("RRULE").map(|r| r.trim().to_string()),
-            exdates: raw
-                .all("EXDATE")
-                .flat_map(|p| p.value.split(',').filter_map(|v| self.time(p, v)))
-                .collect(),
+            exdates: Vec::new(),
             rdates: raw.all("RDATE").map(|p| self.recurrence_line(p)).collect(),
-            recurrence_id: raw.first("RECURRENCE-ID").and_then(|p| self.time(p, &p.value)),
+            recurrence_id: None,
             overrides: Vec::new(),
             organizer: raw
                 .first_value("ORGANIZER")
@@ -320,40 +381,66 @@ impl Ctx<'_> {
     }
 
     /// DTEND, else DURATION, else RFC 5545 §3.6.1: one day for all-day events,
-    /// zero length for timed ones.
-    fn end_time(&self, raw: &RawVEvent, start: &EventTime) -> EventTime {
-        if let Some(end) = raw.first("DTEND").and_then(|p| self.time(p, &p.value)) {
-            return end;
+    /// zero length for timed ones. A present but unreadable value is an error.
+    fn end_time(&self, raw: &RawVEvent, start: &EventTime) -> std::result::Result<EventTime, UnsupportedReason> {
+        if let Some(prop) = raw.first("DTEND") {
+            return self.time_of(prop, &prop.value, "DTEND");
         }
-        let secs = raw.first_value("DURATION").and_then(parse_iso_duration);
-        match start {
+        let secs = match raw.first_value("DURATION") {
+            Some(v) => {
+                Some(parse_iso_duration(v).ok_or_else(|| UnsupportedReason::InvalidProperty("DURATION".into()))?)
+            }
+            None => None,
+        };
+        Ok(match start {
             EventTime::AllDay(d) => EventTime::AllDay(*d + chrono::Duration::days(secs.map_or(1, |s| s / 86_400))),
             EventTime::Timed { local, tz } => EventTime::Timed {
                 local: *local + chrono::Duration::seconds(secs.unwrap_or(0)),
                 tz: tz.clone(),
             },
-        }
+        })
+    }
+
+    /// `time`, with its failure named after the property.
+    fn time_of(
+        &self,
+        prop: &IcsProperty,
+        value: &str,
+        name: &str,
+    ) -> std::result::Result<EventTime, UnsupportedReason> {
+        self.time(prop, value).map_err(|e| match e {
+            TimeError::Invalid => UnsupportedReason::InvalidProperty(name.into()),
+            TimeError::UnknownTzid(tzid) => UnsupportedReason::UnknownTimezone(tzid),
+        })
     }
 
     /// Reads `value` with the params of `prop`. Zone order: `Z` suffix, the
-    /// TZID, the document's X-WR-TIMEZONE, then the caller's default.
-    fn time(&self, prop: &IcsProperty, value: &str) -> Option<EventTime> {
+    /// TZID, then (floating times only) the document's X-WR-TIMEZONE and the
+    /// caller's default. A TZID nobody can resolve is an error.
+    fn time(&self, prop: &IcsProperty, value: &str) -> std::result::Result<EventTime, TimeError> {
         let value = value.trim();
         if param_value(&prop.params, "VALUE").is_some_and(|v| v.eq_ignore_ascii_case("DATE"))
             || (value.len() == 8 && !value.contains('T'))
         {
-            return NaiveDate::parse_from_str(value, "%Y%m%d").ok().map(EventTime::AllDay);
+            return NaiveDate::parse_from_str(value, "%Y%m%d")
+                .map(EventTime::AllDay)
+                .map_err(|_| TimeError::Invalid);
         }
         if let Some(utc) = value.strip_suffix('Z') {
-            let local = NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S").ok()?;
-            return Some(EventTime::Timed {
+            let local = NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S").map_err(|_| TimeError::Invalid)?;
+            return Ok(EventTime::Timed {
                 local,
                 tz: "UTC".into(),
             });
         }
-        let local = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
-        let zone = param_value(&prop.params, "TZID").and_then(|id| resolve_tzid(id, &self.cal.fixed_zones));
-        Some(match zone {
+        let local = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").map_err(|_| TimeError::Invalid)?;
+        let Some(tzid) = param_value(&prop.params, "TZID") else {
+            return Ok(EventTime::Timed {
+                local,
+                tz: self.fallback_tz.clone(),
+            });
+        };
+        Ok(match resolve_tzid(tzid, &self.cal.fixed_zones) {
             Some(IcsZone::Named(tz)) => EventTime::Timed {
                 local,
                 tz: tz.name().to_string(),
@@ -362,12 +449,14 @@ impl Ctx<'_> {
                 local: local - chrono::Duration::seconds(i64::from(offset.local_minus_utc())),
                 tz: "UTC".into(),
             },
-            None => EventTime::Timed {
-                local,
-                tz: self.fallback_tz.clone(),
-            },
+            None => return Err(TimeError::UnknownTzid(tzid.to_string())),
         })
     }
+}
+
+fn is_cancelled(raw: &RawVEvent) -> bool {
+    raw.first_value("STATUS")
+        .is_some_and(|s| s.trim().eq_ignore_ascii_case("CANCELLED"))
 }
 
 /// A group is only created together with its first event, so it is never empty.
@@ -848,6 +937,104 @@ mod tests {
         assert_eq!(
             outlook[0].status,
             ImportItemStatus::Unsupported(UnsupportedReason::OutlookOrphanOverride)
+        );
+    }
+
+    fn status_of(bodies: &[&str], target: CalendarKind) -> ImportItemStatus {
+        let items = plan(bodies, target);
+        assert_eq!(items.len(), 1);
+        items[0].status.clone()
+    }
+
+    fn invalid(name: &str) -> ImportItemStatus {
+        ImportItemStatus::Unsupported(UnsupportedReason::InvalidProperty(name.into()))
+    }
+
+    #[test]
+    fn duplicate_masters_are_rejected() {
+        let status = status_of(
+            &[
+                "UID:a@example.com\nDTSTART:20261205T083000Z",
+                "UID:a@example.com\nDTSTART:20261206T083000Z",
+            ],
+            CalendarKind::Google,
+        );
+        assert_eq!(status, invalid("UID"));
+    }
+
+    #[test]
+    fn unparseable_exdate_is_rejected() {
+        let body = "UID:a@example.com\nDTSTART:20261205T083000Z\nEXDATE:20261212T083000Z,garbage";
+        assert_eq!(status_of(&[body], CalendarKind::Google), invalid("EXDATE"));
+    }
+
+    #[test]
+    fn unparseable_recurrence_id_is_rejected() {
+        let body = "UID:a@example.com\nRECURRENCE-ID:garbage\nDTSTART:20261212T090000Z";
+        assert_eq!(status_of(&[body], CalendarKind::Google), invalid("RECURRENCE-ID"));
+    }
+
+    #[test]
+    fn unparseable_dtend_is_rejected() {
+        let body = "UID:a@example.com\nDTSTART:20261205T083000Z\nDTEND:garbage";
+        assert_eq!(status_of(&[body], CalendarKind::Google), invalid("DTEND"));
+    }
+
+    #[test]
+    fn unparseable_duration_is_rejected() {
+        let body = "UID:a@example.com\nDTSTART:20261205T083000Z\nDURATION:garbage";
+        assert_eq!(status_of(&[body], CalendarKind::Google), invalid("DURATION"));
+    }
+
+    #[test]
+    fn cancelled_override_becomes_an_exdate_of_its_master() {
+        let items = plan(
+            &[
+                "UID:a@example.com\nDTSTART:20261205T083000Z\nRRULE:FREQ=WEEKLY",
+                "UID:a@example.com\nRECURRENCE-ID:20261212T083000Z\nDTSTART:20261212T083000Z\nSTATUS:CANCELLED",
+            ],
+            CalendarKind::Google,
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].status, ImportItemStatus::Importable);
+        assert!(items[0].event.overrides.is_empty());
+        assert_eq!(items[0].event.exdates, [timed(at(2026, 12, 12, 8, 30), "UTC")]);
+    }
+
+    #[test]
+    fn cancelled_orphan_override_is_cancelled() {
+        let body = "UID:a@example.com\nRECURRENCE-ID:20261212T083000Z\nDTSTART:20261212T083000Z\nSTATUS:CANCELLED";
+        assert_eq!(
+            status_of(&[body], CalendarKind::Google),
+            ImportItemStatus::Unsupported(UnsupportedReason::Cancelled)
+        );
+    }
+
+    #[test]
+    fn unresolvable_tzid_is_rejected_but_floating_is_not() {
+        let body = "UID:a@example.com\nDTSTART;TZID=Mars/Olympus:20261205T083000";
+        assert_eq!(
+            status_of(&[body], CalendarKind::Google),
+            ImportItemStatus::Unsupported(UnsupportedReason::UnknownTimezone("Mars/Olympus".into()))
+        );
+        let floating = "UID:a@example.com\nDTSTART:20261205T083000";
+        assert_eq!(
+            status_of(&[floating], CalendarKind::Google),
+            ImportItemStatus::Importable
+        );
+    }
+
+    #[test]
+    fn recurring_series_in_a_non_whole_hour_zone_is_rejected() {
+        let header = "BEGIN:VTIMEZONE\r\nTZID:Example Half Hour\r\nBEGIN:STANDARD\r\nDTSTART:16010101T000000\r\nTZOFFSETFROM:+0530\r\nTZOFFSETTO:+0530\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n";
+        let c = cal_with(
+            header,
+            &["UID:a@example.com\nDTSTART;TZID=Example Half Hour:20261205T083000\nRRULE:FREQ=WEEKLY"],
+        );
+        let items = plan_ics_import(&c, CalendarKind::Google, "Europe/Madrid").unwrap();
+        assert_eq!(
+            items[0].status,
+            ImportItemStatus::Unsupported(UnsupportedReason::UnsupportedRecurrence("TZID".into()))
         );
     }
 }
