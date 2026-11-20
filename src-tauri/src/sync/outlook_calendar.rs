@@ -583,7 +583,12 @@ pub(crate) fn graph_recurrence_from_rrule(
     }
     let freq = freq.ok_or_else(|| "FREQ".to_string())?;
 
-    // BYDAY items: (ordinal, day). Ordinal items only make sense monthly/yearly.
+    // RFC 5545 forbids COUNT together with UNTIL.
+    if count.is_some() && until.is_some() {
+        return Err("UNTIL".to_string());
+    }
+
+    // BYDAY items: (ordinal, day).
     let by_day_text = byday.unwrap_or_default();
     let mut days: Vec<(Option<i32>, &'static str)> = Vec::new();
     if !by_day_text.is_empty() {
@@ -591,9 +596,11 @@ pub(crate) fn graph_recurrence_from_rrule(
             days.push(parse_byday_item(item).ok_or_else(|| format!("BYDAY={by_day_text}"))?);
         }
     }
+    let by_day_err = || format!("BYDAY={by_day_text}");
+    // Relative patterns (monthly/yearly) need every item to share one ordinal.
     let ordinal = match days.first() {
         Some((Some(first), _)) if days.iter().all(|(o, _)| *o == Some(*first)) => Some(*first),
-        Some((Some(_), _)) => return Err(format!("BYDAY={by_day_text}")),
+        _ if days.iter().any(|(o, _)| o.is_some()) => return Err(by_day_err()),
         _ => None,
     };
     let day_names: Vec<&str> = days.iter().map(|(_, d)| *d).collect();
@@ -606,13 +613,34 @@ pub(crate) fn graph_recurrence_from_rrule(
         chrono::Weekday::Sat => "saturday",
         chrono::Weekday::Sun => "sunday",
     };
+    // Parts the frequency does not use must not be silently dropped.
+    let reject_month = |m: Option<u32>| m.map_or(Ok(()), |m| Err(format!("BYMONTH={m}")));
+    let reject_monthday = |d: Option<u32>| d.map_or(Ok(()), |d| Err(format!("BYMONTHDAY={d}")));
+    // RFC 5545 skips months lacking the day; Graph moves it to the last day.
+    let absolute_day = || {
+        let day = bymonthday.unwrap_or_else(|| first_start.day());
+        if day > 28 {
+            Err(format!("BYMONTHDAY={day}"))
+        } else {
+            Ok(day)
+        }
+    };
 
     let mut pattern = match freq.as_str() {
-        "DAILY" => serde_json::json!({"type": "daily", "interval": interval}),
-        "WEEKLY" => {
-            if ordinal.is_some() {
-                return Err(format!("BYDAY={by_day_text}"));
+        "DAILY" => {
+            if !days.is_empty() {
+                return Err(by_day_err());
             }
+            reject_month(bymonth)?;
+            reject_monthday(bymonthday)?;
+            serde_json::json!({"type": "daily", "interval": interval})
+        }
+        "WEEKLY" => {
+            if days.iter().any(|(o, _)| o.is_some()) {
+                return Err(by_day_err());
+            }
+            reject_month(bymonth)?;
+            reject_monthday(bymonthday)?;
             let names = if day_names.is_empty() {
                 vec![anchor_day]
             } else {
@@ -620,31 +648,40 @@ pub(crate) fn graph_recurrence_from_rrule(
             };
             serde_json::json!({"type": "weekly", "interval": interval, "daysOfWeek": names})
         }
-        "MONTHLY" => match (ordinal, bymonthday) {
-            (Some(n), None) => serde_json::json!({
-                "type": "relativeMonthly", "interval": interval,
-                "daysOfWeek": day_names, "index": graph_index_name(n)
-            }),
-            (None, _) if day_names.is_empty() => serde_json::json!({
-                "type": "absoluteMonthly", "interval": interval,
-                "dayOfMonth": bymonthday.unwrap_or_else(|| first_start.day())
-            }),
-            _ => return Err(format!("BYDAY={by_day_text}")),
-        },
-        "YEARLY" => {
-            let month = bymonth.unwrap_or_else(|| first_start.month());
-            match (ordinal, bymonthday) {
-                (Some(n), None) => serde_json::json!({
-                    "type": "relativeYearly", "interval": interval, "month": month,
-                    "daysOfWeek": day_names, "index": graph_index_name(n)
+        "MONTHLY" => {
+            reject_month(bymonth)?;
+            match ordinal {
+                Some(n) => {
+                    reject_monthday(bymonthday)?;
+                    serde_json::json!({
+                        "type": "relativeMonthly", "interval": interval,
+                        "daysOfWeek": day_names, "index": graph_index_name(n)
+                    })
+                }
+                None if days.is_empty() => serde_json::json!({
+                    "type": "absoluteMonthly", "interval": interval,
+                    "dayOfMonth": absolute_day()?
                 }),
-                (None, _) if day_names.is_empty() => serde_json::json!({
-                    "type": "absoluteYearly", "interval": interval, "month": month,
-                    "dayOfMonth": bymonthday.unwrap_or_else(|| first_start.day())
-                }),
-                _ => return Err(format!("BYDAY={by_day_text}")),
+                None => return Err(by_day_err()),
             }
         }
+        "YEARLY" => match ordinal {
+            Some(n) => {
+                reject_monthday(bymonthday)?;
+                // Without BYMONTH the rule means "nth weekday of the year".
+                let month = bymonth.ok_or_else(by_day_err)?;
+                serde_json::json!({
+                    "type": "relativeYearly", "interval": interval, "month": month,
+                    "daysOfWeek": day_names, "index": graph_index_name(n)
+                })
+            }
+            None if days.is_empty() => serde_json::json!({
+                "type": "absoluteYearly", "interval": interval,
+                "month": bymonth.unwrap_or_else(|| first_start.month()),
+                "dayOfMonth": absolute_day()?
+            }),
+            None => return Err(by_day_err()),
+        },
         _ => return Err(format!("FREQ={freq}")),
     };
     if let Some(first_day) = wkst {
@@ -1219,6 +1256,65 @@ mod tests {
         ] {
             assert_eq!(from_rrule(rule), Err(part.to_string()), "{rule}");
         }
+    }
+
+    #[test]
+    fn parts_graph_cannot_express_exactly_are_rejected() {
+        for (rule, part) in [
+            ("FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR", "BYDAY=MO,TU,WE,TH,FR"),
+            ("FREQ=WEEKLY;BYDAY=TU,2TH", "BYDAY=TU,2TH"),
+            ("FREQ=WEEKLY;BYDAY=2TU", "BYDAY=2TU"),
+            ("FREQ=MONTHLY;BYDAY=1MO,2TU", "BYDAY=1MO,2TU"),
+            ("FREQ=MONTHLY;BYDAY=MO,2TU", "BYDAY=MO,2TU"),
+            ("FREQ=MONTHLY;BYDAY=MO", "BYDAY=MO"),
+            ("FREQ=MONTHLY;BYMONTH=3", "BYMONTH=3"),
+            ("FREQ=DAILY;BYMONTH=1", "BYMONTH=1"),
+            ("FREQ=DAILY;BYMONTHDAY=5", "BYMONTHDAY=5"),
+            ("FREQ=WEEKLY;BYMONTHDAY=15", "BYMONTHDAY=15"),
+            ("FREQ=YEARLY;BYDAY=2TU", "BYDAY=2TU"),
+            ("FREQ=WEEKLY;COUNT=3;UNTIL=20261231T000000Z", "UNTIL"),
+            ("FREQ=MONTHLY;BYMONTHDAY=29", "BYMONTHDAY=29"),
+            ("FREQ=MONTHLY;BYMONTHDAY=31", "BYMONTHDAY=31"),
+            ("FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30", "BYMONTHDAY=30"),
+            ("FREQ=MONTHLY;INTERVAL=0", "INTERVAL=0"),
+            ("FREQ=MONTHLY;INTERVAL=x", "INTERVAL=x"),
+        ] {
+            assert_eq!(from_rrule(rule), Err(part.to_string()), "{rule}");
+        }
+    }
+
+    #[test]
+    fn implicit_anchor_day_above_28_is_rejected() {
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 31).expect("date");
+        for rule in ["FREQ=MONTHLY", "FREQ=YEARLY"] {
+            assert_eq!(
+                graph_recurrence_from_rrule(rule, first, "UTC"),
+                Err("BYMONTHDAY=31".to_string()),
+                "{rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn lowercase_keys_and_values_are_accepted() {
+        let rec = from_rrule("freq=weekly;byday=tu,th;interval=2").expect("rule");
+        assert_eq!(rec["pattern"]["interval"], 2);
+        assert_eq!(rec["pattern"]["daysOfWeek"], serde_json::json!(["tuesday", "thursday"]));
+    }
+
+    #[test]
+    fn until_as_date_value_is_the_end_date() {
+        let rec = from_rrule("FREQ=WEEKLY;UNTIL=20261231").expect("rule");
+        assert_eq!(rec["range"]["type"], "endDate");
+        assert_eq!(rec["range"]["endDate"], "2026-12-31");
+    }
+
+    #[test]
+    fn relative_yearly_with_month_maps_to_relative_yearly() {
+        let rec = from_rrule("FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU").expect("rule");
+        assert_eq!(rec["pattern"]["type"], "relativeYearly");
+        assert_eq!(rec["pattern"]["month"], 3);
+        assert_eq!(rec["pattern"]["index"], "last");
     }
 
     // ── graph_recurrence_with_end ──────────────────────────────────────────
