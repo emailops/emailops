@@ -56,7 +56,7 @@ pub fn validate_new_event(input: &NewCalendarEvent) -> Result<()> {
 /// The account's primary calendar id, falling back to the provider's
 /// `"primary"` alias when the registry has not been populated yet (an event
 /// created before the first calendar sync completes).
-fn primary_calendar_id(db: &Database, account_id: &str) -> Result<String> {
+pub(crate) fn primary_calendar_id(db: &Database, account_id: &str) -> Result<String> {
     Ok(db
         .list_calendars(account_id)?
         .into_iter()

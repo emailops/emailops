@@ -55,7 +55,6 @@ fn fold_line(line: &str) -> String {
 /// The REPLY document for `event`, answering as `attendee_email` at `now`
 /// (epoch seconds, UTC). `None` when the event has no ORGANIZER (there is
 /// nobody to answer) or `attendee_email` is not an email address.
-#[cfg_attr(not(test), allow(dead_code))] // wired by the RSVP command (Task 8)
 pub fn build_itip_reply(event: &RawVEvent, attendee_email: &str, response: RsvpResponse, now: i64) -> Option<String> {
     if !looks_like_email(attendee_email) {
         return None;
@@ -100,7 +99,6 @@ pub fn build_itip_reply(event: &RawVEvent, attendee_email: &str, response: RsvpR
 
 /// Subject of the reply mail: a localized verb plus the event title, one line
 /// and at most 120 characters of title.
-#[cfg_attr(not(test), allow(dead_code))] // wired by the RSVP command (Task 8)
 pub fn itip_reply_subject(response: RsvpResponse, summary: &str, language: Language) -> String {
     let prefix = match (language, response) {
         (Language::En, RsvpResponse::Accepted) => "Accepted: ",
@@ -136,7 +134,6 @@ fn looks_like_email(address: &str) -> bool {
 
 /// Email `ics` (a REPLY) to the organizer, and only to them, as raw MIME
 /// through the account's provider. The text part repeats the subject.
-#[cfg_attr(not(test), allow(dead_code))] // wired by the RSVP command (Task 8)
 pub async fn send_itip_reply(
     provider: &dyn EmailProvider,
     account: &Account,

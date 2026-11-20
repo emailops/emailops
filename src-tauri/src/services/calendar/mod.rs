@@ -8,5 +8,6 @@ pub mod invite;
 pub mod itip;
 pub mod meeting_link;
 pub mod notify;
+pub mod respond;
 pub mod sync;
 pub mod windows_zones;

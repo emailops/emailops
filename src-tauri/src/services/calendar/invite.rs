@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::ics::{parse_ics_time_with_fixed_zones, parse_vcalendar, unescape_text};
+use super::ics::{parse_ics_time_with_fixed_zones, parse_vcalendar, unescape_text, RawVEvent};
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
 
@@ -35,6 +35,12 @@ pub struct CalendarInvite {
     pub recurrence: Option<String>,
     /// iTIP method: "REQUEST" (invitation), "CANCEL", … Defaults to "REQUEST".
     pub method: String,
+    /// A broadcast (`METHOD:PUBLISH`) or an event without ORGANIZER: nobody to answer.
+    pub is_publish: bool,
+    /// Where an answer goes: the organizer, unless this is a publish or I am the organizer.
+    pub reply_to: Option<String>,
+    /// The organizer sent this very email.
+    pub organizer_is_sender: bool,
 }
 
 /// Parse the first VEVENT of an iCalendar document. Returns `None` when there
@@ -46,7 +52,7 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
     let mut uid = None;
     let mut summary = String::new();
     let mut location = String::new();
-    let mut organizer = String::new();
+    let organizer = organizer_address(event).unwrap_or_default();
     let mut start: Option<(i64, bool)> = None;
     let mut end: Option<(i64, bool)> = None;
     let mut recurrence = None;
@@ -57,14 +63,6 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
             "UID" => uid = Some(value.trim().to_string()),
             "SUMMARY" => summary = unescape_text(value.trim()),
             "LOCATION" => location = unescape_text(value.trim()),
-            "ORGANIZER" => {
-                organizer = value
-                    .trim()
-                    .strip_prefix("mailto:")
-                    .or_else(|| value.trim().strip_prefix("MAILTO:"))
-                    .unwrap_or(value.trim())
-                    .to_ascii_lowercase();
-            }
             "DTSTART" => start = parse_ics_time_with_fixed_zones(value, &prop.params, &calendar.fixed_zones),
             "DTEND" => end = parse_ics_time_with_fixed_zones(value, &prop.params, &calendar.fixed_zones),
             "RRULE" => recurrence = Some(value.trim().to_string()),
@@ -75,17 +73,44 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
     let uid = uid?;
     let (start_time, is_all_day) = start?;
     let end_time = end.map(|(t, _)| t).unwrap_or(start_time + 3_600);
+    let is_publish = method.eq_ignore_ascii_case("PUBLISH") || organizer.is_empty();
     Some(CalendarInvite {
         uid,
         summary,
         location,
-        organizer,
         start_time,
         end_time,
         is_all_day,
         recurrence,
+        is_publish,
+        reply_to: (!is_publish).then(|| organizer.clone()),
+        organizer,
         method,
+        organizer_is_sender: false,
     })
+}
+
+/// The ORGANIZER address of `event`: `mailto:` stripped case-insensitively,
+/// lowercased; `None` when absent or empty.
+pub(crate) fn organizer_address(event: &RawVEvent) -> Option<String> {
+    let value = event.first_value("ORGANIZER")?.trim();
+    let address = match value.get(..7) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("mailto:") => &value[7..],
+        _ => value,
+    };
+    let address = address.trim().to_ascii_lowercase();
+    (!address.is_empty()).then_some(address)
+}
+
+/// Fill the fields that depend on who sent the email and who reads it.
+pub(crate) fn address_invite(invite: &mut CalendarInvite, sender_email: &str, my_email: &str) {
+    if invite.organizer.eq_ignore_ascii_case(my_email) {
+        invite.reply_to = None;
+    }
+    invite.organizer_is_sender = invite
+        .reply_to
+        .as_deref()
+        .is_some_and(|reply_to| reply_to.eq_ignore_ascii_case(sender_email));
 }
 
 /// Whether an attachment looks like a calendar invite part.
@@ -93,16 +118,45 @@ pub(crate) fn is_invite_attachment(meta: &crate::models::EmailAttachmentMeta) ->
     meta.mime_type.to_ascii_lowercase().contains("calendar") || meta.filename.to_ascii_lowercase().ends_with(".ics")
 }
 
-/// Find and parse the calendar invite attached to an email, fetching the ICS
-/// bytes from disk, inline data, or the mail provider (in that order).
+/// Find and parse the calendar invite attached to an email, as seen by the
+/// account that received it.
 pub async fn get_calendar_invite(
     db: &Arc<Database>,
     app_data_dir: &Path,
     email_id: &str,
 ) -> Result<Option<CalendarInvite>> {
-    let Some(email) = db.get_email_by_id(email_id)? else {
-        return Err(AppError::NotFound(format!("email '{email_id}' not found")));
+    let email = load_email(db, email_id)?;
+    let Some(ics) = read_invite_ics(db, app_data_dir, &email).await? else {
+        return Ok(None);
     };
+    let Some(mut invite) = parse_ics_invite(&ics) else {
+        return Ok(None);
+    };
+    let account = db
+        .get_account(&email.account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("account '{}' not found", email.account_id)))?;
+    address_invite(&mut invite, &email.sender_email, &account.email);
+    Ok(Some(invite))
+}
+
+/// The whole `.ics` document attached to an email, fetched from disk, inline
+/// data, or the mail provider (in that order). `None` without an invite part.
+pub async fn fetch_invite_ics(db: &Arc<Database>, app_data_dir: &Path, email_id: &str) -> Result<Option<String>> {
+    let email = load_email(db, email_id)?;
+    read_invite_ics(db, app_data_dir, &email).await
+}
+
+fn load_email(db: &Database, email_id: &str) -> Result<crate::models::Email> {
+    db.get_email_by_id(email_id)?
+        .ok_or_else(|| AppError::NotFound(format!("email '{email_id}' not found")))
+}
+
+async fn read_invite_ics(
+    db: &Arc<Database>,
+    app_data_dir: &Path,
+    email: &crate::models::Email,
+) -> Result<Option<String>> {
+    let email_id = email.id.as_str();
     let metas = db.get_email_attachment_metas(email_id)?;
     let Some(meta) = metas.into_iter().find(is_invite_attachment) else {
         return Ok(None);
@@ -129,7 +183,7 @@ pub async fn get_calendar_invite(
             }
         }
     };
-    Ok(parse_ics_invite(&ics))
+    Ok(Some(ics))
 }
 
 /// Read a locally stored invite part. `relative_path` is relative to the data
@@ -279,6 +333,76 @@ mod tests {
             .expect("insert meta");
         db.set_email_attachment_file_path("msg-inv", "invite.ics", relative)
             .expect("set file path");
+    }
+
+    const TWO_EVENTS: &str = "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:first@example.com\r\nDTSTART:20261201T100000Z\r\nDTEND:20261201T110000Z\r\nORGANIZER:mailto:lead@example.com\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTART:20261202T100000Z\r\nDTEND:20261202T110000Z\r\nORGANIZER:mailto:lead@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    fn seeded_two_event_db() -> (Arc<Database>, tempfile::TempDir) {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let data_dir = tempfile::tempdir().expect("tmp dir");
+        let relative = "attachments/acc-inv/auto/invite.ics";
+        let absolute = data_dir.path().join(relative);
+        std::fs::create_dir_all(absolute.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&absolute, TWO_EVENTS).expect("write ics");
+        seed_stored_invite(&db, relative);
+        (db, data_dir)
+    }
+
+    #[tokio::test]
+    async fn fetch_returns_the_whole_document() {
+        let (db, data_dir) = seeded_two_event_db();
+        let ics = fetch_invite_ics(&db, data_dir.path(), "msg-inv")
+            .await
+            .expect("fetch")
+            .expect("invite part");
+        assert_eq!(ics.matches("BEGIN:VEVENT").count(), 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_returns_none_without_an_invite_part() {
+        let (db, data_dir) = seeded_two_event_db();
+        db.connection()
+            .execute("DELETE FROM email_attachment_meta WHERE email_id = 'msg-inv'", [])
+            .expect("drop part");
+        assert_eq!(
+            fetch_invite_ics(&db, data_dir.path(), "msg-inv").await.expect("fetch"),
+            None
+        );
+    }
+
+    #[test]
+    fn publish_invites_are_flagged() {
+        let no_organizer = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:u1\nDTSTART:20261201T100000Z\nDTEND:20261201T110000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        let publish = "BEGIN:VCALENDAR\nMETHOD:PUBLISH\nBEGIN:VEVENT\nUID:u1\nDTSTART:20261201T100000Z\nDTEND:20261201T110000Z\nORGANIZER:mailto:lead@example.com\nEND:VEVENT\nEND:VCALENDAR\n";
+        for ics in [no_organizer, publish] {
+            let invite = parse_ics_invite(ics).expect("parse");
+            assert!(invite.is_publish, "{ics}");
+            assert_eq!(invite.reply_to, None, "{ics}");
+        }
+        assert!(!parse_ics_invite(SAMPLE_INVITE).expect("parse").is_publish);
+    }
+
+    #[test]
+    fn organizer_differs_from_sender_is_flagged() {
+        let mut invite = parse_ics_invite(TWO_EVENTS).expect("parse");
+        address_invite(&mut invite, "news@example.org", "me@example.com");
+        assert_eq!(invite.reply_to.as_deref(), Some("lead@example.com"));
+        assert!(!invite.organizer_is_sender);
+    }
+
+    #[test]
+    fn organizer_who_sent_the_email_is_flagged_case_insensitively() {
+        let mut invite = parse_ics_invite(TWO_EVENTS).expect("parse");
+        address_invite(&mut invite, "Lead@Example.com", "me@example.com");
+        assert!(invite.organizer_is_sender);
+    }
+
+    #[test]
+    fn an_invite_organized_by_me_has_no_reply_address() {
+        let mut invite = parse_ics_invite(TWO_EVENTS).expect("parse");
+        address_invite(&mut invite, "lead@example.com", "LEAD@example.com");
+        assert_eq!(invite.reply_to, None);
+        assert!(!invite.organizer_is_sender);
     }
 
     // Regression: the stored path is relative to the data dir but was read

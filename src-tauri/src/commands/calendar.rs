@@ -133,26 +133,6 @@ pub async fn get_calendar_invite(
     crate::services::calendar::invite::get_calendar_invite(&state.db, &state.app_data_dir, &email_id).await
 }
 
-/// RSVP to an invitation ("accepted" | "declined" | "tentative"). The event is
-/// located in the account's calendar by the invite's iCalendar UID; the
-/// organizer is notified of the response.
-#[tauri::command]
-pub async fn rsvp_calendar_invite(
-    state: State<'_, AppState>,
-    account_id: String,
-    ical_uid: String,
-    response: String,
-) -> Result<(), AppError> {
-    let account = state
-        .db
-        .get_account(&account_id)?
-        .ok_or_else(|| AppError::NotFound(format!("account '{account_id}' not found")))?;
-    let rsvp = crate::sync::calendar_provider::RsvpResponse::from_wire(&response)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown RSVP response '{response}'")))?;
-    let provider = crate::services::calendar::sync::build_calendar_provider(&state.db, &account)?;
-    provider.rsvp_by_ical_uid(&ical_uid, rsvp, &account.email).await
-}
-
 /// Run one calendar sync cycle for an account right now (view open / manual
 /// refresh). The background scheduler covers steady-state; this exists so the
 /// user never stares at a stale week after opening the calendar.
@@ -237,6 +217,88 @@ pub async fn import_ics(
         }
     }
     Ok(summary)
+}
+
+/// Mirror the calendar after an invite changed it; a failed sync is logged
+/// and never fails the answer.
+async fn sync_after_invite(
+    state: &AppState,
+    account_id: &str,
+    provider: &dyn crate::sync::calendar_provider::CalendarProvider,
+    outcome: &services::calendar::respond::InviteResponseOutcome,
+) {
+    use services::calendar::respond::InviteResponseOutcome::{Imported, Removed};
+    if !matches!(outcome, Imported { .. } | Removed { .. }) {
+        return;
+    }
+    if let Err(e) =
+        services::calendar::sync::sync_account_calendar(&state.db, account_id, provider, chrono::Utc::now().timestamp())
+            .await
+    {
+        services::logger::log(
+            "error",
+            "sync",
+            format!("Calendar sync after invite failed: {}", e.code()),
+        );
+    }
+}
+
+/// Answer an invitation received by email ("accepted" | "declined" |
+/// "tentative"): the event is looked up in the account's calendar, imported
+/// when it never arrived, and the organizer gets the iTIP reply.
+#[tauri::command]
+pub async fn rsvp_calendar_invite(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+    response: String,
+    time_zone: String,
+) -> Result<services::calendar::respond::InviteResponseOutcome, AppError> {
+    let rsvp = crate::sync::calendar_provider::RsvpResponse::from_wire(&response)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown RSVP response '{response}'")))?;
+    let (account, kind) = ics_import_target(&state, &account_id)?;
+    let email = services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
+    let ics = services::calendar::invite::fetch_invite_ics(&state.db, &state.app_data_dir, &email_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("email '{email_id}' has no calendar invite")))?;
+    let calendar = services::calendar::sync::build_calendar_provider(&state.db, &account)?;
+    let mail = services::emails::build_provider(&account, None).await?;
+    let primary_calendar_id = services::calendar::create::primary_calendar_id(&state.db, &account.id)?;
+    let request = services::calendar::respond::InviteRequest {
+        account: &account,
+        kind,
+        ics: &ics,
+        email_received_at: email.timestamp,
+        response: rsvp,
+        default_tz: &time_zone,
+        primary_calendar_id: &primary_calendar_id,
+        language: services::i18n::resolve_ui_language(&state.db)?.unwrap_or_default(),
+        now: chrono::Utc::now().timestamp(),
+    };
+    let outcome = services::calendar::respond::respond_to_invite(calendar.as_ref(), mail.as_ref(), &request).await?;
+    sync_after_invite(&state, &account.id, calendar.as_ref(), &outcome).await;
+    Ok(outcome)
+}
+
+/// Add the invitation (or published event) in an email to the account's
+/// primary calendar without answering anyone.
+#[tauri::command]
+pub async fn add_invite_to_calendar(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+    time_zone: String,
+) -> Result<services::calendar::respond::InviteResponseOutcome, AppError> {
+    let (account, kind) = ics_import_target(&state, &account_id)?;
+    services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
+    let ics = services::calendar::invite::fetch_invite_ics(&state.db, &state.app_data_dir, &email_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("email '{email_id}' has no calendar invite")))?;
+    let calendar = services::calendar::sync::build_calendar_provider(&state.db, &account)?;
+    let outcome =
+        services::calendar::respond::add_invite_to_calendar(calendar.as_ref(), kind, &ics, &time_zone).await?;
+    sync_after_invite(&state, &account.id, calendar.as_ref(), &outcome).await;
+    Ok(outcome)
 }
 
 /// Subscribed ICS feeds of an IMAP account (Settings → Calendar). Only the

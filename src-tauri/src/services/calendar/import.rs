@@ -604,7 +604,7 @@ pub struct IcsImportSummary {
 }
 
 /// The wire code of an unsupported reason and its payload, when it has one.
-fn reason_code(reason: &UnsupportedReason) -> (&'static str, Option<String>) {
+pub(crate) fn reason_code(reason: &UnsupportedReason) -> (&'static str, Option<String>) {
     match reason {
         UnsupportedReason::MissingUidOrStart => ("missingUidOrStart", None),
         UnsupportedReason::Cancelled => ("cancelled", None),

@@ -220,6 +220,7 @@ macro_rules! app_commands {
             commands::calendar::delete_calendar_event,
             commands::calendar::get_calendar_invite,
             commands::calendar::rsvp_calendar_invite,
+            commands::calendar::add_invite_to_calendar,
             commands::calendar::sync_calendar_now,
             commands::calendar::preview_ics_import,
             commands::calendar::import_ics,
