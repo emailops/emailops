@@ -3,7 +3,7 @@ title: 'Privacy & security'
 description: 'Where your mail is stored, what leaves your machine, and the controls that protect you from the mail itself.'
 weight: 45
 nav:
-  where-your-data-is-stored: settings/privacy
+  where-your-data-is-stored: settings/data
   protection-from-the-mail-itself: settings/privacy
   locking-the-app: settings/privacy
 ---
@@ -28,12 +28,19 @@ Everything resides in your OS application data directory:
 Inside it:
 
 - **A SQLite database** — messages, threads, contacts, calendar events, classification tags,
-  search embeddings and AI memory. This is the only copy EmailOps keeps. <!-- claim:priv-where-data-3 -->
+  search embeddings and AI memory. <!-- claim:priv-where-data-3 -->
 - **A `models/` folder** — the AI models you downloaded. <!-- claim:priv-where-data-4 -->
+- **A `backups/` folder** — full copies of the database that EmailOps makes while it is open: by
+  default one a day at 03:00, keeping only the newest one. Time Machine skips this folder. Turn
+  them off, make them weekly, keep up to three or delete them in
+  **Settings → Data & Backups → Backups**. <!-- claim:priv-where-data-8 -->
+- **A `local-backups/` folder** — small copies of what exists only on this computer: settings,
+  accounts without their passwords, rules, memory, tasks, lenses and chats. Mail is not in them.
+  By default one a day, keeping the newest seven; restore one from the same section. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 To keep it somewhere else — an external disk, or an encrypted volume — use **Settings →
-Privacy & Security → Data location**, or the link at the foot of the first onboarding step. EmailOps
+Data & Backups → Data location**, or the link at the foot of the first onboarding step. EmailOps
 copies everything there, restarts, and leaves the old folder for you to delete. If that disk is
 not connected when EmailOps starts, it says so and quits rather than opening an empty mailbox.
 A model you added with **Use existing file…** is not copied: the new folder points to the same file.

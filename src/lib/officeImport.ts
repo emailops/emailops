@@ -15,7 +15,7 @@ export type ImportKind = 'doc' | 'sheet';
 export function importKind(filename: string): ImportKind | null {
   const ext = filename.toLowerCase().split('.').pop() ?? '';
   if (ext === 'docx') return 'doc';
-  if (['xlsx', 'xlsm', 'xls', 'ods'].includes(ext)) return 'sheet';
+  if (['xlsx', 'xlsm'].includes(ext)) return 'sheet';
   return null;
 }
 

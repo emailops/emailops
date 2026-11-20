@@ -117,6 +117,10 @@ Fairness is the whole value of the exercise, so hold everything else still:
 - **Same context window and same priming.** Both are per-model-file decisions
   — confirm both models actually got them.
 - **Same corpus, same tier, same repeat count**, and note them in the report.
+- **A quiet machine.** `model_bench.sh` refuses to start on battery, in Low
+  Power Mode or with an EmailOps app open (`scripts/bench_preflight.sh`). The
+  first two slow runs by 8-10%; the app shares the GPU. Quit the app rather
+  than working around the check.
 - The Rust side is a debug build, so latencies are comparable **between
   columns** but are not absolute numbers to quote elsewhere.
 
@@ -131,6 +135,10 @@ Three things decide a model, and they rarely point the same way:
   and the failures a corpus question, not a model one).
 - **Speed.** A mixture-of-experts model with few active parameters will beat a
   dense model of similar size by 2-3x. That is architecture, not quality.
+  One run per model carries ±5-10% run-to-run noise, so a wall-time gap under
+  ~10% is not a speed difference; say so. A runtime change measured on one
+  model (a llama.cpp bump, a batch size) goes through `make bench-ab`
+  instead: it interleaves control and candidate runs so drift cancels out.
 - **Memory.** Peak RSS is what decides whether a model is even an option on a
   16 GB machine. A model that matches on quality at half the memory has a real
   argument even when it is slower.

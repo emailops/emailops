@@ -126,6 +126,10 @@ Applied versions are tracked in the `refinery_schema_history` table.
    - Use `ALTER TABLE` (not `CREATE TABLE`) for adding columns to existing tables
 2. Test it: `cargo test --no-default-features` — `Database::new_for_testing()` runs all
    migrations against an in-memory DB, so the `schema_parity_tests` will catch schema drift
+   - A migration that creates, drops or renames a table must also update the local data
+     backup's lists in `src/services/backup/tables.rs`; the `backup-tables` gate refuses
+     the commit until it does. Run the `backup-tables` agent
+     (`.claude/agents/backup-tables.md`) to classify the table.
 3. Never edit or delete an applied migration file — create a new version instead
 4. Never ignore migration errors; `run_migrations()` propagates them as `AppError::IoError`
    and startup aborts

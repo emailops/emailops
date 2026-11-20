@@ -144,13 +144,17 @@ pub fn next_flush_retry(previous: Option<&FlushRetry>, now: i64) -> FlushRetry {
 
 /// Pure: why a message must not be taken as coming from the participant its
 /// `From` names, if it must not — judged on what the receiving server recorded
-/// in `Authentication-Results` ([`AuthAssessment`]). Refused: the sender's
-/// domain failed DMARC, or it publishes no DMARC policy and the message failed
-/// SPF without a valid DKIM signature. A verdict we cannot attribute to the
-/// account's own mail server proves nothing either way, so it is accepted.
+/// in `Authentication-Results` ([`AuthAssessment`]). Refused: the server ran
+/// DMARC for another domain than the sender's, the sender's domain failed
+/// DMARC, or it publishes no DMARC policy and the message failed SPF without a
+/// valid DKIM signature. A verdict we cannot attribute to the account's own
+/// mail server proves nothing either way, so it is accepted.
 pub fn sender_rejection(auth: &AuthAssessment) -> Option<&'static str> {
     if !auth.trusted {
         return None;
+    }
+    if auth.dmarc_names_another_domain() {
+        return Some("the server authenticated another domain than the sender's");
     }
     if auth.dmarc_hard_fail() {
         return Some("the sender's domain failed DMARC");
@@ -179,6 +183,7 @@ mod tests {
             spf,
             dkim,
             dmarc,
+            ..AuthAssessment::default()
         }
     }
 
@@ -217,6 +222,22 @@ mod tests {
         for (assessment, refused, case) in cases {
             assert_eq!(sender_rejection(&assessment).is_some(), refused, "{case}");
         }
+    }
+
+    #[test]
+    fn a_pass_for_another_domain_than_the_senders_is_refused() {
+        // The participant's address is not the one the server authenticated.
+        let assessment = AuthAssessment {
+            dmarc_from: Some("attacker.example".into()),
+            sender_domain: Some("bank.example".into()),
+            ..auth(
+                true,
+                Some(AuthResult::Pass),
+                Some(AuthResult::Pass),
+                Some(AuthResult::Pass),
+            )
+        };
+        assert!(sender_rejection(&assessment).is_some());
     }
 
     fn envelope(participants: &[&str]) -> Envelope {

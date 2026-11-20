@@ -16,6 +16,7 @@ import { AutoAdvanceSetting } from './AutoAdvanceSetting';
 import { CalendarSettings } from './CalendarSettings';
 import type { ClassificationRulePrefill } from './ClassificationSettings';
 import { ClassificationSettings } from './ClassificationSettings';
+import { DataSettings } from './DataSettings';
 import { DefaultSenderSetting } from './DefaultSenderSetting';
 import { DocumentsSettings } from './DocumentsSettings';
 import { JunkSettings } from './JunkSettings';
@@ -49,6 +50,7 @@ export type SettingsTab =
   | 'skills'
   | 'documents'
   | 'privacy'
+  | 'data'
   | 'about';
 
 interface SettingsDialogProps {
@@ -95,6 +97,7 @@ const ALL_TABS: TabSpec[] = [
   { id: 'skills', needsAi: true },
   { id: 'documents', experimental: true },
   { id: 'privacy' },
+  { id: 'data' },
   { id: 'about' },
 ];
 
@@ -278,6 +281,7 @@ export function SettingsDialog({
           {tab === 'skills' && <SkillsSettings />}
           {tab === 'documents' && <DocumentsSettings />}
           {tab === 'privacy' && <PrivacySettings />}
+          {tab === 'data' && <DataSettings />}
           {tab === 'about' && <AboutSettings />}
         </div>
       </div>

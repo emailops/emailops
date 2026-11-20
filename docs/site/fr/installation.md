@@ -245,7 +245,7 @@ applicatives de votre système :
   clair. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-Pour conserver les données sur un autre disque, choisissez **Paramètres → Confidentialité et sécurité →
+Pour conserver les données sur un autre disque, choisissez **Paramètres → Données et sauvegardes →
 Emplacement des données → Modifier…**. Pour des tests ou un second profil, définissez plutôt la
 variable d'environnement `EMAILOPS_DATA_DIR` avant le lancement. Les chemins
 exacts par plateforme, et ce qui est écrit où, figurent dans

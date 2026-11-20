@@ -80,6 +80,9 @@ use crate::ai::utf8_stream::Utf8Stream;
 /// chunks internally; sizing this to n_ctx makes Metal allocate huge per-graph
 /// buffers and is a known cause of fatal `llama_decode` failures on Apple
 /// Silicon under memory pressure. 512 is llama.cpp's own default.
+/// Measured with `make bench-ab` (19/11/2026, qwen3.5-4b, 64 GB M-series):
+/// 1024 was within noise on prefill, 2048 was 5% slower on the cold ~8K-token
+/// prefix and peaked 0.26 GB higher. Rerun it before changing this value.
 const N_UBATCH: u32 = 512;
 
 /// Sequences reserved for one-shot prompt prefixes, on top of the three the

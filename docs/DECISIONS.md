@@ -4797,6 +4797,98 @@ only, 18/11/2026) stopped following the server for good.
 - *Only fixing the editor's spurious update*: the tab composer's autosave also ran on
   mount for any draft with content, so an unchanged draft was still saved.
 
+## 2026-11-19 — EO Docs imports spreadsheets from .xlsx only
+
+**Decision:** Spreadsheet import into EO Docs accepts `.xlsx` and `.xlsm` only, read cell by
+cell (`calamine::Xlsx::worksheet_cells_reader`) and keeping just the cells inside the
+5 000 x 100 caps. `.xls` and `.ods` are refused with a message asking to save the file as
+`.xlsx`, and the webview no longer offers to import them.
+**Context:** An imported spreadsheet may be an email attachment, so its contents are
+sender-controlled. calamine 0.38 builds one dense range from a sheet's first to its last
+used cell, and for `.xls` and `.ods` it does so for every sheet when the file is opened,
+with no cell-by-cell API. A file of a few KB naming a far cell (XFD1048576) asked for
+billions of cells and took the app down before any cap applied.
+**Rejected:**
+- *Keeping `.xls`/`.ods` and recording the risk*: it leaves a one-click crash from any
+  attachment in place.
+- *Opening with `open_workbook_auto_from_rs`*: it tries the eager `.xls` parser first,
+  whatever the file's extension.
+
+## 2026-11-19 — Release jobs build and sign one resolved commit; only real releases save Rust caches
+
+**Decision:** A `resolve` job in `release.yml` turns `tag_name` into a commit SHA once, and
+every later job checks out that SHA, without persisting the checkout token. The workflow
+token is read-only; `contents: write` goes only to the jobs that attach files to the draft
+(`linux-sign`, `windows-publish`), which never run `npm ci` or a build, so `linux-sign`
+now attaches the Linux installers too. Every rust-cache step saves only when the run is not
+a dry run. `scripts/tests/test_release_workflow.py` asserts these properties.
+**Context:** The signing jobs start after an owner approval, possibly hours after the
+build, and checked out `tag_name` again by name, so a moved tag or branch would have run
+other in-repo signing scripts with the Certum and GPG secrets. The Linux build job, which
+runs the npm and cargo dependency tree, held a persisted write token that could move that
+ref, and jobs without a `permissions` block got the repository default. The rust caches
+had no `save-if`, so a dry run of any ref could seed the dependency artifacts a later
+signed release restores. Both were security audit leads.
+**Rejected:**
+- *Commit SHA in the rust-cache key*: no run could reuse another commit's cache, so every
+  release would build cold (the CUDA leg passes 82 min cold).
+- *Turning off the npm cache on dry runs*: `npm ci` checks every tarball against the
+  lockfile's sha512, so a seeded npm cache cannot change what installs.
+- *A separate Linux publish job*: one more job for no gain, since `linux-sign` already held
+  the write token and runs nothing from the dependency tree.
+- *Requiring an existing tag for non-dry runs*: not needed to close either lead.
+
+## 2026-11-19 — Release builds pin the Rust toolchain
+
+**Decision:** Every job in `release.yml` that installs Rust pins one release (1.99.1)
+instead of the floating `stable`. The pin moves forward by hand, after a dry run on the new
+release.
+**Context:** Rust 1.100 (12/11/2026) moved build-script output from
+`build/<pkg>-<hash>/out` to `build/<pkg>/<hash>/out`. llama-cpp-sys-2 0.1.161, the latest
+release, locates the profile directory three levels above `OUT_DIR`, so the
+dynamic-backends build hard-links its libraries into a `deps/` that does not exist and
+panics. The first release run on 1.100 failed with no change on our side, the same way
+`ubuntu-latest` once raised the glibc floor; this workflow already pins runner images for
+that reason.
+**Rejected:**
+- *Patching llama-cpp-sys-2 through `[patch.crates-io]`*: a fork to maintain for a fix that
+  belongs upstream.
+- *A `rust-toolchain.toml` for the whole repo*: it would also pin local development and CI,
+  which do not build the dynamic-backends path that breaks.
+
+## 2026-11-17 — Backups run on a schedule while the app is open, in two kinds
+
+**Decision:** The app backs up while it is open, from an hour the user picks (default 03:00):
+a check 30 s after launch and every 5 minutes makes a copy that is due, and catches up a slot
+missed while the app was closed or the computer asleep. There are two copies, each Off, Daily or
+Weekly (default Daily) in Settings → Data & Backups → Backups:
+- *Local data*: a SQLite file with only the tables that exist nowhere else — accounts without
+  secrets, settings, rules, memory, tasks, lenses, chats, shared documents — the newest seven in
+  `local-backups/`, unencrypted, left to Time Machine. Settings restores one by writing its rows
+  over the live ones by key, without deleting anything else, then restarts the app. A copy from a
+  newer schema is refused, and so is one whose account was added again under a new id.
+- *Full database copy*: the whole database, 1 to 3 copies (default 1) in `backups/`, a folder
+  marked so Time Machine skips it, with the 2 GiB free-space check and "Delete copies"; after a
+  delete the next copy waits for the next scheduled time rather than the next check.
+Every table of the schema is listed in `services/backup/tables.rs` as backed up or left out with
+a reason; the `backup-tables` gate and Rust tests fail when a migration leaves a table unlisted,
+and the `backup-tables` agent classifies it.
+**Context:** A full copy per day, three deep, took three times a mailbox of tens of GB and a long
+disk write after each launch, yet the mail is on the server and many disks already go to Time
+Machine (which then copied each 12 GB file again). What only this computer holds is small. Users
+who never quit the app got no copy at all, since it ran only at launch. Lowering the default to
+one full copy deletes the two older ones at the next copy. This supersedes the 2026-10-30
+entry's three copies and its rejection of showing the backup in Settings (emailops/emailops#281
+and #302).
+**Rejected:**
+- *Encrypting the local data copy*: it sits beside the unencrypted database it comes from; worth
+  it once a copy can go to another folder.
+- *A separate destination folder*: it needs its own free-space check, a plan for an unmounted
+  disk and a rule for data-folder moves; moving the data folder already moves the copies.
+- *Restoring by replacing the tables*: it would drop rows added after the copy; merging by key
+  keeps them, and the account-id check covers the one case where merging would point nowhere.
+- *More than three full copies*: each is the size of the whole database.
+
 ## 2026-11-19 — The security-audit skill is vendored and refreshed by script, not installed
 
 **Decision:** `.claude/skills/security-audit/` is an unmodified copy of

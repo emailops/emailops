@@ -85,55 +85,6 @@ pub fn set_db_init_timing(enabled: bool) {
     let _ = enabled;
 }
 
-/// How often the startup backup runs: a run of quick restarts must not rotate
-/// the last good copy out of the directory.
-const BACKUP_INTERVAL_SECS: i64 = 24 * 60 * 60;
-
-/// Disk a backup leaves free: it must never take the room the live database
-/// needs to keep writing.
-const BACKUP_FREE_RESERVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
-/// What the startup backup does on this launch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackupPlan {
-    Copy,
-    /// The newest copy is younger than [`BACKUP_INTERVAL_SECS`].
-    Recent,
-    NoRoom {
-        needed: u64,
-        free: u64,
-    },
-}
-
-/// Pure: `free_bytes` is `None` when the disk probe failed, and the copy then
-/// finds out for itself. A negative age means the clock moved back, so that
-/// copy says nothing about today.
-fn plan_backup(db_bytes: u64, free_bytes: Option<u64>, newest_age_secs: Option<i64>) -> BackupPlan {
-    if newest_age_secs.is_some_and(|age| (0..BACKUP_INTERVAL_SECS).contains(&age)) {
-        return BackupPlan::Recent;
-    }
-    let needed = db_bytes.saturating_add(BACKUP_FREE_RESERVE_BYTES);
-    match free_bytes {
-        Some(free) if free < needed => BackupPlan::NoRoom { needed, free },
-        _ => BackupPlan::Copy,
-    }
-}
-
-/// Age of the newest finished copy, from the timestamp in its file name. A
-/// temp file from an unfinished copy does not count.
-fn newest_backup_age_secs(backup_dir: &Path, now_secs: i64) -> Option<i64> {
-    std::fs::read_dir(backup_dir)
-        .ok()?
-        .filter_map(|entry| {
-            let name = entry.ok()?.file_name();
-            let name = name.to_string_lossy();
-            let stamp = name.strip_prefix("emailops-")?.strip_suffix(".db")?;
-            let taken = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%d_%H%M%S").ok()?;
-            Some(now_secs - taken.and_utc().timestamp())
-        })
-        .min()
-}
-
 pub struct Database {
     db_path: PathBuf,
     write_conn: Mutex<Connection>,
@@ -536,24 +487,6 @@ impl Database {
         &self.db_path
     }
 
-    /// Back up the database on launch if [`plan_backup`] says so, and return
-    /// that decision.
-    pub fn startup_backup(&self, backup_dir: &Path, keep: usize, now_secs: i64) -> Result<BackupPlan> {
-        let db_bytes = std::fs::metadata(&self.db_path)
-            .map_err(|e| AppError::IoError(e.to_string()))?
-            .len();
-        let plan = plan_backup(
-            db_bytes,
-            crate::util::system::available_disk_bytes(backup_dir),
-            newest_backup_age_secs(backup_dir, now_secs),
-        );
-        if plan == BackupPlan::Copy {
-            crate::services::logger::log("info", "system", "Backing up the database");
-            self.backup(backup_dir, keep)?;
-        }
-        Ok(plan)
-    }
-
     /// Copy the live database to `backup_dir/emailops-{timestamp}.db` using
     /// the SQLite Online Backup API.  Uses a dedicated short-lived connection so
     /// neither the write nor read mutex is held during the (potentially slow) copy.
@@ -648,7 +581,7 @@ impl Database {
         }
     }
 
-    fn prune_backups(backup_dir: &Path, keep: usize) {
+    pub(crate) fn prune_backups(backup_dir: &Path, keep: usize) {
         let Ok(entries) = std::fs::read_dir(backup_dir) else {
             return;
         };
@@ -1189,97 +1122,6 @@ mod backup_tests {
             .query_row("SELECT COUNT(*) FROM backup_fixture", [], |row| row.get(0))
             .expect("copy holds the fixture");
         assert_eq!(rows, 1_000);
-    }
-
-    const GIB: u64 = 1024 * 1024 * 1024;
-
-    #[test]
-    fn plan_backup_weighs_the_newest_copy_and_the_room_on_disk() {
-        const HOUR: i64 = 60 * 60;
-        let db = 11 * GIB;
-        let needed = db + BACKUP_FREE_RESERVE_BYTES;
-        let cases = [
-            ("first copy", Some(100 * GIB), None, BackupPlan::Copy),
-            (
-                "last copy is a day old",
-                Some(100 * GIB),
-                Some(24 * HOUR),
-                BackupPlan::Copy,
-            ),
-            (
-                "last copy is an hour old",
-                Some(100 * GIB),
-                Some(HOUR),
-                BackupPlan::Recent,
-            ),
-            ("clock moved back", Some(100 * GIB), Some(-HOUR), BackupPlan::Copy),
-            ("exactly enough room", Some(needed), None, BackupPlan::Copy),
-            (
-                "too little room",
-                Some(needed - 1),
-                None,
-                BackupPlan::NoRoom {
-                    needed,
-                    free: needed - 1,
-                },
-            ),
-            ("free space unknown", None, None, BackupPlan::Copy),
-            (
-                "nothing to do outranks no room",
-                Some(1),
-                Some(HOUR),
-                BackupPlan::Recent,
-            ),
-        ];
-        for (name, free, age, expected) in cases {
-            assert_eq!(plan_backup(db, free, age), expected, "{name}");
-        }
-    }
-
-    #[test]
-    fn newest_backup_age_reads_the_timestamp_in_the_file_name() {
-        let dir = tempfile::tempdir().expect("backup dir");
-        let now = 1_800_000_000;
-        let stamp = |secs: i64| {
-            chrono::DateTime::from_timestamp(secs, 0)
-                .expect("valid time")
-                .format("%Y%m%d_%H%M%S")
-                .to_string()
-        };
-        touch(&dir.path().join(format!("emailops-{}.db", stamp(now - 9_000))));
-        touch(&dir.path().join(format!("emailops-{}.db", stamp(now - 300))));
-        touch(&dir.path().join("emailops-not-a-date.db"));
-        touch(&dir.path().join(".emailops-backup.tmp"));
-
-        assert_eq!(newest_backup_age_secs(dir.path(), now), Some(300));
-    }
-
-    #[test]
-    fn newest_backup_age_is_none_without_a_finished_copy() {
-        let dir = tempfile::tempdir().expect("backup dir");
-        touch(&dir.path().join(".emailops-backup.tmp"));
-
-        assert_eq!(newest_backup_age_secs(dir.path(), 1_800_000_000), None);
-    }
-
-    #[test]
-    fn startup_backup_leaves_a_recent_copy_alone() {
-        let data_dir = tempfile::tempdir().expect("data dir");
-        let db = Database::new(data_dir.path().to_path_buf()).expect("open db");
-        let backup_dir = tempfile::tempdir().expect("backup dir");
-        let now = chrono::Utc::now();
-        touch(
-            &backup_dir
-                .path()
-                .join(format!("emailops-{}.db", now.format("%Y%m%d_%H%M%S"))),
-        );
-
-        let plan = db
-            .startup_backup(backup_dir.path(), 3, now.timestamp() + 60)
-            .expect("startup backup");
-
-        assert_eq!(plan, BackupPlan::Recent);
-        assert_eq!(backup_count(backup_dir.path()), 1);
     }
 
     #[test]

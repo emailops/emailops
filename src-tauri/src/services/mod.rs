@@ -8,6 +8,7 @@ pub mod attachment_safety;
 pub mod attachment_suggestions;
 pub mod attachments;
 pub mod background_tasks;
+pub mod backup;
 pub mod calendar;
 pub mod chat;
 pub mod classification;

@@ -170,7 +170,7 @@ pub fn delete(db: &Database, account_id: &str, doc_id: &str, now: i64) -> Result
 // ── Folders, history and search ──────────────────────────────────────────────
 
 /// Refresh a document's entry in the search index from its current content.
-fn reindex(db: &Database, doc_id: &str) -> Result<()> {
+pub(crate) fn reindex(db: &Database, doc_id: &str) -> Result<()> {
     let doc = db
         .get_shared_doc(doc_id)?
         .ok_or_else(|| AppError::NotFound(format!("Shared document {doc_id} not found")))?;
@@ -869,6 +869,7 @@ pub async fn ingest_arrivals(
             let auth = crate::services::junk::auth::assess(
                 email.headers.as_ref(),
                 crate::services::junk::auth::expected_authserv(&account.provider),
+                &email.sender_email,
             );
             if let Some(reason) = planner::sender_rejection(&auth) {
                 logger::log(

@@ -3,7 +3,7 @@ title: 'Confidentialité et sécurité'
 description: "Où votre courrier est stocké, ce qui quitte votre machine, et les protections contre le courrier lui-même."
 weight: 45
 nav:
-  where-your-data-is-stored: settings/privacy
+  where-your-data-is-stored: settings/data
   protection-from-the-mail-itself: settings/privacy
   locking-the-app: settings/privacy
 ---
@@ -28,13 +28,20 @@ Tout réside dans le répertoire de données applicatives de votre système :
 À l'intérieur :
 
 - **Une base SQLite** — messages, fils, contacts, événements d'agenda, étiquettes de
-  classification, embeddings de recherche et mémoire de l'IA. C'est la seule copie que
-  conserve EmailOps. <!-- claim:priv-where-data-3 -->
+  classification, embeddings de recherche et mémoire de l'IA. <!-- claim:priv-where-data-3 -->
 - **Un dossier `models/`** — les modèles d'IA que vous avez téléchargés. <!-- claim:priv-where-data-4 -->
+- **Un dossier `backups/`** — des copies complètes de la base qu'EmailOps fait pendant qu'il est
+  ouvert : par défaut une par jour à 03:00, en ne gardant que la plus récente. Time Machine ignore
+  ce dossier. Désactivez-les, passez à une par semaine, gardez-en jusqu'à trois ou supprimez-les
+  dans **Paramètres → Données et sauvegardes → Sauvegardes**. <!-- claim:priv-where-data-8 -->
+- **Un dossier `local-backups/`** — de petites copies de ce qui n'existe que sur cet ordinateur :
+  réglages, comptes sans leurs mots de passe, règles, mémoire, tâches, filtres dynamiques et
+  discussions. Les e-mails n'y sont pas. Par défaut une par jour, en gardant les sept plus
+  récentes ; restaurez-en une depuis la même section. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 Pour le conserver ailleurs — un disque externe ou un volume chiffré — utilisez **Paramètres →
-Confidentialité et sécurité → Emplacement des données**, ou le lien au bas de la première étape de
+Données et sauvegardes → Emplacement des données**, ou le lien au bas de la première étape de
 l'accueil. EmailOps y copie tout, redémarre et laisse l'ancien dossier, que vous supprimez
 vous-même. Si ce disque n'est pas branché au démarrage, EmailOps le signale et se ferme au lieu
 d'ouvrir une boîte vide. Un modèle ajouté avec **Utiliser un fichier existant…** n'est pas

@@ -236,7 +236,7 @@ Everything EmailOps stores is on your machine, in your OS application data direc
 - **OAuth tokens and passwords** — your OS keychain, never a plain file. <!-- claim:inst-where-data-4 -->
 
 <!-- claim:inst-where-data-5 -->
-To keep the data on another disk, choose **Settings → Privacy & Security → Data location → Change…**.
+To keep the data on another disk, choose **Settings → Data & Backups → Data location → Change…**.
 For testing or a second profile, set the `EMAILOPS_DATA_DIR` environment variable before
 launching instead. The exact paths per platform, and
 what is written where, are in [Privacy & security](../privacy-security/#where-your-data-is-stored).

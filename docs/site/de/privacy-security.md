@@ -3,7 +3,7 @@ title: 'Datenschutz und Sicherheit'
 description: 'Wo Ihre E-Mails gespeichert werden, was Ihre Maschine verlässt, und die Schutzmechanismen gegen die E-Mails selbst.'
 weight: 45
 nav:
-  where-your-data-is-stored: settings/privacy
+  where-your-data-is-stored: settings/data
   protection-from-the-mail-itself: settings/privacy
   locking-the-app: settings/privacy
 ---
@@ -28,13 +28,20 @@ Alles liegt im Anwendungsdatenverzeichnis Ihres Betriebssystems:
 Darin:
 
 - **Eine SQLite-Datenbank** — Nachrichten, Threads, Kontakte, Kalendertermine,
-  Klassifizierungs-Kennzeichnungen, Such-Embeddings und das KI-Gedächtnis. Das ist die einzige
-  Kopie, die EmailOps führt. <!-- claim:priv-where-data-3 -->
+  Klassifizierungs-Kennzeichnungen, Such-Embeddings und das KI-Gedächtnis. <!-- claim:priv-where-data-3 -->
 - **Ein Ordner `models/`** — die KI-Modelle, die Sie heruntergeladen haben. <!-- claim:priv-where-data-4 -->
+- **Ein Ordner `backups/`** — vollständige Kopien der Datenbank, die EmailOps anlegt, solange es
+  geöffnet ist: standardmäßig eine pro Tag um 03:00, nur die neueste wird aufbewahrt. Time Machine
+  überspringt diesen Ordner. Unter **Einstellungen → Daten & Sicherungen → Sicherungen**
+  schalten Sie sie aus, stellen auf wöchentlich um, behalten bis zu drei oder löschen sie. <!-- claim:priv-where-data-8 -->
+- **Ein Ordner `local-backups/`** — kleine Kopien dessen, was es nur auf diesem Computer gibt:
+  Einstellungen, Konten ohne ihre Passwörter, Regeln, Gedächtnis, Aufgaben, Linsen und Chats.
+  E-Mails sind nicht enthalten. Standardmäßig eine pro Tag, die neuesten sieben werden
+  aufbewahrt; im selben Abschnitt stellen Sie eine wieder her. <!-- claim:priv-where-data-9 -->
 
 <!-- claim:priv-where-data-5 -->
 Um ihn woanders aufzubewahren — auf einem externen Laufwerk oder einem verschlüsselten Volume —
-nutzen Sie **Einstellungen → Datenschutz & Sicherheit → Speicherort der Daten** oder den Link unten im
+nutzen Sie **Einstellungen → Daten & Sicherungen → Speicherort der Daten** oder den Link unten im
 ersten Schritt der Einrichtung. EmailOps kopiert alles dorthin, startet neu und lässt den alten
 Ordner liegen, damit Sie ihn selbst löschen. Ist das Laufwerk beim Start nicht angeschlossen,
 meldet EmailOps das und beendet sich, statt ein leeres Postfach zu öffnen. Ein mit **Vorhandene Datei verwenden…** hinzugefügtes
