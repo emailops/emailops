@@ -6,6 +6,7 @@ import { Select } from '@/components/shared/Select';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import type { CreateAccountChoice } from '@/lib/calendarAccounts';
+import { describeRecurrence } from '@/lib/calendarEvent';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import type { IcsImportPreview, IcsImportPreviewItem, IcsImportSummary } from '@/types';
@@ -25,8 +26,8 @@ interface ImportIcsDialogProps {
 /** "Import .ics": choose a file, preview what each event would do, import it
  *  into the account's primary calendar and show the summary. */
 export function ImportIcsDialog({ choices, initialAccountId, onClose, onImported, onAuthError }: ImportIcsDialogProps) {
-  const { t } = useTranslation(['calendar', 'common']);
-  const { date, time } = useFormatters();
+  const { t, i18n } = useTranslation(['calendar', 'common']);
+  const { date, time, dateTime } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
 
   const [accountId, setAccountId] = useState(
@@ -112,10 +113,21 @@ export function ImportIcsDialog({ choices, initialAccountId, onClose, onImported
     }
   };
 
-  const whenLine = (item: IcsImportPreviewItem) =>
-    item.isAllDay
-      ? `${date(item.startTime, { weekday: 'short', day: 'numeric', month: 'short' })} · ${t('calendar:import.allDay')}`
-      : `${date(item.startTime, { weekday: 'short', day: 'numeric', month: 'short' })} · ${time(item.startTime)}`;
+  // "Tue 1 Dec · 10:00 – 11:00 · Weekly on Tuesday" — the invite card's shape.
+  const whenLine = (item: IcsImportPreviewItem) => {
+    const day = date(item.startTime, { weekday: 'short', day: 'numeric', month: 'short' });
+    const sameDay = new Date(item.startTime * 1000).toDateString() === new Date(item.endTime * 1000).toDateString();
+    const when = item.isAllDay
+      ? `${day} · ${t('calendar:import.allDay')}`
+      : item.endTime <= item.startTime
+        ? `${day} · ${time(item.startTime)}`
+        : sameDay
+          ? `${day} · ${time(item.startTime)} – ${time(item.endTime)}`
+          : `${dateTime(item.startTime)} – ${dateTime(item.endTime)}`;
+    if (!item.recurrence) return when;
+    const rule = describeRecurrence(item.recurrence, new Date(item.startTime * 1000), i18n.language || 'en');
+    return `${when} · ${rule.labelKey ? t(`calendar:create.recurrence.${rule.labelKey}`, rule.params) : rule.raw}`;
+  };
 
   const footer = summary ? (
     <button
@@ -221,10 +233,13 @@ export function ImportIcsDialog({ choices, initialAccountId, onClose, onImported
           )}
           {preview && preview.items.length > 0 && (
             <ul className="divide-y divide-gray-100 border border-gray-200 rounded-md">
-              {preview.items.map((item) => (
-                <li key={item.uid} className="px-3 py-2">
+              {preview.items.map((item, i) => (
+                // UIDs can be empty or repeat; the list never reorders.
+                // biome-ignore lint/suspicious/noArrayIndexKey: static list
+                <li key={i} className="px-3 py-2">
                   <p className="text-sm font-medium text-gray-900 break-words">{item.title}</p>
-                  <p className="text-xs text-gray-500">{whenLine(item)}</p>
+                  {/* An item without a start has no date to show. */}
+                  {item.reason !== 'missingUidOrStart' && <p className="text-xs text-gray-500">{whenLine(item)}</p>}
                   <p className={`text-xs ${item.status === 'unsupported' ? 'text-amber-700' : 'text-gray-600'}`}>
                     {item.status === 'unsupported' && item.reason
                       ? `${t(`calendar:import.reason.${item.reason}` as const, { defaultValue: item.reason })}${

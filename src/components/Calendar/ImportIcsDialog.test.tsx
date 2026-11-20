@@ -17,7 +17,11 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 vi.mock('@/hooks/useFormatters', () => ({
-  useFormatters: () => ({ time: () => '09:00', date: () => 'Tue', dateTime: () => 'Tue 09:00' }),
+  useFormatters: () => ({
+    time: (s: number) => `time(${s})`,
+    date: (s: number) => `date(${s})`,
+    dateTime: (s: number) => `dateTime(${s})`,
+  }),
 }));
 const api = vi.hoisted(() => ({
   previewIcsImport: vi.fn(),
@@ -191,6 +195,45 @@ describe('ImportIcsDialog', () => {
     const alert = document.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('file too large');
     expect(useLogStore.getState().entries.some((l) => l.level === 'error' && !l.message.includes('/tmp/'))).toBe(true);
+  });
+
+  it('shows_the_end_time_and_the_recurrence_of_each_item', async () => {
+    api.previewIcsImport.mockResolvedValue({
+      fileName: 'x.ics',
+      items: [item('a', 'importable', { recurrence: 'FREQ=WEEKLY' })],
+    });
+    await render();
+    const row = document.querySelector('li');
+    expect(row?.textContent).toContain(
+      'date(1800000000) · time(1800000000) – time(1800003600) · calendar:create.recurrence.weekly',
+    );
+  });
+
+  it('hides_the_date_of_an_item_without_a_start', async () => {
+    api.previewIcsImport.mockResolvedValue({
+      fileName: 'x.ics',
+      items: [item('', 'unsupported', { reason: 'missingUidOrStart', startTime: 0, endTime: 0 })],
+    });
+    await render();
+    const row = document.querySelector('li');
+    expect(row?.textContent).toContain('calendar:import.reason.missingUidOrStart');
+    expect(row?.textContent).not.toContain('date(0)');
+  });
+
+  it('renders_items_without_a_uid_without_a_key_clash', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    api.previewIcsImport.mockResolvedValue({
+      fileName: 'x.ics',
+      items: [
+        item('', 'unsupported', { title: 'First', reason: 'missingUidOrStart' }),
+        item('', 'unsupported', { title: 'Second', reason: 'missingUidOrStart' }),
+      ],
+    });
+    await render();
+    const keyWarnings = consoleError.mock.calls.filter((args) => String(args[0]).includes('same key'));
+    consoleError.mockRestore();
+    expect(keyWarnings).toEqual([]);
+    expect(document.querySelectorAll('li')).toHaveLength(2);
   });
 
   it('hands_an_auth_error_to_the_view', async () => {

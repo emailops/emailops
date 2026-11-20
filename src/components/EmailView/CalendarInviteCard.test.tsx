@@ -143,15 +143,16 @@ describe('CalendarInviteCard', () => {
   });
 
   it('imported_with_reply_error_shows_amber_note_and_logs', async () => {
-    await answerYes({ kind: 'imported', replySentTo: null, replyError: 'smtp down' });
+    await answerYes({ kind: 'imported', replySentTo: null, replyError: 'Invalid to address lead@example.com' });
     const note = [...container.querySelectorAll('p')].find((p) => p.textContent?.includes("couldn't be notified"));
     expect(note?.textContent).toBe(
       "Added to your calendar, but the organizer couldn't be notified. Answer again to retry.",
     );
     expect(note?.className).toContain('text-amber-700');
-    expect(logs().some((l) => l.level === 'error' && l.source === 'sync' && l.message.includes('smtp down'))).toBe(
-      true,
-    );
+    const errors = logs().filter((l) => l.level === 'error' && l.source === 'sync');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).not.toContain('lead@example.com');
+    expect(errors[0].message).not.toContain('Invalid to address');
   });
 
   it('removed_outcome_confirms_decline', async () => {
@@ -169,7 +170,9 @@ describe('CalendarInviteCard', () => {
     expect(text()).toContain(
       "Removed from your calendar, but the organizer couldn't be notified. Answer again to retry.",
     );
-    expect(logs().some((l) => l.level === 'error' && l.message.includes('smtp down'))).toBe(true);
+    const errors = logs().filter((l) => l.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).not.toContain('smtp down');
   });
 
   it('already_in_calendar_outcome_is_named', async () => {

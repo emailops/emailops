@@ -139,14 +139,17 @@ describe('CalendarView — Import .ics button', () => {
       feedHost,
     }) as never;
 
+  // An IMAP account whose calendar is a subscribed Proton feed (read only).
+  const proton: Account = { ...makeAccount('proton'), provider: 'imap' };
+  const protonFeeds = { proton: [{ id: 'f1' }] } as never;
+
   it('import_button_hidden_without_writable_accounts', async () => {
-    const proton = makeAccount('proton');
     vi.mocked(api.getCalendars).mockResolvedValue([calendar('proton', 'reader', 'calendar.proton.me')]);
     useAccountStore.setState({ activeAccountId: 'proton' });
     useCalendarIntegrationStore.setState({
       enabledIds: new Set(['proton']),
       isLoaded: true,
-      feedsByAccount: {},
+      feedsByAccount: protonFeeds,
     });
     await act(async () => {
       root.render(<CalendarView accounts={[proton]} defaultAccountId="proton" onOpenSettings={() => {}} />);
@@ -159,6 +162,24 @@ describe('CalendarView — Import .ics button', () => {
   it('shows the import button when an account can take events', async () => {
     vi.mocked(api.getCalendars).mockResolvedValue([calendar('work', 'owner', null)]);
     await mount();
+    expect(container.textContent).toContain('calendar:import.button');
+  });
+
+  it('shows the import button on a feed account when a Gmail account has a calendar', async () => {
+    vi.mocked(api.getCalendars).mockResolvedValue([calendar('proton', 'reader', 'calendar.proton.me')]);
+    useAccountStore.setState({ activeAccountId: 'proton' });
+    useCalendarIntegrationStore.setState({
+      enabledIds: new Set(['proton', 'work']),
+      isLoaded: true,
+      feedsByAccount: protonFeeds,
+    });
+    await act(async () => {
+      root.render(<CalendarView accounts={[proton, work]} defaultAccountId="proton" onOpenSettings={() => {}} />);
+    });
+    await act(async () => {});
+    expect(container.querySelector('[aria-label="calendar:selectAccount"]')?.textContent).toContain(
+      'proton@mail.example',
+    );
     expect(container.textContent).toContain('calendar:import.button');
   });
 });

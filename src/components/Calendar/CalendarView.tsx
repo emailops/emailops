@@ -11,6 +11,7 @@ import {
   calendarSelectionIds,
   createAccountChoices,
   eventColorFor,
+  importAccountChoices,
 } from '@/lib/calendarAccounts';
 import { eventsAfterDelete, eventsAfterResponse } from '@/lib/calendarEvent';
 import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
@@ -128,11 +129,8 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
     () => calendarAccounts.filter((a) => shownAccountIds.includes(a.id)),
     [calendarAccounts, shownAccountIds],
   );
-  // "Import .ics" writes to the primary calendar, so only accounts the app can write to.
-  const importChoices = useMemo(
-    () => createAccountChoices(shownAccounts, calendars, 0).filter((c) => c.plan.kind === 'dialog'),
-    [shownAccounts, calendars],
-  );
+  // "Import .ics" writes to a primary calendar: any Gmail/Outlook account, shown or not.
+  const importChoices = useMemo(() => importAccountChoices(calendarAccounts), [calendarAccounts]);
 
   const enableCalendar = useCallback(() => {
     setError(null);

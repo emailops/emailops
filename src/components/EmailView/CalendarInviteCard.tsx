@@ -101,7 +101,8 @@ export function CalendarInviteCard({ email }: { email: Email }) {
         setRsvpDone({ choice, added: outcome.kind === 'imported', alreadyInCalendar: false });
         if (outcome.replyError) {
           setRsvpNote({ kind: 'warn', message: t(`calendar:invite.replyNotSent.${outcome.kind}` as const) });
-          addLog('error', 'sync', `Calendar invite reply failed: ${outcome.replyError}`);
+          // Fixed text: the error can name the organizer; the backend logged its code.
+          addLog('error', 'sync', 'Calendar invite reply failed');
         } else {
           addLog('success', 'sync', `Calendar invite ${outcome.kind} (${choice ?? 'publish'})`);
         }
