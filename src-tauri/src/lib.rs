@@ -218,6 +218,7 @@ macro_rules! app_commands {
             commands::calendar::set_calendar_visible,
             commands::calendar::create_calendar_event,
             commands::calendar::delete_calendar_event,
+            commands::calendar::respond_to_calendar_event,
             commands::calendar::get_calendar_invite,
             commands::calendar::rsvp_calendar_invite,
             commands::calendar::add_invite_to_calendar,

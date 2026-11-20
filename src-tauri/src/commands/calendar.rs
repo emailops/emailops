@@ -121,6 +121,49 @@ pub async fn delete_calendar_event(
     .await
 }
 
+/// Change my own answer on an event in my calendar. `scope` is "instance"
+/// (default) or "series".
+#[tauri::command]
+pub async fn respond_to_calendar_event(
+    state: State<'_, AppState>,
+    account_id: String,
+    calendar_id: String,
+    provider_event_id: String,
+    response: String,
+    scope: Option<String>,
+) -> Result<(), AppError> {
+    let account = state
+        .db
+        .get_account(&account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("account '{account_id}' not found")))?;
+    let response = crate::sync::calendar_provider::RsvpResponse::from_wire(&response)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown response '{response}'")))?;
+    let scope_wire = scope.unwrap_or_else(|| "instance".to_string());
+    let scope = crate::services::calendar::respond::ResponseScope::from_wire(&scope_wire)
+        .ok_or_else(|| AppError::InvalidInput(format!("unknown response scope '{scope_wire}'")))?;
+    let provider = crate::services::calendar::sync::build_calendar_provider(&state.db, &account)?;
+    crate::services::logger::log("info", "sync", "Calendar response change started");
+    let result = crate::services::calendar::respond::respond_to_calendar_event(
+        &state.db,
+        &account,
+        provider.as_ref(),
+        &calendar_id,
+        &provider_event_id,
+        response,
+        scope,
+    )
+    .await;
+    match &result {
+        Ok(()) => crate::services::logger::log("success", "sync", "Calendar response changed"),
+        Err(e) => crate::services::logger::log(
+            "error",
+            "sync",
+            format!("Calendar response change failed: {}", e.code()),
+        ),
+    }
+    result
+}
+
 /// Parse the calendar invite (.ics / text/calendar attachment) on an email,
 /// if any. Returns `None` for emails without an invite part.
 #[tauri::command]

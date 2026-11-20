@@ -237,6 +237,27 @@ impl Database {
         }
     }
 
+    /// Every stored row of a recurring series (instances linked via
+    /// `recurring_event_id`, plus a master row stored under the master id),
+    /// oldest first.
+    pub fn list_calendar_events_for_master(
+        &self,
+        account_id: &str,
+        calendar_id: &str,
+        master_id: &str,
+    ) -> Result<Vec<CalendarEvent>> {
+        let conn = self.reader();
+        let sql = format!(
+            "SELECT {EVENT_COLUMNS} FROM calendar_events
+             WHERE account_id = ?1 AND calendar_id = ?2
+               AND (recurring_event_id = ?3 OR provider_event_id = ?3)
+             ORDER BY start_time ASC, end_time ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![account_id, calendar_id, master_id], row_to_event)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Delete every stored instance of a recurring series (whole-series delete).
     /// Matches instances linked via `recurring_event_id` AND a possible master
     /// row stored under the master id itself.
@@ -930,5 +951,29 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM calendar_sync_state", [], |r| r.get(0))
             .expect("count sync state");
         assert_eq!(tokens, 0, "calendar_sync_state must cascade on account delete");
+    }
+
+    #[test]
+    fn list_for_master_returns_only_that_series() {
+        let db = Database::new_for_testing().expect("test db");
+        db.seed_test_account("acc1");
+        let mut late = event("acc1", "m_2", 2_000, 2_900);
+        late.recurring_event_id = Some("m".to_string());
+        let mut early = event("acc1", "m_1", 1_000, 1_900);
+        early.recurring_event_id = Some("m".to_string());
+        let mut other = event("acc1", "n_1", 1_500, 1_900);
+        other.recurring_event_id = Some("n".to_string());
+        let mut other_calendar = event_in("acc1", "team", "m_3", 3_000, 3_900);
+        other_calendar.recurring_event_id = Some("m".to_string());
+        let single = event("acc1", "solo", 500, 900);
+        db.upsert_calendar_events(&[late, early, other, other_calendar, single])
+            .expect("seed");
+
+        let listed = db
+            .list_calendar_events_for_master("acc1", "primary", "m")
+            .expect("list");
+
+        let ids: Vec<&str> = listed.iter().map(|e| e.provider_event_id.as_str()).collect();
+        assert_eq!(ids, vec!["m_1", "m_2"]);
     }
 }

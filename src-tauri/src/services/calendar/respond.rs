@@ -11,6 +11,7 @@ use super::ics::{parse_vcalendar, RawVEvent};
 use super::import::{plan_ics_import, reason_code, ImportItemStatus, ImportableEvent};
 use super::invite::{is_publish_invite, reply_target};
 use super::itip::{build_itip_reply, itip_reply_subject, send_itip_reply};
+use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, CalendarAttendee};
 use crate::services::i18n::Language;
@@ -297,6 +298,78 @@ async fn add(
             }
         }
     })
+}
+
+/// How much of a recurring series a response from the event detail affects.
+/// Non-recurring events only ever use `Instance`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseScope {
+    /// Just the clicked occurrence (or the whole event when non-recurring).
+    Instance,
+    /// The whole series.
+    Series,
+}
+
+impl ResponseScope {
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "instance" => Some(Self::Instance),
+            "series" => Some(Self::Series),
+            _ => None,
+        }
+    }
+}
+
+/// Change the account's own answer on an event already in its calendar.
+/// Provider-first, local-second: when the provider call fails the local rows
+/// stay as they were.
+pub async fn respond_to_calendar_event(
+    db: &Database,
+    account: &Account,
+    provider: &dyn CalendarProvider,
+    calendar_id: &str,
+    provider_event_id: &str,
+    response: RsvpResponse,
+    scope: ResponseScope,
+) -> Result<()> {
+    let event = db
+        .get_calendar_event_by_provider_id(&account.id, calendar_id, provider_event_id)?
+        .ok_or_else(|| AppError::NotFound(format!("calendar event '{provider_event_id}' not found")))?;
+
+    let read_only = db.list_calendars(&account.id)?.iter().any(|c| {
+        c.provider_calendar_id == calendar_id && matches!(c.access_role.as_str(), "reader" | "freeBusyReader")
+    });
+    if read_only {
+        return Err(AppError::ReadOnlyCalendar);
+    }
+
+    let (target_id, mut rows) = match (scope, event.recurring_event_id.as_deref()) {
+        (ResponseScope::Series, Some(master_id)) => (
+            master_id.to_string(),
+            db.list_calendar_events_for_master(&account.id, calendar_id, master_id)?,
+        ),
+        _ => (provider_event_id.to_string(), vec![event]),
+    };
+
+    provider
+        .respond_to_event(calendar_id, &target_id, response, &account.email)
+        .await?;
+
+    let status = response.as_google_status();
+    for row in &mut rows {
+        match row
+            .attendees
+            .iter_mut()
+            .find(|a| a.email.eq_ignore_ascii_case(&account.email))
+        {
+            Some(me) => me.response = status.to_string(),
+            None => row.attendees.push(CalendarAttendee {
+                email: account.email.clone(),
+                response: status.to_string(),
+            }),
+        }
+    }
+    db.upsert_calendar_events(&rows)
 }
 
 #[cfg(test)]
@@ -828,5 +901,262 @@ mod tests {
         );
         let json = serde_json::to_value(InviteResponseOutcome::AlreadyInCalendar).expect("json");
         assert_eq!(json, serde_json::json!({"kind": "alreadyInCalendar"}));
+    }
+
+    // --- respond_to_calendar_event (change my answer from the event detail) ---
+
+    use crate::models::{Calendar, CalendarEvent};
+
+    fn stored_event(id: &str, start: i64, master: Option<&str>) -> CalendarEvent {
+        CalendarEvent {
+            id: format!("a1:primary:{id}"),
+            account_id: "a1".into(),
+            provider_event_id: id.into(),
+            calendar_id: "primary".into(),
+            title: "Planning".into(),
+            description: String::new(),
+            location: String::new(),
+            start_time: start,
+            end_time: start + 1_800,
+            is_all_day: false,
+            timezone: String::new(),
+            organizer: "lead@example.com".into(),
+            attendees: vec![
+                CalendarAttendee {
+                    email: "lead@example.com".into(),
+                    response: "accepted".into(),
+                },
+                CalendarAttendee {
+                    email: "Me@Example.com".into(),
+                    response: "needsAction".into(),
+                },
+            ],
+            meeting_link: None,
+            meeting_platform: None,
+            status: "confirmed".into(),
+            html_link: None,
+            notified_at: None,
+            recurring_event_id: master.map(str::to_string),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn db_with(events: &[CalendarEvent]) -> Database {
+        let db = Database::new_for_testing().expect("test db");
+        db.seed_test_account("a1");
+        db.upsert_calendar_events(events).expect("seed events");
+        db
+    }
+
+    fn my_response(db: &Database, id: &str) -> Option<String> {
+        db.get_calendar_event_by_provider_id("a1", "primary", id)
+            .expect("read")
+            .expect("row")
+            .attendees
+            .into_iter()
+            .find(|a| a.email.eq_ignore_ascii_case("me@example.com"))
+            .map(|a| a.response)
+    }
+
+    async fn respond(
+        db: &Database,
+        provider: &dyn CalendarProvider,
+        id: &str,
+        response: RsvpResponse,
+        scope: ResponseScope,
+    ) -> Result<()> {
+        respond_to_calendar_event(db, &account(), provider, "primary", id, response, scope).await
+    }
+
+    #[test]
+    fn scope_parses_only_known_wire_values() {
+        assert_eq!(ResponseScope::from_wire("instance"), Some(ResponseScope::Instance));
+        assert_eq!(ResponseScope::from_wire("series"), Some(ResponseScope::Series));
+        assert_eq!(ResponseScope::from_wire("all"), None);
+    }
+
+    #[tokio::test]
+    async fn instance_response_updates_provider_and_local_row() {
+        let db = db_with(&[stored_event("ev1", 1_000, None)]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        respond(&db, &provider, "ev1", RsvpResponse::Tentative, ResponseScope::Instance)
+            .await
+            .expect("respond");
+
+        let responses = provider.responses.lock().expect("lock").clone();
+        assert_eq!(
+            responses,
+            vec![("primary".to_string(), "ev1".to_string(), "tentative".to_string())]
+        );
+        let row = db
+            .get_calendar_event_by_provider_id("a1", "primary", "ev1")
+            .expect("read")
+            .expect("row");
+        assert_eq!(
+            row.attendees,
+            vec![
+                CalendarAttendee {
+                    email: "lead@example.com".into(),
+                    response: "accepted".into()
+                },
+                CalendarAttendee {
+                    email: "Me@Example.com".into(),
+                    response: "tentative".into()
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn my_attendee_is_appended_when_absent() {
+        let mut event = stored_event("ev1", 1_000, None);
+        event.attendees.truncate(1);
+        let db = db_with(&[event]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        respond(&db, &provider, "ev1", RsvpResponse::Accepted, ResponseScope::Instance)
+            .await
+            .expect("respond");
+
+        assert_eq!(my_response(&db, "ev1").as_deref(), Some("accepted"));
+    }
+
+    #[tokio::test]
+    async fn series_response_targets_the_master_and_all_local_instances() {
+        let db = db_with(&[
+            stored_event("m_1", 1_000, Some("m")),
+            stored_event("m_2", 2_000, Some("m")),
+            stored_event("n_1", 1_500, Some("n")),
+        ]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        respond(&db, &provider, "m_2", RsvpResponse::Declined, ResponseScope::Series)
+            .await
+            .expect("respond");
+
+        let responses = provider.responses.lock().expect("lock").clone();
+        assert_eq!(
+            responses,
+            vec![("primary".to_string(), "m".to_string(), "declined".to_string())]
+        );
+        assert_eq!(my_response(&db, "m_1").as_deref(), Some("declined"));
+        assert_eq!(my_response(&db, "m_2").as_deref(), Some("declined"));
+        assert_eq!(my_response(&db, "n_1").as_deref(), Some("needsAction"));
+    }
+
+    #[tokio::test]
+    async fn series_scope_on_a_single_event_acts_on_the_event() {
+        let db = db_with(&[stored_event("ev1", 1_000, None)]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        respond(&db, &provider, "ev1", RsvpResponse::Accepted, ResponseScope::Series)
+            .await
+            .expect("respond");
+
+        assert_eq!(provider.responses.lock().expect("lock")[0].1, "ev1");
+        assert_eq!(my_response(&db, "ev1").as_deref(), Some("accepted"));
+    }
+
+    #[tokio::test]
+    async fn provider_failure_leaves_local_rows_untouched() {
+        let db = db_with(&[stored_event("ev1", 1_000, None)]);
+        let provider = FakeCalendarProvider::failing("boom");
+
+        let result = respond(&db, &provider, "ev1", RsvpResponse::Accepted, ResponseScope::Instance).await;
+
+        assert!(matches!(result, Err(AppError::SyncError(_))));
+        assert_eq!(my_response(&db, "ev1").as_deref(), Some("needsAction"));
+    }
+
+    #[tokio::test]
+    async fn read_only_calendar_is_refused_before_calling_the_provider() {
+        let db = db_with(&[stored_event("ev1", 1_000, None)]);
+        for role in ["reader", "freeBusyReader"] {
+            db.upsert_calendars(&[Calendar {
+                id: crate::db::calendars::calendar_row_id("a1", "primary"),
+                account_id: "a1".into(),
+                provider_calendar_id: "primary".into(),
+                name: "Shared".into(),
+                color: String::new(),
+                is_primary: true,
+                access_role: role.into(),
+                is_visible: true,
+                sort_order: 0,
+                owner_email: None,
+                feed_host: None,
+                created_at: 0,
+                updated_at: 0,
+            }])
+            .expect("seed calendar");
+            let provider = FakeCalendarProvider::with_events(vec![]);
+
+            let result = respond(&db, &provider, "ev1", RsvpResponse::Accepted, ResponseScope::Instance).await;
+
+            assert!(matches!(result, Err(AppError::ReadOnlyCalendar)), "{role}");
+            assert!(provider.responses.lock().expect("lock").is_empty(), "{role}");
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_read_only_error_is_propagated() {
+        struct ReadOnly(FakeCalendarProvider);
+        #[async_trait::async_trait]
+        impl CalendarProvider for ReadOnly {
+            async fn list_calendars(&self) -> Result<Vec<crate::sync::calendar_provider::ProviderCalendar>> {
+                self.0.list_calendars().await
+            }
+            async fn list_events(
+                &self,
+                c: &str,
+                a: i64,
+                b: i64,
+            ) -> Result<Vec<crate::sync::calendar_provider::ProviderCalendarEvent>> {
+                self.0.list_events(c, a, b).await
+            }
+            async fn create_event(
+                &self,
+                e: &crate::sync::calendar_provider::NewCalendarEvent,
+            ) -> Result<crate::sync::calendar_provider::ProviderCalendarEvent> {
+                self.0.create_event(e).await
+            }
+            async fn delete_event(&self, c: &str, p: &str, n: bool, m: &str) -> Result<()> {
+                self.0.delete_event(c, p, n, m).await
+            }
+            async fn truncate_recurring_event(&self, c: &str, m: &str, s: i64, n: bool) -> Result<()> {
+                self.0.truncate_recurring_event(c, m, s, n).await
+            }
+            async fn rsvp_by_ical_uid(&self, u: &str, r: RsvpResponse, e: &str) -> Result<()> {
+                self.0.rsvp_by_ical_uid(u, r, e).await
+            }
+            async fn find_event_by_uid(&self, u: &str) -> Result<Option<FoundEvent>> {
+                self.0.find_event_by_uid(u).await
+            }
+            async fn import_event(&self, e: &ImportableEvent) -> Result<String> {
+                self.0.import_event(e).await
+            }
+            async fn respond_to_event(&self, _: &str, _: &str, _: RsvpResponse, _: &str) -> Result<()> {
+                Err(AppError::ReadOnlyCalendar)
+            }
+        }
+        let db = db_with(&[stored_event("ev1", 1_000, None)]);
+        let provider = ReadOnly(FakeCalendarProvider::with_events(vec![]));
+
+        let result = respond(&db, &provider, "ev1", RsvpResponse::Accepted, ResponseScope::Instance).await;
+
+        assert!(matches!(result, Err(AppError::ReadOnlyCalendar)));
+        assert_eq!(my_response(&db, "ev1").as_deref(), Some("needsAction"));
+    }
+
+    #[tokio::test]
+    async fn unknown_event_is_not_found() {
+        let db = db_with(&[]);
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        let result = respond(&db, &provider, "nope", RsvpResponse::Accepted, ResponseScope::Instance).await;
+
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+        assert!(provider.responses.lock().expect("lock").is_empty());
     }
 }
