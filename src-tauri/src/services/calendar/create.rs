@@ -18,7 +18,7 @@ const MAX_ATTENDEES: usize = 100;
 
 /// Minimal structural check for an invitee address: one `@` with non-empty
 /// sides, no whitespace. Deliverability is the provider's problem.
-fn looks_like_email(address: &str) -> bool {
+pub(crate) fn looks_like_email(address: &str) -> bool {
     let mut parts = address.split('@');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(local), Some(domain), None) => {

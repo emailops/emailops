@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use chrono::{NaiveDate, NaiveDateTime, TimeZone};
 use serde::Serialize;
 
+use super::create::looks_like_email;
 use super::ics::{
     param_value, resolve_tzid, skipped_local_time, unescape_text, with_iana_tzid, IcsProperty, IcsZone, ParsedCalendar,
     RawVEvent,
@@ -20,6 +21,9 @@ use crate::sync::outlook_calendar::graph_recurrence_from_rrule;
 
 pub const MAX_ICS_IMPORT_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_IMPORT_SERIES: usize = 500;
+/// Overrides plus EXDATEs one series may carry. Each costs provider calls, so
+/// an untrusted file must not drive thousands of them.
+const MAX_SERIES_EXCEPTIONS: usize = MAX_IMPORT_SERIES;
 
 /// A point in time as the .ics wrote it: a calendar date or a wall time in a zone.
 #[derive(Debug, Clone, PartialEq)]
@@ -254,8 +258,16 @@ impl Ctx<'_> {
             });
         };
         let mut event = self.event(raw_master).map_err(|reason| (reason, raw_master))?;
+        // Name the count that crosses the cap: the overrides alone, or the
+        // EXDATEs on top of them.
+        if raw_overrides.len() > MAX_SERIES_EXCEPTIONS {
+            return Err((UnsupportedReason::InvalidProperty("RECURRENCE-ID".into()), raw_master));
+        }
         event.overrides = kept;
         event.exdates.extend(cancelled);
+        if event.overrides.len() + event.exdates.len() > MAX_SERIES_EXCEPTIONS {
+            return Err((UnsupportedReason::InvalidProperty("EXDATE".into()), raw_master));
+        }
         let status = self.master_status(raw_master, &event, target);
         Ok(ImportItem { event, status })
     }
@@ -325,6 +337,11 @@ impl Ctx<'_> {
             }
         }
         if let Some(prop) = raw.first("RECURRENCE-ID") {
+            // RANGE (THISANDFUTURE) changes every later occurrence too; both
+            // providers would change only this one.
+            if param_value(&prop.params, "RANGE").is_some() {
+                return Err(UnsupportedReason::UnsupportedRecurrence("RANGE".into()));
+            }
             event.recurrence_id = Some(self.time_of(prop, &prop.value, "RECURRENCE-ID")?);
         }
         Ok(event)
@@ -349,15 +366,14 @@ impl Ctx<'_> {
             rdates: raw.all("RDATE").map(|p| self.recurrence_line(p)).collect(),
             recurrence_id: None,
             overrides: Vec::new(),
-            organizer: raw
-                .first_value("ORGANIZER")
-                .map(mailto_address)
-                .filter(|a| !a.is_empty()),
+            organizer: raw.first("ORGANIZER").and_then(calendar_user_address),
             attendees: raw
                 .all("ATTENDEE")
-                .map(|p| CalendarAttendee {
-                    email: mailto_address(&p.value),
-                    response: attendee_response(&p.params),
+                .filter_map(|p| {
+                    Some(CalendarAttendee {
+                        email: calendar_user_address(p)?,
+                        response: attendee_response(&p.params),
+                    })
                 })
                 .collect(),
             sequence: raw
@@ -518,13 +534,17 @@ fn parse_iso_duration(value: &str) -> Option<i64> {
     Some(if negative { -total } else { total })
 }
 
-fn mailto_address(value: &str) -> String {
-    let v = value.trim();
-    let v = match v.get(..7) {
-        Some(prefix) if prefix.eq_ignore_ascii_case("mailto:") => &v[7..],
-        _ => v,
+/// The lowercased email address of an ORGANIZER or ATTENDEE: its `mailto:`
+/// value, else its EMAIL parameter (RFC 7986). `None` when that is not an
+/// email address, e.g. an `invalid:nomail` room or a bare `urn:uuid:`.
+fn calendar_user_address(prop: &IcsProperty) -> Option<String> {
+    let value = prop.value.trim();
+    let address = match value.get(..7) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("mailto:") => &value[7..],
+        _ => param_value(&prop.params, "EMAIL")?,
     };
-    v.trim().to_ascii_lowercase()
+    let address = address.trim().to_ascii_lowercase();
+    looks_like_email(&address).then_some(address)
 }
 
 fn attendee_response(params: &[String]) -> String {
@@ -1049,6 +1069,81 @@ mod tests {
                 ("cy@example.org", "needsAction")
             ]
         );
+    }
+
+    #[test]
+    fn attendees_without_an_email_address_are_dropped() {
+        let item = one(
+            "UID:a@example.com\nDTSTART:20261205T083000Z\n\
+             ATTENDEE;CN=Room 4:invalid:nomail\n\
+             ATTENDEE;EMAIL=Cy@Example.org;PARTSTAT=ACCEPTED:urn:uuid:00000000-0000-0000-0000-000000000001\n\
+             ATTENDEE;CN=No mailto:urn:uuid:00000000-0000-0000-0000-000000000002\n\
+             ATTENDEE:mailto:bo at example.org\n\
+             ATTENDEE:mailto:nobody\n\
+             ATTENDEE:mailto:ana@example.org",
+            CalendarKind::Google,
+        );
+        let got: Vec<(&str, &str)> = item
+            .event
+            .attendees
+            .iter()
+            .map(|a| (a.email.as_str(), a.response.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [("cy@example.org", "accepted"), ("ana@example.org", "needsAction")]
+        );
+    }
+
+    #[test]
+    fn an_organizer_without_an_email_address_is_none() {
+        for (line, want) in [
+            ("ORGANIZER;CN=Lead:invalid:nomail", None),
+            (
+                "ORGANIZER;EMAIL=Lead@Example.org:urn:uuid:00000000-0000-0000-0000-000000000003",
+                Some("lead@example.org"),
+            ),
+            ("ORGANIZER:mailto:lead@intranet", None),
+            ("ORGANIZER:MAILTO:Lead@Example.org", Some("lead@example.org")),
+        ] {
+            let item = one(
+                &format!("UID:a@example.com\nDTSTART:20261205T083000Z\n{line}"),
+                CalendarKind::Google,
+            );
+            assert_eq!(item.event.organizer.as_deref(), want, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_series_with_more_than_500_exceptions_is_rejected() {
+        const MASTER: &str = "UID:a@example.com\nDTSTART:20261205T083000Z\nRRULE:FREQ=DAILY";
+        const OVERRIDE: &str = "UID:a@example.com\nRECURRENCE-ID:20261212T083000Z\nDTSTART:20261212T090000Z";
+        let series = |overrides: usize, exdates: usize| {
+            let master = format!("{MASTER}{}", "\nEXDATE:20261219T083000Z".repeat(exdates));
+            let mut bodies = vec![master];
+            bodies.extend(std::iter::repeat_n(OVERRIDE.to_string(), overrides));
+            let refs: Vec<&str> = bodies.iter().map(String::as_str).collect();
+            status_of(&refs, CalendarKind::Google)
+        };
+        assert_eq!(series(0, 500), ImportItemStatus::Importable);
+        assert_eq!(series(250, 250), ImportItemStatus::Importable);
+        assert_eq!(series(0, 501), invalid("EXDATE"));
+        assert_eq!(series(501, 0), invalid("RECURRENCE-ID"));
+        assert_eq!(series(300, 201), invalid("EXDATE"));
+    }
+
+    #[test]
+    fn a_this_and_future_override_is_unsupported() {
+        let bodies = [
+            "UID:a@example.com\nDTSTART:20261205T083000Z\nRRULE:FREQ=WEEKLY",
+            "UID:a@example.com\nRECURRENCE-ID;RANGE=THISANDFUTURE:20261212T083000Z\nDTSTART:20261212T090000Z",
+        ];
+        for target in [CalendarKind::Google, CalendarKind::Outlook] {
+            assert_eq!(
+                status_of(&bodies, target),
+                ImportItemStatus::Unsupported(UnsupportedReason::UnsupportedRecurrence("RANGE".into()))
+            );
+        }
     }
 
     #[test]
