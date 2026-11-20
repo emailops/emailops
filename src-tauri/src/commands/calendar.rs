@@ -172,6 +172,79 @@ pub async fn sync_calendar_now(state: State<'_, AppState>, account_id: String) -
     .await
 }
 
+/// The account, its calendar kind and a provider, for the `.ics` import
+/// commands. Only Google and Outlook calendars accept imported events.
+fn ics_import_target(
+    state: &AppState,
+    account_id: &str,
+) -> Result<(crate::models::Account, crate::sync::calendar_provider::CalendarKind), AppError> {
+    use crate::services::calendar::capability::{calendar_available, calendar_capability};
+    use crate::sync::calendar_provider::CalendarKind;
+    let account = state
+        .db
+        .get_account(account_id)?
+        .ok_or_else(|| AppError::NotFound(format!("account '{account_id}' not found")))?;
+    match calendar_capability(&state.db, &account)? {
+        Some(kind @ (CalendarKind::Google | CalendarKind::Outlook)) if calendar_available(&state.db, &account) => {
+            Ok((account, kind))
+        }
+        _ => Err(AppError::InvalidInput(
+            "this account has no calendar EmailOps can write to".into(),
+        )),
+    }
+}
+
+/// Read an `.ics` file and report what importing it would do.
+#[tauri::command]
+pub async fn preview_ics_import(
+    state: State<'_, AppState>,
+    account_id: String,
+    path: String,
+    time_zone: String,
+) -> Result<services::calendar::import::IcsImportPreview, AppError> {
+    let (account, kind) = ics_import_target(&state, &account_id)?;
+    let path = std::path::Path::new(&path);
+    let ics = services::calendar::import::read_ics_file(path)?;
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let provider = services::calendar::sync::build_calendar_provider(&state.db, &account)?;
+    services::calendar::import::preview_ics_import(provider.as_ref(), kind, &ics, &file_name, &time_zone).await
+}
+
+/// Import an `.ics` file into the account's primary calendar, then mirror the
+/// calendar like `sync_calendar_now`.
+#[tauri::command]
+pub async fn import_ics(
+    state: State<'_, AppState>,
+    account_id: String,
+    path: String,
+    time_zone: String,
+) -> Result<services::calendar::import::IcsImportSummary, AppError> {
+    let (account, kind) = ics_import_target(&state, &account_id)?;
+    let ics = services::calendar::import::read_ics_file(std::path::Path::new(&path))?;
+    let provider = services::calendar::sync::build_calendar_provider(&state.db, &account)?;
+    let summary = services::calendar::import::import_ics(provider.as_ref(), kind, &ics, &time_zone).await?;
+    if summary.imported > 0 {
+        if let Err(e) = services::calendar::sync::sync_account_calendar(
+            &state.db,
+            &account.id,
+            provider.as_ref(),
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+        {
+            services::logger::log(
+                "error",
+                "sync",
+                format!("Calendar sync after import failed: {}", e.code()),
+            );
+        }
+    }
+    Ok(summary)
+}
+
 /// Subscribed ICS feeds of an IMAP account (Settings → Calendar). Only the
 /// label and host are returned; the URL stays in the vault.
 #[tauri::command]

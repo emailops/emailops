@@ -221,6 +221,8 @@ macro_rules! app_commands {
             commands::calendar::get_calendar_invite,
             commands::calendar::rsvp_calendar_invite,
             commands::calendar::sync_calendar_now,
+            commands::calendar::preview_ics_import,
+            commands::calendar::import_ics,
             commands::calendar::list_calendar_feeds,
             commands::calendar::add_calendar_feed,
             commands::calendar::remove_calendar_feed,

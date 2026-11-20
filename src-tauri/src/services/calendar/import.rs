@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use chrono::{NaiveDate, NaiveDateTime, TimeZone};
+use serde::Serialize;
 
 use super::ics::{
     param_value, resolve_tzid, skipped_local_time, unescape_text, with_iana_tzid, IcsProperty, IcsZone, ParsedCalendar,
@@ -13,11 +14,10 @@ use super::ics::{
 };
 use crate::models::error::{AppError, Result};
 use crate::models::CalendarAttendee;
-use crate::sync::calendar_provider::CalendarKind;
+use crate::services::logger;
+use crate::sync::calendar_provider::{CalendarKind, CalendarProvider};
 use crate::sync::outlook_calendar::graph_recurrence_from_rrule;
 
-// The size limit is enforced by the import command, which arrives in a later task.
-#[cfg_attr(not(test), allow(dead_code))]
 pub const MAX_ICS_IMPORT_BYTES: usize = 10 * 1024 * 1024;
 pub const MAX_IMPORT_SERIES: usize = 500;
 
@@ -53,7 +53,6 @@ pub struct ImportableEvent {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the executor in later tasks
 pub enum UnsupportedReason {
     MissingUidOrStart,
     Cancelled,
@@ -70,7 +69,6 @@ pub enum UnsupportedReason {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the executor in later tasks
 pub enum ImportItemStatus {
     Importable,
     /// Set by the executor, never by the planner.
@@ -79,7 +77,6 @@ pub enum ImportItemStatus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the executor in later tasks
 pub struct ImportItem {
     pub event: ImportableEvent,
     pub status: ImportItemStatus,
@@ -89,7 +86,6 @@ impl EventTime {
     /// UTC epoch seconds. All-day dates are UTC midnight. A wall time a DST
     /// change skips is read with the offset before the change; an ambiguous
     /// one takes the earlier instant (same rules as `ics.rs`).
-    #[cfg_attr(not(test), allow(dead_code))] // used by the executor in later tasks
     pub fn to_epoch(&self) -> i64 {
         match self {
             EventTime::AllDay(date) => date.and_time(chrono::NaiveTime::MIN).and_utc().timestamp(),
@@ -129,7 +125,6 @@ enum Entry {
 
 /// Plan the import of `cal` into `target`. Items follow the document order of
 /// the first appearance of each UID.
-#[cfg_attr(not(test), allow(dead_code))] // called by the import command in later tasks
 pub fn plan_ics_import(cal: &ParsedCalendar, target: CalendarKind, default_tz: &str) -> Result<Vec<ImportItem>> {
     if target == CalendarKind::IcsFeeds {
         return Err(AppError::ReadOnlyCalendar);
@@ -536,6 +531,210 @@ fn attendee_response(params: &[String]) -> String {
         _ => "needsAction",
     }
     .to_string()
+}
+
+fn read_error(e: std::io::Error) -> AppError {
+    AppError::IoError(format!("could not read the file: {}", e.kind()))
+}
+
+/// Read an `.ics` file the user picked. The extension and size are checked
+/// before reading; a leading UTF-8 BOM is dropped.
+pub fn read_ics_file(path: &std::path::Path) -> Result<String> {
+    let is_ics = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("ics"));
+    if !is_ics {
+        return Err(AppError::InvalidInput("the file is not an .ics file".into()));
+    }
+    let size = std::fs::metadata(path).map_err(read_error)?.len();
+    if size > MAX_ICS_IMPORT_BYTES as u64 {
+        return Err(AppError::InvalidInput(format!(
+            "the file is too large (limit {} MB)",
+            MAX_ICS_IMPORT_BYTES / (1024 * 1024)
+        )));
+    }
+    let bytes = std::fs::read(path).map_err(read_error)?;
+    let text = String::from_utf8(bytes).map_err(|_| AppError::InvalidInput("the file is not UTF-8 text".into()))?;
+    Ok(match text.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_string(),
+        None => text,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IcsImportPreviewItem {
+    pub uid: String,
+    pub title: String,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub is_all_day: bool,
+    pub recurrence: Option<String>,
+    /// `importable` | `alreadyInCalendar` | `unsupported`.
+    pub status: String,
+    /// Stable code of the unsupported reason.
+    pub reason: Option<String>,
+    pub reason_detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IcsImportPreview {
+    pub file_name: String,
+    pub items: Vec<IcsImportPreviewItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IcsImportFailure {
+    pub title: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IcsImportSummary {
+    pub imported: u32,
+    pub already_present: u32,
+    pub unsupported: u32,
+    pub failed: Vec<IcsImportFailure>,
+}
+
+/// The wire code of an unsupported reason and its payload, when it has one.
+fn reason_code(reason: &UnsupportedReason) -> (&'static str, Option<String>) {
+    match reason {
+        UnsupportedReason::MissingUidOrStart => ("missingUidOrStart", None),
+        UnsupportedReason::Cancelled => ("cancelled", None),
+        UnsupportedReason::OutlookRecurrence(d) => ("outlookRecurrence", Some(d.clone())),
+        UnsupportedReason::OutlookRdate => ("outlookRdate", None),
+        UnsupportedReason::OutlookOrphanOverride => ("outlookOrphanOverride", None),
+        UnsupportedReason::UnsupportedRecurrence(d) => ("unsupportedRecurrence", Some(d.clone())),
+        UnsupportedReason::InvalidProperty(d) => ("invalidProperty", Some(d.clone())),
+        UnsupportedReason::UnknownTimezone(d) => ("unknownTimezone", Some(d.clone())),
+    }
+}
+
+/// Errors that mean "sign in again": they abort the whole run.
+fn is_auth_error(e: &AppError) -> bool {
+    matches!(
+        e,
+        AppError::NeedsReauth { .. } | AppError::CalendarPermissionDenied { .. }
+    )
+}
+
+fn plan_text(ics: &str, kind: CalendarKind, default_tz: &str) -> Result<Vec<ImportItem>> {
+    plan_ics_import(&super::ics::parse_vcalendar(ics), kind, default_tz)
+}
+
+/// Mark the importable items the calendar already holds. An auth error aborts;
+/// any other lookup error leaves the item importable (the import reports it).
+async fn mark_present(provider: &dyn CalendarProvider, items: &mut [ImportItem]) -> Result<()> {
+    for item in items.iter_mut().filter(|i| i.status == ImportItemStatus::Importable) {
+        match provider.find_event_by_uid(&item.event.uid).await {
+            Ok(Some(_)) => item.status = ImportItemStatus::AlreadyInCalendar,
+            Ok(None) => {}
+            Err(e) if is_auth_error(&e) => return Err(e),
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+pub async fn preview_ics_import(
+    provider: &dyn CalendarProvider,
+    kind: CalendarKind,
+    ics: &str,
+    file_name: &str,
+    default_tz: &str,
+) -> Result<IcsImportPreview> {
+    let mut items = plan_text(ics, kind, default_tz)?;
+    mark_present(provider, &mut items).await?;
+    let items = items
+        .into_iter()
+        .map(|item| {
+            let (status, reason, reason_detail) = match &item.status {
+                ImportItemStatus::Importable => ("importable", None, None),
+                ImportItemStatus::AlreadyInCalendar => ("alreadyInCalendar", None, None),
+                ImportItemStatus::Unsupported(r) => {
+                    let (code, detail) = reason_code(r);
+                    ("unsupported", Some(code.to_string()), detail)
+                }
+            };
+            let e = item.event;
+            IcsImportPreviewItem {
+                uid: e.uid,
+                title: e.summary,
+                start_time: e.start.to_epoch(),
+                end_time: e.end.to_epoch(),
+                is_all_day: matches!(e.start, EventTime::AllDay(_)),
+                recurrence: e.rrule,
+                status: status.to_string(),
+                reason,
+                reason_detail,
+            }
+        })
+        .collect();
+    Ok(IcsImportPreview {
+        file_name: file_name.to_string(),
+        items,
+    })
+}
+
+pub async fn import_ics(
+    provider: &dyn CalendarProvider,
+    kind: CalendarKind,
+    ics: &str,
+    default_tz: &str,
+) -> Result<IcsImportSummary> {
+    let result = run_import(provider, kind, ics, default_tz).await;
+    match &result {
+        Ok(s) => logger::log(
+            "success",
+            "sync",
+            format!(
+                "Calendar import finished: {} imported, {} already present, {} unsupported, {} failed",
+                s.imported,
+                s.already_present,
+                s.unsupported,
+                s.failed.len()
+            ),
+        ),
+        Err(e) => logger::log("error", "sync", format!("Calendar import failed: {}", e.code())),
+    }
+    result
+}
+
+async fn run_import(
+    provider: &dyn CalendarProvider,
+    kind: CalendarKind,
+    ics: &str,
+    default_tz: &str,
+) -> Result<IcsImportSummary> {
+    let mut items = plan_text(ics, kind, default_tz)?;
+    logger::log("info", "sync", format!("Importing {} calendar events", items.len()));
+    mark_present(provider, &mut items).await?;
+    let mut summary = IcsImportSummary {
+        imported: 0,
+        already_present: 0,
+        unsupported: 0,
+        failed: Vec::new(),
+    };
+    for item in &items {
+        match &item.status {
+            ImportItemStatus::AlreadyInCalendar => summary.already_present += 1,
+            ImportItemStatus::Unsupported(_) => summary.unsupported += 1,
+            ImportItemStatus::Importable => match provider.import_event(&item.event).await {
+                Ok(_) => summary.imported += 1,
+                Err(e) if is_auth_error(&e) => return Err(e),
+                Err(e) => summary.failed.push(IcsImportFailure {
+                    title: item.event.summary.clone(),
+                    reason: e.to_string(),
+                }),
+            },
+        }
+    }
+    Ok(summary)
 }
 
 #[cfg(test)]
@@ -1034,5 +1233,262 @@ mod tests {
             items[0].status,
             ImportItemStatus::Unsupported(UnsupportedReason::UnsupportedRecurrence("TZID".into()))
         );
+    }
+
+    // ---- executor ----
+
+    use crate::sync::calendar_provider::{CalendarProvider, FakeCalendarProvider, FoundEvent};
+
+    fn fake() -> FakeCalendarProvider {
+        FakeCalendarProvider::with_events(vec![])
+    }
+
+    fn file(vevents: &[&str]) -> String {
+        let mut ics = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
+        for body in vevents {
+            ics.push_str("BEGIN:VEVENT\r\n");
+            for line in body.lines() {
+                ics.push_str(line);
+                ics.push_str("\r\n");
+            }
+            ics.push_str("END:VEVENT\r\n");
+        }
+        ics.push_str("END:VCALENDAR\r\n");
+        ics
+    }
+
+    const EV_A: &str = "UID:a@example.com\nDTSTART:20261205T083000Z\nSUMMARY:Quarterly Zebra Review";
+    const EV_B: &str = "UID:b@example.com\nDTSTART:20261206T083000Z\nSUMMARY:Okapi Sync";
+    const EV_CANCELLED: &str = "UID:c@example.com\nDTSTART:20261207T083000Z\nSTATUS:CANCELLED\nSUMMARY:Gone";
+
+    fn write_tmp(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn read_rejects_files_over_10_mb() {
+        let (_d, path) = write_tmp("big.ics", &vec![b'a'; MAX_ICS_IMPORT_BYTES + 1]);
+        assert!(matches!(read_ics_file(&path), Err(AppError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn read_rejects_non_utf8() {
+        let (_d, path) = write_tmp("a.ics", b"BEGIN:VCALENDAR\xE9");
+        match read_ics_file(&path) {
+            Err(AppError::InvalidInput(m)) => assert!(m.contains("UTF-8")),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_strips_a_utf8_bom() {
+        let (_d, path) = write_tmp("a.ICS", b"\xEF\xBB\xBFBEGIN:VCALENDAR");
+        assert_eq!(read_ics_file(&path).unwrap(), "BEGIN:VCALENDAR");
+    }
+
+    #[test]
+    fn read_rejects_other_extensions() {
+        let (_d, path) = write_tmp("a.txt", b"BEGIN:VCALENDAR");
+        assert!(matches!(read_ics_file(&path), Err(AppError::InvalidInput(_))));
+    }
+
+    #[tokio::test]
+    async fn preview_marks_events_already_in_the_calendar() {
+        let mut p = fake();
+        p.found_by_uid.insert(
+            "a@example.com".into(),
+            FoundEvent {
+                provider_event_id: "x".into(),
+                imported_by_emailops: false,
+            },
+        );
+        let pv = preview_ics_import(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "f.ics", "UTC")
+            .await
+            .unwrap();
+        assert_eq!(pv.file_name, "f.ics");
+        assert_eq!(pv.items[0].status, "alreadyInCalendar");
+        assert_eq!(pv.items[1].status, "importable");
+        assert_eq!(pv.items[1].title, "Okapi Sync");
+        assert_eq!(pv.items[1].start_time, 1796545800);
+    }
+
+    #[tokio::test]
+    async fn preview_reports_unsupported_reason_code() {
+        let pv = preview_ics_import(&fake(), CalendarKind::Google, &file(&[EV_CANCELLED]), "f.ics", "UTC")
+            .await
+            .unwrap();
+        assert_eq!(pv.items[0].status, "unsupported");
+        assert_eq!(pv.items[0].reason.as_deref(), Some("cancelled"));
+    }
+
+    #[test]
+    fn every_unsupported_reason_maps_to_its_code() {
+        let cases = [
+            (UnsupportedReason::MissingUidOrStart, "missingUidOrStart", None),
+            (UnsupportedReason::Cancelled, "cancelled", None),
+            (
+                UnsupportedReason::OutlookRecurrence("FREQ=HOURLY".into()),
+                "outlookRecurrence",
+                Some("FREQ=HOURLY"),
+            ),
+            (UnsupportedReason::OutlookRdate, "outlookRdate", None),
+            (UnsupportedReason::OutlookOrphanOverride, "outlookOrphanOverride", None),
+            (
+                UnsupportedReason::UnsupportedRecurrence("EXRULE".into()),
+                "unsupportedRecurrence",
+                Some("EXRULE"),
+            ),
+            (
+                UnsupportedReason::InvalidProperty("DTEND".into()),
+                "invalidProperty",
+                Some("DTEND"),
+            ),
+            (
+                UnsupportedReason::UnknownTimezone("Foo".into()),
+                "unknownTimezone",
+                Some("Foo"),
+            ),
+        ];
+        for (reason, code, detail) in cases {
+            assert_eq!(reason_code(&reason), (code, detail.map(str::to_string)));
+        }
+    }
+
+    #[tokio::test]
+    async fn import_skips_present_and_unsupported_and_counts() {
+        let mut p = fake();
+        p.found_by_uid.insert(
+            "a@example.com".into(),
+            FoundEvent {
+                provider_event_id: "x".into(),
+                imported_by_emailops: false,
+            },
+        );
+        let s = import_ics(&p, CalendarKind::Google, &file(&[EV_A, EV_B, EV_CANCELLED]), "UTC")
+            .await
+            .unwrap();
+        assert_eq!((s.imported, s.already_present, s.unsupported), (1, 1, 1));
+        assert_eq!(p.imported.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reimporting_the_same_file_imports_nothing() {
+        let p = fake();
+        let ics = file(&[EV_A, EV_B]);
+        let first = import_ics(&p, CalendarKind::Google, &ics, "UTC").await.unwrap();
+        assert_eq!(first.imported, 2);
+        let second = import_ics(&p, CalendarKind::Google, &ics, "UTC").await.unwrap();
+        assert_eq!((second.imported, second.already_present), (0, 2));
+    }
+
+    #[tokio::test]
+    async fn a_failed_event_does_not_stop_the_rest() {
+        let mut p = fake();
+        p.import_errors.insert("a@example.com".into(), "boom".into());
+        let s = import_ics(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "UTC")
+            .await
+            .unwrap();
+        assert_eq!(s.imported, 1);
+        assert_eq!(s.failed.len(), 1);
+        assert_eq!(s.failed[0].title, "Quarterly Zebra Review");
+    }
+
+    #[tokio::test]
+    async fn an_auth_error_aborts_the_import() {
+        // `error` on the fake fails find_event_by_uid; reauth needs a custom provider.
+        let p = AuthFailing { on_find: true };
+        let err = import_ics(&p, CalendarKind::Google, &file(&[EV_A]), "UTC")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NeedsReauth { .. }));
+        let err = preview_ics_import(&p, CalendarKind::Google, &file(&[EV_A]), "f.ics", "UTC")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::NeedsReauth { .. }));
+        let p = AuthFailing { on_find: false };
+        let err = import_ics(&p, CalendarKind::Google, &file(&[EV_A]), "UTC")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::CalendarPermissionDenied { .. }));
+    }
+
+    #[tokio::test]
+    async fn import_logs_counts_only() {
+        let logger = crate::services::logger::install_for_testing();
+        import_ics(&fake(), CalendarKind::Google, &file(&[EV_A, EV_B]), "UTC")
+            .await
+            .unwrap();
+        let events = logger.events();
+        assert!(events.iter().any(|e| e.level == "info" && e.source == "sync"));
+        assert!(events.iter().any(|e| e.level == "success" && e.source == "sync"));
+        for e in &events {
+            assert!(
+                !e.message.contains("Zebra") && !e.message.contains("Okapi"),
+                "{}",
+                e.message
+            );
+        }
+    }
+
+    /// A provider whose lookups (or imports) fail with an auth-class error.
+    struct AuthFailing {
+        on_find: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl CalendarProvider for AuthFailing {
+        async fn list_calendars(&self) -> Result<Vec<crate::sync::calendar_provider::ProviderCalendar>> {
+            unreachable!()
+        }
+        async fn list_events(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+        ) -> Result<Vec<crate::sync::calendar_provider::ProviderCalendarEvent>> {
+            unreachable!()
+        }
+        async fn create_event(
+            &self,
+            _: &crate::sync::calendar_provider::NewCalendarEvent,
+        ) -> Result<crate::sync::calendar_provider::ProviderCalendarEvent> {
+            unreachable!()
+        }
+        async fn delete_event(&self, _: &str, _: &str, _: bool, _: &str) -> Result<()> {
+            unreachable!()
+        }
+        async fn truncate_recurring_event(&self, _: &str, _: &str, _: i64, _: bool) -> Result<()> {
+            unreachable!()
+        }
+        async fn rsvp_by_ical_uid(
+            &self,
+            _: &str,
+            _: crate::sync::calendar_provider::RsvpResponse,
+            _: &str,
+        ) -> Result<()> {
+            unreachable!()
+        }
+        async fn find_event_by_uid(&self, _: &str) -> Result<Option<FoundEvent>> {
+            if self.on_find {
+                Err(AppError::NeedsReauth { account_id: "a".into() })
+            } else {
+                Ok(None)
+            }
+        }
+        async fn import_event(&self, _: &ImportableEvent) -> Result<String> {
+            Err(AppError::CalendarPermissionDenied { account_id: "a".into() })
+        }
+        async fn respond_to_event(
+            &self,
+            _: &str,
+            _: &str,
+            _: crate::sync::calendar_provider::RsvpResponse,
+            _: &str,
+        ) -> Result<()> {
+            unreachable!()
+        }
     }
 }
