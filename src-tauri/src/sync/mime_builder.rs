@@ -197,6 +197,39 @@ pub fn extract_message_id(msg: &LettreMessage) -> Option<String> {
     })
 }
 
+/// Build an iTIP REPLY (RFC 5546): `multipart/alternative` with the plain-text
+/// summary and the `text/calendar; method=REPLY` part inside the body, never
+/// as an attachment, so the organizer's client processes it as a response.
+#[cfg_attr(not(test), allow(dead_code))] // called from `services::calendar::itip`, wired by the RSVP command (Task 8)
+pub fn build_itip_reply_message(
+    from_email: &str,
+    from_name: Option<&str>,
+    to: &str,
+    subject: &str,
+    text: &str,
+    ics: &str,
+) -> Result<LettreMessage> {
+    let address: lettre::Address = from_email
+        .parse()
+        .map_err(|e| AppError::SyncError(format!("Invalid from address: {e}")))?;
+    let to: Mailbox = to
+        .parse()
+        .map_err(|e| AppError::SyncError(format!("Invalid to address {to}: {e}")))?;
+    let calendar_type = ContentType::parse("text/calendar; method=REPLY; charset=UTF-8")
+        .map_err(|e| AppError::SyncError(format!("Invalid calendar content type: {e}")))?;
+    LettreMessage::builder()
+        .from(Mailbox::new(from_name.map(str::to_string), address))
+        .to(to)
+        .subject(subject)
+        .message_id(None)
+        .multipart(
+            MultiPart::alternative()
+                .singlepart(SinglePart::plain(text.to_string()))
+                .singlepart(SinglePart::builder().header(calendar_type).body(ics.to_string())),
+        )
+        .map_err(|e| AppError::SyncError(format!("Failed to build calendar reply: {e}")))
+}
+
 fn base_builder(params: &SendMimeParams<'_>) -> Result<lettre::message::MessageBuilder> {
     let address: lettre::Address = params
         .from_email
@@ -897,5 +930,31 @@ mod tests {
         assert_eq!(decode_base64("aGVsbG8").unwrap(), b"hello"); // url-safe no pad
                                                                  // Whitespace in input must be tolerated.
         assert_eq!(decode_base64("aGVs\nbG8=").unwrap(), b"hello");
+    }
+
+    #[test]
+    fn itip_message_is_multipart_alternative_with_calendar_part() {
+        let msg = build_itip_reply_message(
+            "me@example.com",
+            Some("Me Example"),
+            "org@example.org",
+            "Accepted: Sync",
+            "Accepted: Sync",
+            "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n",
+        )
+        .expect("build");
+        let mime = String::from_utf8_lossy(&msg.formatted()).into_owned();
+        assert!(mime.contains("multipart/alternative"), "{mime}");
+        assert!(mime.contains("text/plain"), "{mime}");
+        // lettre normalizes the (case-insensitive) charset name to lower case.
+        assert!(
+            mime.to_ascii_lowercase()
+                .contains("text/calendar; method=reply; charset=utf-8"),
+            "{mime}"
+        );
+        assert!(mime.contains("method=REPLY"), "{mime}");
+        assert!(!mime.contains("Content-Disposition: attachment"), "{mime}");
+        assert_eq!(mime.matches("\r\nTo:").count(), 1, "{mime}");
+        assert!(mime.contains("To: org@example.org"), "{mime}");
     }
 }
