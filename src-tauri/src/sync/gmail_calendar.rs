@@ -1308,6 +1308,7 @@ mod tests {
                 response: "needsAction".into(),
             }],
             sequence: 2,
+            fallback_tz: "Europe/Madrid".into(),
         }
     }
 

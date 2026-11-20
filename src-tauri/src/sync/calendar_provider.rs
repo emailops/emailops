@@ -633,6 +633,7 @@ mod tests {
             organizer: None,
             attendees: Vec::new(),
             sequence: 0,
+            fallback_tz: "UTC".into(),
         }
     }
 

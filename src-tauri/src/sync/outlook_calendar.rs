@@ -649,9 +649,10 @@ pub(crate) fn build_graph_import_request(event: &ImportableEvent) -> Result<serd
         body["location"] = serde_json::json!({"displayName": event.location});
     }
     if let Some(rrule) = &event.rrule {
+        // The same zone the planner checked the rule in.
         let (first_start, tz) = match &event.start {
-            EventTime::AllDay(date) => (*date, "UTC"),
-            EventTime::Timed { local, tz } => (local.date(), tz.as_str()),
+            EventTime::AllDay(date) => (date.and_time(chrono::NaiveTime::MIN), event.fallback_tz.as_str()),
+            EventTime::Timed { local, tz } => (*local, tz.as_str()),
         };
         let mut recurrence = graph_recurrence_from_rrule(rrule, first_start, tz)
             .map_err(|part| AppError::InvalidInput(format!("Outlook cannot represent the recurrence ({part})")))?;
@@ -831,30 +832,50 @@ fn graph_index_name(ordinal: i32) -> &'static str {
     }
 }
 
-/// `UNTIL` value → local end date in `tz`. A trailing `Z` is converted from
-/// UTC; floating and date-only values are taken as the local date already.
-fn rrule_until_date(value: &str, tz: chrono_tz::Tz) -> Option<chrono::NaiveDate> {
+/// `UNTIL` value → the last day of the series in `tz`, as Graph's inclusive
+/// `endDate`. A trailing `Z` is converted from UTC; a floating date-time is
+/// local already. A date-time earlier in its day than the series' start time
+/// of day (`start_time`) excludes that day's occurrence, so the series ends
+/// the day before. A date value is the last day.
+fn rrule_until_date(value: &str, tz: chrono_tz::Tz, start_time: chrono::NaiveTime) -> Option<chrono::NaiveDate> {
     use chrono::TimeZone;
-    if let Some(utc) = value.strip_suffix('Z') {
+    let local = if let Some(utc) = value.strip_suffix('Z') {
         let naive = chrono::NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S").ok()?;
-        return Some(tz.from_utc_datetime(&naive).date_naive());
+        tz.from_utc_datetime(&naive).naive_local()
+    } else if let Ok(local) = chrono::NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S") {
+        local
+    } else {
+        let date_part = value.get(..8)?;
+        return chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok();
+    };
+    if local.time() < start_time {
+        local.date().pred_opt()
+    } else {
+        Some(local.date())
     }
-    let date_part = value.get(..8)?;
-    chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()
 }
 
 /// iCalendar `RRULE` → Graph `patternedRecurrence` (`{pattern, range}`).
-/// `tz` is an IANA zone name or `"UTC"`. Rules Graph cannot express return
+/// `first_start` is the series' first start as a wall time in `tz` (an IANA
+/// zone name or `"UTC"`). Rules Graph cannot express return
 /// `Err(<offending rule part>)`, e.g. `"FREQ=HOURLY"` or `"BYMONTHDAY=1,15"`.
-// Used by the ICS import planner and request builder in later tasks.
-#[cfg_attr(not(test), allow(dead_code))]
+///
+/// Where Graph reads a rule differently from RFC 5545, the rule is spelled out
+/// for Graph or rejected, never passed through:
+/// - Week start: RFC 5545 defaults `WKST` to Monday and Graph defaults
+///   `firstDayOfWeek` to Sunday, so a weekly pattern always names it.
+/// - Several days in a relative pattern (`BYDAY=1MO,1TU`): RFC 5545 means each
+///   day, Graph only the first one that matches. Rejected.
+/// - `BYMONTHDAY` in a yearly rule without `BYMONTH`: RFC 5545 repeats it in
+///   every month, Graph would keep a single month. Rejected.
 pub(crate) fn graph_recurrence_from_rrule(
     rrule: &str,
-    first_start: chrono::NaiveDate,
+    first_start: chrono::NaiveDateTime,
     tz: &str,
 ) -> std::result::Result<serde_json::Value, String> {
     use chrono::Datelike;
 
+    let first_day = first_start.date();
     let zone: chrono_tz::Tz = tz.parse().map_err(|_| format!("TZID={tz}"))?;
     let mut freq = None;
     let (mut interval, mut count, mut until) = (1u32, None, None);
@@ -867,7 +888,7 @@ pub(crate) fn graph_recurrence_from_rrule(
             "FREQ" => freq = Some(value.to_ascii_uppercase()),
             "INTERVAL" => interval = value.parse().ok().filter(|n| *n >= 1).ok_or_else(bad)?,
             "COUNT" => count = Some(value.parse::<u32>().ok().filter(|n| *n >= 1).ok_or_else(bad)?),
-            "UNTIL" => until = Some(rrule_until_date(value, zone).ok_or_else(bad)?),
+            "UNTIL" => until = Some(rrule_until_date(value, zone, first_start.time()).ok_or_else(bad)?),
             "BYDAY" => byday = Some(value.to_ascii_uppercase()),
             "BYMONTHDAY" => {
                 bymonthday = Some(
@@ -908,14 +929,15 @@ pub(crate) fn graph_recurrence_from_rrule(
         }
     }
     let by_day_err = || format!("BYDAY={by_day_text}");
-    // Relative patterns (monthly/yearly) need every item to share one ordinal.
-    let ordinal = match days.first() {
-        Some((Some(first), _)) if days.iter().all(|(o, _)| *o == Some(*first)) => Some(*first),
+    // Relative patterns (monthly/yearly) take exactly one day: Graph reads
+    // several as "the first one that matches", RFC 5545 as each of them.
+    let ordinal = match days.as_slice() {
+        [(Some(n), _)] => Some(*n),
         _ if days.iter().any(|(o, _)| o.is_some()) => return Err(by_day_err()),
         _ => None,
     };
     let day_names: Vec<&str> = days.iter().map(|(_, d)| *d).collect();
-    let anchor_day = match first_start.weekday() {
+    let anchor_day = match first_day.weekday() {
         chrono::Weekday::Mon => "monday",
         chrono::Weekday::Tue => "tuesday",
         chrono::Weekday::Wed => "wednesday",
@@ -929,7 +951,7 @@ pub(crate) fn graph_recurrence_from_rrule(
     let reject_monthday = |d: Option<u32>| d.map_or(Ok(()), |d| Err(format!("BYMONTHDAY={d}")));
     // RFC 5545 skips months lacking the day; Graph moves it to the last day.
     let absolute_day = || {
-        let day = bymonthday.unwrap_or_else(|| first_start.day());
+        let day = bymonthday.unwrap_or_else(|| first_day.day());
         if day > 28 {
             Err(format!("BYMONTHDAY={day}"))
         } else {
@@ -957,7 +979,10 @@ pub(crate) fn graph_recurrence_from_rrule(
             } else {
                 day_names
             };
-            serde_json::json!({"type": "weekly", "interval": interval, "daysOfWeek": names})
+            serde_json::json!({
+                "type": "weekly", "interval": interval, "daysOfWeek": names,
+                "firstDayOfWeek": wkst.unwrap_or("monday")
+            })
         }
         "MONTHLY" => {
             reject_month(bymonth)?;
@@ -986,20 +1011,26 @@ pub(crate) fn graph_recurrence_from_rrule(
                     "daysOfWeek": day_names, "index": graph_index_name(n)
                 })
             }
-            None if days.is_empty() => serde_json::json!({
-                "type": "absoluteYearly", "interval": interval,
-                "month": bymonth.unwrap_or_else(|| first_start.month()),
-                "dayOfMonth": absolute_day()?
-            }),
+            None if days.is_empty() => {
+                // Without BYMONTH, RFC 5545 repeats BYMONTHDAY in every month.
+                if bymonth.is_none() {
+                    reject_monthday(bymonthday)?;
+                }
+                serde_json::json!({
+                    "type": "absoluteYearly", "interval": interval,
+                    "month": bymonth.unwrap_or_else(|| first_day.month()),
+                    "dayOfMonth": absolute_day()?
+                })
+            }
             None => return Err(by_day_err()),
         },
         _ => return Err(format!("FREQ={freq}")),
     };
-    if let Some(first_day) = wkst {
-        pattern["firstDayOfWeek"] = serde_json::json!(first_day);
+    if let Some(week_start) = wkst {
+        pattern["firstDayOfWeek"] = serde_json::json!(week_start);
     }
 
-    let start_date = first_start.format("%Y-%m-%d").to_string();
+    let start_date = first_day.format("%Y-%m-%d").to_string();
     let range = match (count, until) {
         (Some(n), _) => serde_json::json!({
             "type": "numbered", "startDate": start_date, "numberOfOccurrences": n
@@ -1477,8 +1508,10 @@ mod tests {
     // ── graph_recurrence_from_rrule ────────────────────────────────────────
 
     fn from_rrule(rrule: &str) -> std::result::Result<serde_json::Value, String> {
-        // 2026-12-01 is a Tuesday.
-        let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 1).expect("date");
+        // 2026-12-01 is a Tuesday; the series starts at 10:00.
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 1)
+            .and_then(|d| d.and_hms_opt(10, 0, 0))
+            .expect("date");
         graph_recurrence_from_rrule(rrule, first, "Europe/Madrid")
     }
 
@@ -1596,7 +1629,9 @@ mod tests {
 
     #[test]
     fn implicit_anchor_day_above_28_is_rejected() {
-        let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 31).expect("date");
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 12, 31)
+            .and_then(|d| d.and_hms_opt(10, 0, 0))
+            .expect("date");
         for rule in ["FREQ=MONTHLY", "FREQ=YEARLY"] {
             assert_eq!(
                 graph_recurrence_from_rrule(rule, first, "UTC"),
@@ -1626,6 +1661,37 @@ mod tests {
         assert_eq!(rec["pattern"]["type"], "relativeYearly");
         assert_eq!(rec["pattern"]["month"], 3);
         assert_eq!(rec["pattern"]["index"], "last");
+    }
+
+    #[test]
+    fn yearly_monthday_without_month_is_rejected() {
+        // RFC 5545 repeats BYMONTHDAY in every month; Graph would keep one.
+        assert_eq!(
+            from_rrule("FREQ=YEARLY;BYMONTHDAY=15"),
+            Err("BYMONTHDAY=15".to_string())
+        );
+        assert!(from_rrule("FREQ=YEARLY").is_ok());
+    }
+
+    #[test]
+    fn multi_day_relative_patterns_are_rejected() {
+        // Graph keeps only the first matching day of several.
+        for (rule, part) in [
+            ("FREQ=MONTHLY;BYDAY=1MO,1TU", "BYDAY=1MO,1TU"),
+            ("FREQ=YEARLY;BYMONTH=3;BYDAY=-1SA,-1SU", "BYDAY=-1SA,-1SU"),
+        ] {
+            assert_eq!(from_rrule(rule), Err(part.to_string()), "{rule}");
+        }
+    }
+
+    #[test]
+    fn weekly_weeks_start_on_monday_unless_wkst_says_otherwise() {
+        // RFC 5545 defaults WKST to MO; Graph defaults firstDayOfWeek to sunday.
+        let rec = from_rrule("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,SU").expect("rule");
+        assert_eq!(rec["pattern"]["daysOfWeek"], serde_json::json!(["monday", "sunday"]));
+        assert_eq!(rec["pattern"]["firstDayOfWeek"], "monday");
+        let rec = from_rrule("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,SU;WKST=SU").expect("rule");
+        assert_eq!(rec["pattern"]["firstDayOfWeek"], "sunday");
     }
 
     // ── graph_recurrence_with_end ──────────────────────────────────────────
@@ -1792,6 +1858,7 @@ mod tests {
             organizer: Some("boss@example.com".into()),
             attendees: vec![],
             sequence: 0,
+            fallback_tz: "Europe/Madrid".into(),
         }
     }
 
@@ -1846,12 +1913,32 @@ mod tests {
         );
         let mut expected = graph_recurrence_from_rrule(
             "FREQ=WEEKLY;COUNT=3",
-            chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 12, 1)
+                .unwrap()
+                .and_hms_opt(10, 0, 0)
+                .unwrap(),
             "Europe/Madrid",
         )
         .expect("recurrence");
+        assert_eq!(expected["pattern"]["firstDayOfWeek"], "monday");
         expected["range"]["recurrenceTimeZone"] = serde_json::json!("Romance Standard Time");
         assert_eq!(body["recurrence"], expected);
+    }
+
+    #[test]
+    fn graph_end_date_drops_a_last_day_whose_occurrence_is_after_until() {
+        // A daily series at 10:00 in Madrid; Graph's endDate is inclusive.
+        for (until, end_date) in [
+            ("20261231T000000Z", "2026-12-30"), // 01:00 in Madrid, before 10:00
+            ("20261231T090000Z", "2026-12-31"), // 10:00 in Madrid: the last occurrence
+            ("20261231T083000", "2026-12-30"),  // floating: already local
+            ("20261231", "2026-12-31"),         // a date: the last day
+        ] {
+            let mut event = import_timed("a@example.com");
+            event.rrule = Some(format!("FREQ=DAILY;UNTIL={until}"));
+            let body = build_graph_import_request(&event).expect("body");
+            assert_eq!(body["recurrence"]["range"]["endDate"], end_date, "UNTIL={until}");
+        }
     }
 
     #[test]
@@ -1879,6 +1966,23 @@ mod tests {
         assert_eq!(body["isAllDay"], true);
         assert_eq!(body["start"]["dateTime"], "2026-12-05T00:00:00");
         assert_eq!(body["end"]["dateTime"], "2026-12-06T00:00:00");
+    }
+
+    #[test]
+    fn graph_all_day_series_use_the_fallback_zone() {
+        // The planner checks an all-day rule in `fallback_tz`; the body must agree.
+        use crate::services::calendar::import::EventTime;
+        let mut event = import_timed("a@example.com");
+        event.start = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 5).unwrap());
+        event.end = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 6).unwrap());
+        event.rrule = Some("FREQ=DAILY;UNTIL=20261231T233000Z".into());
+        let body = build_graph_import_request(&event).expect("body");
+        // 23:30 UTC on 31/12 is 00:30 on 01/01 in Madrid.
+        assert_eq!(body["recurrence"]["range"]["endDate"], "2027-01-01");
+        assert_eq!(
+            body["recurrence"]["range"]["recurrenceTimeZone"],
+            "Romance Standard Time"
+        );
     }
 
     #[test]

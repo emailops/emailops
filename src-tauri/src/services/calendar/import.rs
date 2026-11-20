@@ -50,6 +50,9 @@ pub struct ImportableEvent {
     pub organizer: Option<String>,
     pub attendees: Vec<CalendarAttendee>,
     pub sequence: u32,
+    /// IANA zone of the file's floating times and of all-day series:
+    /// X-WR-TIMEZONE when valid, else the caller's default.
+    pub fallback_tz: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -278,11 +281,11 @@ impl Ctx<'_> {
                 return Unsupported(UnsupportedReason::OutlookRdate);
             }
             if let Some(rrule) = &event.rrule {
-                let (date, tz) = match &event.start {
-                    EventTime::AllDay(d) => (*d, self.fallback_tz.as_str()),
-                    EventTime::Timed { local, tz } => (local.date(), tz.as_str()),
+                let (first_start, tz) = match &event.start {
+                    EventTime::AllDay(d) => (d.and_time(chrono::NaiveTime::MIN), self.fallback_tz.as_str()),
+                    EventTime::Timed { local, tz } => (*local, tz.as_str()),
                 };
-                if let Err(part) = graph_recurrence_from_rrule(rrule, date, tz) {
+                if let Err(part) = graph_recurrence_from_rrule(rrule, first_start, tz) {
                     return Unsupported(UnsupportedReason::OutlookRecurrence(part));
                 }
             }
@@ -361,6 +364,7 @@ impl Ctx<'_> {
                 .first_value("SEQUENCE")
                 .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(0),
+            fallback_tz: self.fallback_tz.clone(),
         }
     }
 
@@ -473,6 +477,7 @@ fn unreachable_empty() -> ImportItem {
             organizer: None,
             attendees: Vec::new(),
             sequence: 0,
+            fallback_tz: "UTC".into(),
         },
         status: ImportItemStatus::Unsupported(UnsupportedReason::MissingUidOrStart),
     }
@@ -851,6 +856,18 @@ mod tests {
         );
         let items = plan_ics_import(&c, CalendarKind::Google, "Europe/Madrid").unwrap();
         assert_eq!(items[0].event.start, timed(at(2026, 12, 5, 8, 30), "America/New_York"));
+    }
+
+    #[test]
+    fn events_carry_the_fallback_zone() {
+        let c = cal_with(
+            "X-WR-TIMEZONE:America/New_York\r\n",
+            &["UID:a@example.com\nDTSTART;VALUE=DATE:20261205\nRRULE:FREQ=DAILY"],
+        );
+        let items = plan_ics_import(&c, CalendarKind::Outlook, "Europe/Madrid").unwrap();
+        assert_eq!(items[0].event.fallback_tz, "America/New_York");
+        let item = one("UID:a@example.com\nDTSTART;VALUE=DATE:20261205", CalendarKind::Outlook);
+        assert_eq!(item.event.fallback_tz, "Europe/Madrid");
     }
 
     #[test]
