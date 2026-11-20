@@ -23,7 +23,6 @@ pub const MAX_IMPORT_SERIES: usize = 500;
 
 /// A point in time as the .ics wrote it: a calendar date or a wall time in a zone.
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the provider clients in later tasks
 pub enum EventTime {
     AllDay(NaiveDate),
     /// `tz` is an IANA name, or "UTC".
@@ -34,7 +33,6 @@ pub enum EventTime {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), allow(dead_code))] // consumed by the provider clients in later tasks
 pub struct ImportableEvent {
     pub uid: String,
     pub summary: String,

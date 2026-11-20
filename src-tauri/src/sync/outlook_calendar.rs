@@ -9,7 +9,10 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
-use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
+use crate::services::calendar::import::ImportableEvent;
+use crate::sync::calendar_provider::{
+    CalendarProvider, FoundEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
+};
 use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision, RetryPolicy};
 
 const GRAPH_API_BASE: &str = "https://graph.microsoft.com/v1.0";
@@ -404,6 +407,30 @@ impl CalendarProvider for OutlookCalendarClient {
             ));
         }
         Ok(())
+    }
+
+    async fn find_event_by_uid(&self, _ical_uid: &str) -> Result<Option<FoundEvent>> {
+        Err(AppError::SyncError(
+            "Finding events by UID is not supported for Outlook yet".into(),
+        ))
+    }
+
+    async fn import_event(&self, _event: &ImportableEvent) -> Result<String> {
+        Err(AppError::SyncError(
+            "Importing events is not supported for Outlook yet".into(),
+        ))
+    }
+
+    async fn respond_to_event(
+        &self,
+        _calendar_id: &str,
+        _provider_event_id: &str,
+        _response: RsvpResponse,
+        _self_email: &str,
+    ) -> Result<()> {
+        Err(AppError::SyncError(
+            "Responding to events is not supported for Outlook yet".into(),
+        ))
     }
 }
 
