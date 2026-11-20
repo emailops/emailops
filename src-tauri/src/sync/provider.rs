@@ -522,7 +522,6 @@ pub trait EmailProvider: Send + Sync {
     /// its headers). Used for iTIP replies, whose `text/calendar` part must
     /// travel inside the body, which the structured send paths cannot do.
     /// Gmail and Outlook override it; other accounts cannot send one.
-    #[cfg_attr(not(test), allow(dead_code))] // called from `services::calendar::itip`, wired by the RSVP command (Task 8)
     async fn send_raw_mime(&self, _mime: &[u8]) -> Result<()> {
         Err(AppError::SyncError(
             "sending calendar replies is not supported for this account".into(),

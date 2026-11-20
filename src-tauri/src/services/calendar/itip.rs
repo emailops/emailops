@@ -122,7 +122,7 @@ pub fn itip_reply_subject(response: RsvpResponse, summary: &str, language: Langu
     format!("{prefix}{title}")
 }
 
-fn looks_like_email(address: &str) -> bool {
+pub(crate) fn looks_like_email(address: &str) -> bool {
     let mut parts = address.split('@');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(local), Some(domain), None) => {

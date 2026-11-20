@@ -73,7 +73,7 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
     let uid = uid?;
     let (start_time, is_all_day) = start?;
     let end_time = end.map(|(t, _)| t).unwrap_or(start_time + 3_600);
-    let is_publish = method.eq_ignore_ascii_case("PUBLISH") || organizer.is_empty();
+    let is_publish = is_publish_invite(&calendar);
     Some(CalendarInvite {
         uid,
         summary,
@@ -83,7 +83,7 @@ pub fn parse_ics_invite(ics: &str) -> Option<CalendarInvite> {
         is_all_day,
         recurrence,
         is_publish,
-        reply_to: (!is_publish).then(|| organizer.clone()),
+        reply_to: if is_publish { None } else { reply_target(event, "") },
         organizer,
         method,
         organizer_is_sender: false,
@@ -102,11 +102,28 @@ pub(crate) fn organizer_address(event: &RawVEvent) -> Option<String> {
     (!address.is_empty()).then_some(address)
 }
 
+/// A broadcast: `METHOD:PUBLISH`, or a first event with no ORGANIZER. It
+/// expects no answer (RFC 5546 defines no REPLY to PUBLISH).
+pub(crate) fn is_publish_invite(cal: &super::ics::ParsedCalendar) -> bool {
+    cal.method
+        .as_deref()
+        .is_some_and(|m| m.trim().eq_ignore_ascii_case("PUBLISH"))
+        || cal.events.first().and_then(organizer_address).is_none()
+}
+
+/// Where an answer to `event` goes: its organizer, unless there is none, it is
+/// the account itself, or it is not a usable email address.
+pub(crate) fn reply_target(event: &RawVEvent, account_email: &str) -> Option<String> {
+    organizer_address(event).filter(|o| !o.eq_ignore_ascii_case(account_email) && super::itip::looks_like_email(o))
+}
+
 /// Fill the fields that depend on who sent the email and who reads it.
-pub(crate) fn address_invite(invite: &mut CalendarInvite, sender_email: &str, my_email: &str) {
-    if invite.organizer.eq_ignore_ascii_case(my_email) {
-        invite.reply_to = None;
-    }
+pub(crate) fn address_invite(invite: &mut CalendarInvite, event: &RawVEvent, sender_email: &str, my_email: &str) {
+    invite.reply_to = if invite.is_publish {
+        None
+    } else {
+        reply_target(event, my_email)
+    };
     invite.organizer_is_sender = invite
         .reply_to
         .as_deref()
@@ -129,13 +146,14 @@ pub async fn get_calendar_invite(
     let Some(ics) = read_invite_ics(db, app_data_dir, &email).await? else {
         return Ok(None);
     };
-    let Some(mut invite) = parse_ics_invite(&ics) else {
+    let calendar = parse_vcalendar(&ics);
+    let (Some(event), Some(mut invite)) = (calendar.events.first(), parse_ics_invite(&ics)) else {
         return Ok(None);
     };
     let account = db
         .get_account(&email.account_id)?
         .ok_or_else(|| AppError::NotFound(format!("account '{}' not found", email.account_id)))?;
-    address_invite(&mut invite, &email.sender_email, &account.email);
+    address_invite(&mut invite, event, &email.sender_email, &account.email);
     Ok(Some(invite))
 }
 
@@ -228,6 +246,7 @@ fn decode_ics_base64(b64: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::calendar::ics::parse_vcalendar;
 
     #[test]
     fn embedded_fixed_timezone_is_used_for_invite_display() {
@@ -370,6 +389,51 @@ mod tests {
         );
     }
 
+    fn first_event(ics: &str) -> RawVEvent {
+        parse_vcalendar(ics).events.remove(0)
+    }
+
+    fn with_organizer(value: &str) -> String {
+        TWO_EVENTS.replacen("ORGANIZER:mailto:lead@example.com", value, 1)
+    }
+
+    #[test]
+    fn reply_target_is_the_normalized_organizer() {
+        let event = first_event(&with_organizer("ORGANIZER;CN=Lead:MAILTO:Lead@Example.COM"));
+        assert_eq!(
+            reply_target(&event, "me@example.com").as_deref(),
+            Some("lead@example.com")
+        );
+    }
+
+    #[test]
+    fn reply_target_is_none_for_nobody_to_answer() {
+        let missing = with_organizer("X-NOTE:none");
+        let invalid = with_organizer("ORGANIZER:mailto:lead@intranet");
+        let me = with_organizer("ORGANIZER:mailto:ME@example.com");
+        for ics in [missing, invalid, me] {
+            assert_eq!(reply_target(&first_event(&ics), "me@example.com"), None, "{ics}");
+        }
+    }
+
+    #[test]
+    fn publish_predicate_covers_method_and_missing_organizer() {
+        assert!(!is_publish_invite(&parse_vcalendar(TWO_EVENTS)));
+        assert!(is_publish_invite(&parse_vcalendar(
+            &TWO_EVENTS.replace("METHOD:REQUEST", "METHOD:publish")
+        )));
+        assert!(is_publish_invite(&parse_vcalendar(&with_organizer("X-NOTE:none"))));
+    }
+
+    #[test]
+    fn the_card_agrees_with_the_service_on_an_invalid_organizer() {
+        let ics = with_organizer("ORGANIZER:mailto:lead@intranet");
+        let mut invite = parse_ics_invite(&ics).expect("parse");
+        address_invite(&mut invite, &first_event(&ics), "lead@intranet", "me@example.com");
+        assert_eq!(invite.reply_to, None);
+        assert!(!invite.organizer_is_sender);
+    }
+
     #[test]
     fn publish_invites_are_flagged() {
         let no_organizer = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:u1\nDTSTART:20261201T100000Z\nDTEND:20261201T110000Z\nEND:VEVENT\nEND:VCALENDAR\n";
@@ -385,7 +449,12 @@ mod tests {
     #[test]
     fn organizer_differs_from_sender_is_flagged() {
         let mut invite = parse_ics_invite(TWO_EVENTS).expect("parse");
-        address_invite(&mut invite, "news@example.org", "me@example.com");
+        address_invite(
+            &mut invite,
+            &first_event(TWO_EVENTS),
+            "news@example.org",
+            "me@example.com",
+        );
         assert_eq!(invite.reply_to.as_deref(), Some("lead@example.com"));
         assert!(!invite.organizer_is_sender);
     }
@@ -393,14 +462,24 @@ mod tests {
     #[test]
     fn organizer_who_sent_the_email_is_flagged_case_insensitively() {
         let mut invite = parse_ics_invite(TWO_EVENTS).expect("parse");
-        address_invite(&mut invite, "Lead@Example.com", "me@example.com");
+        address_invite(
+            &mut invite,
+            &first_event(TWO_EVENTS),
+            "Lead@Example.com",
+            "me@example.com",
+        );
         assert!(invite.organizer_is_sender);
     }
 
     #[test]
     fn an_invite_organized_by_me_has_no_reply_address() {
         let mut invite = parse_ics_invite(TWO_EVENTS).expect("parse");
-        address_invite(&mut invite, "lead@example.com", "LEAD@example.com");
+        address_invite(
+            &mut invite,
+            &first_event(TWO_EVENTS),
+            "lead@example.com",
+            "LEAD@example.com",
+        );
         assert_eq!(invite.reply_to, None);
         assert!(!invite.organizer_is_sender);
     }

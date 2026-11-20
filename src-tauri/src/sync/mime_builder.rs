@@ -200,7 +200,6 @@ pub fn extract_message_id(msg: &LettreMessage) -> Option<String> {
 /// Build an iTIP REPLY (RFC 5546): `multipart/alternative` with the plain-text
 /// summary and the `text/calendar; method=REPLY` part inside the body, never
 /// as an attachment, so the organizer's client processes it as a response.
-#[cfg_attr(not(test), allow(dead_code))] // called from `services::calendar::itip`, wired by the RSVP command (Task 8)
 pub fn build_itip_reply_message(
     from_email: &str,
     from_name: Option<&str>,

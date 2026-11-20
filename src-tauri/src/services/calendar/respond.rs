@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::ics::{parse_vcalendar, RawVEvent};
 use super::import::{plan_ics_import, reason_code, ImportItemStatus, ImportableEvent};
-use super::invite::organizer_address;
+use super::invite::{is_publish_invite, reply_target};
 use super::itip::{build_itip_reply, itip_reply_subject, send_itip_reply};
 use crate::models::error::{AppError, Result};
 use crate::models::{Account, CalendarAttendee};
@@ -32,10 +32,12 @@ pub enum InviteResponseOutcome {
     #[serde(rename_all = "camelCase")]
     Imported {
         reply_sent_to: Option<String>,
+        reply_error: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Removed {
         reply_sent_to: Option<String>,
+        reply_error: Option<String>,
     },
     AlreadyInCalendar,
     NotYetInCalendar,
@@ -123,7 +125,7 @@ struct Replier<'a> {
     mail: &'a dyn EmailProvider,
     req: &'a InviteRequest<'a>,
     event: &'a RawVEvent,
-    /// `None` when there is nobody to answer: no ORGANIZER, or it is the account.
+    /// `None` when there is nobody to answer (see `reply_target`).
     organizer: Option<String>,
 }
 
@@ -145,6 +147,18 @@ impl Replier<'_> {
         send_itip_reply(self.mail, account, organizer, &subject, &ics).await?;
         Ok(Some(organizer.clone()))
     }
+
+    /// Send once the calendar already changed: a failure (auth included) is
+    /// reported next to the outcome, never as an error that hides the change.
+    async fn send_after_change(&self, response: RsvpResponse) -> (Option<String>, Option<String>) {
+        match self.send(response).await {
+            Ok(sent_to) => (sent_to, None),
+            Err(e) => {
+                logger::log("error", "sync", format!("Calendar invite reply failed: {}", e.code()));
+                (None, Some(e.to_string()))
+            }
+        }
+    }
 }
 
 /// Answer the invitation: see the module docs. Auth errors propagate unchanged.
@@ -161,8 +175,14 @@ fn log_outcome(result: Result<InviteResponseOutcome>) -> Result<InviteResponseOu
         Ok(outcome) => {
             let (level, text) = match outcome {
                 InviteResponseOutcome::Responded { .. } => ("success", "Calendar invite answered"),
-                InviteResponseOutcome::Imported { .. } => ("success", "Calendar invite imported and answered"),
-                InviteResponseOutcome::Removed { .. } => ("success", "Calendar invite declined and removed"),
+                InviteResponseOutcome::Imported { reply_error: None, .. } => {
+                    ("success", "Calendar invite imported and answered")
+                }
+                InviteResponseOutcome::Imported { .. } => ("info", "Calendar invite imported, reply not sent"),
+                InviteResponseOutcome::Removed { reply_error: None, .. } => {
+                    ("success", "Calendar invite declined and removed")
+                }
+                InviteResponseOutcome::Removed { .. } => ("info", "Calendar invite removed, reply not sent"),
                 InviteResponseOutcome::AlreadyInCalendar => ("info", "Calendar invite already in the calendar"),
                 InviteResponseOutcome::NotYetInCalendar => ("info", "Calendar invite not in the calendar yet"),
                 InviteResponseOutcome::CannotImport { .. } => ("info", "Calendar invite cannot be imported"),
@@ -185,25 +205,35 @@ async fn decide(
 ) -> Result<InviteResponseOutcome> {
     let parsed = parse_vcalendar(req.ics);
     let (event, uid) = first_event(&parsed)?;
+    if is_publish_invite(&parsed) {
+        return Err(AppError::InvalidInput(
+            "this event has no one to answer; add it to the calendar instead".into(),
+        ));
+    }
     let me = req.account.email.as_str();
     let replier = Replier {
         mail,
         req,
         event,
-        organizer: organizer_address(event).filter(|o| !o.eq_ignore_ascii_case(me)),
+        organizer: reply_target(event, me),
     };
     let declined = req.response == RsvpResponse::Declined;
 
     match calendar.find_event_by_uid(uid).await? {
         Some(found) if found.imported_by_emailops => {
-            let reply_sent_to = replier.send(req.response).await?;
             if declined {
                 calendar
                     .delete_event(req.primary_calendar_id, &found.provider_event_id, false, "")
                     .await?;
-                Ok(InviteResponseOutcome::Removed { reply_sent_to })
+                let (reply_sent_to, reply_error) = replier.send_after_change(req.response).await;
+                Ok(InviteResponseOutcome::Removed {
+                    reply_sent_to,
+                    reply_error,
+                })
             } else {
-                Ok(InviteResponseOutcome::Responded { reply_sent_to })
+                Ok(InviteResponseOutcome::Responded {
+                    reply_sent_to: replier.send(req.response).await?,
+                })
             }
         }
         Some(_) => {
@@ -223,8 +253,10 @@ async fn decide(
             };
             set_my_response(&mut target.attendees, me, req.response);
             calendar.import_event(&target).await?;
+            let (reply_sent_to, reply_error) = replier.send_after_change(req.response).await;
             Ok(InviteResponseOutcome::Imported {
-                reply_sent_to: replier.send(req.response).await?,
+                reply_sent_to,
+                reply_error,
             })
         }
     }
@@ -248,6 +280,9 @@ async fn add(
 ) -> Result<InviteResponseOutcome> {
     let parsed = parse_vcalendar(ics);
     let (_, uid) = first_event(&parsed)?;
+    if !is_publish_invite(&parsed) {
+        return Err(AppError::InvalidInput("this invitation expects an answer".into()));
+    }
     Ok(match plan_target(&parsed, uid, kind, default_tz)? {
         Err(outcome) => outcome,
         Ok(target) => {
@@ -255,7 +290,10 @@ async fn add(
                 InviteResponseOutcome::AlreadyInCalendar
             } else {
                 calendar.import_event(&target).await?;
-                InviteResponseOutcome::Imported { reply_sent_to: None }
+                InviteResponseOutcome::Imported {
+                    reply_sent_to: None,
+                    reply_error: None,
+                }
             }
         }
     })
@@ -338,6 +376,48 @@ mod tests {
         respond_to_invite(calendar, mail, &request(&account, ics, received_at, response)).await
     }
 
+    /// A calendar whose delete always fails; everything else is the fake.
+    struct FailingDelete(FakeCalendarProvider);
+
+    #[async_trait::async_trait]
+    impl CalendarProvider for FailingDelete {
+        async fn list_calendars(&self) -> Result<Vec<crate::sync::calendar_provider::ProviderCalendar>> {
+            self.0.list_calendars().await
+        }
+        async fn list_events(
+            &self,
+            calendar_id: &str,
+            window_start: i64,
+            window_end: i64,
+        ) -> Result<Vec<crate::sync::calendar_provider::ProviderCalendarEvent>> {
+            self.0.list_events(calendar_id, window_start, window_end).await
+        }
+        async fn create_event(
+            &self,
+            event: &crate::sync::calendar_provider::NewCalendarEvent,
+        ) -> Result<crate::sync::calendar_provider::ProviderCalendarEvent> {
+            self.0.create_event(event).await
+        }
+        async fn delete_event(&self, _: &str, _: &str, _: bool, _: &str) -> Result<()> {
+            Err(AppError::SyncError("delete failed".into()))
+        }
+        async fn truncate_recurring_event(&self, c: &str, m: &str, s: i64, n: bool) -> Result<()> {
+            self.0.truncate_recurring_event(c, m, s, n).await
+        }
+        async fn rsvp_by_ical_uid(&self, u: &str, r: RsvpResponse, e: &str) -> Result<()> {
+            self.0.rsvp_by_ical_uid(u, r, e).await
+        }
+        async fn find_event_by_uid(&self, u: &str) -> Result<Option<FoundEvent>> {
+            self.0.find_event_by_uid(u).await
+        }
+        async fn import_event(&self, e: &ImportableEvent) -> Result<String> {
+            self.0.import_event(e).await
+        }
+        async fn respond_to_event(&self, c: &str, p: &str, r: RsvpResponse, e: &str) -> Result<()> {
+            self.0.respond_to_event(c, p, r, e).await
+        }
+    }
+
     fn found(ours: bool) -> FoundEvent {
         FoundEvent {
             provider_event_id: "ev-1".into(),
@@ -380,7 +460,8 @@ mod tests {
         assert_eq!(
             out,
             InviteResponseOutcome::Imported {
-                reply_sent_to: Some("lead@example.com".into())
+                reply_sent_to: Some("lead@example.com".into()),
+                reply_error: None
             }
         );
         assert_eq!(calendar.imported.lock().unwrap().len(), 1);
@@ -510,7 +591,8 @@ mod tests {
         assert_eq!(
             out,
             InviteResponseOutcome::Removed {
-                reply_sent_to: Some("lead@example.com".into())
+                reply_sent_to: Some("lead@example.com".into()),
+                reply_error: None
             }
         );
         let deleted = calendar.deleted.lock().unwrap();
@@ -548,20 +630,125 @@ mod tests {
         let out = run(&calendar, &mail, &doc, OLD, RsvpResponse::Accepted)
             .await
             .expect("respond");
-        assert_eq!(out, InviteResponseOutcome::Imported { reply_sent_to: None });
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Imported {
+                reply_sent_to: None,
+                reply_error: None
+            }
+        );
         assert!(mail.raw_sent().is_empty());
     }
 
     #[tokio::test]
-    async fn no_reply_without_an_organizer() {
+    async fn responding_to_a_publish_invite_is_refused() {
+        let with_method = ics(Some("lead@example.com"), "").replace("METHOD:REQUEST", "METHOD:PUBLISH");
+        for doc in [ics(None, ""), with_method] {
+            let calendar = FakeCalendarProvider::with_events(vec![]);
+            let mail = mail();
+            let err = run(&calendar, &mail, &doc, OLD, RsvpResponse::Accepted)
+                .await
+                .expect_err("refused");
+            assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
+            assert!(calendar.imported.lock().unwrap().is_empty());
+            assert!(mail.raw_sent().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn adding_an_invite_that_expects_an_answer_is_refused() {
+        let calendar = FakeCalendarProvider::with_events(vec![]);
+        let err = add_invite_to_calendar(&calendar, CalendarKind::Google, &lead_ics(), "Europe/Madrid")
+            .await
+            .expect_err("refused");
+        assert!(matches!(err, AppError::InvalidInput(_)), "{err}");
+        assert!(calendar.imported.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_invalid_organizer_still_imports_but_sends_nothing() {
         let calendar = FakeCalendarProvider::with_events(vec![]);
         let mail = mail();
-        let doc = ics(None, "");
+        let doc = ics(Some("lead@intranet"), "");
         let out = run(&calendar, &mail, &doc, OLD, RsvpResponse::Accepted)
             .await
             .expect("respond");
-        assert_eq!(out, InviteResponseOutcome::Imported { reply_sent_to: None });
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Imported {
+                reply_sent_to: None,
+                reply_error: None
+            }
+        );
+        assert_eq!(calendar.imported.lock().unwrap().len(), 1);
         assert!(mail.raw_sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_reply_after_import_keeps_the_imported_outcome() {
+        let calendar = FakeCalendarProvider::with_events(vec![]);
+        let mail = mail();
+        mail.fail_sends(Some("smtp down"));
+        let out = run(&calendar, &mail, &lead_ics(), OLD, RsvpResponse::Accepted)
+            .await
+            .expect("not an error");
+        let InviteResponseOutcome::Imported {
+            reply_sent_to,
+            reply_error,
+        } = out
+        else {
+            panic!("expected Imported, got {out:?}");
+        };
+        assert_eq!(reply_sent_to, None);
+        assert!(reply_error.is_some_and(|m| m.contains("smtp down")));
+        assert_eq!(calendar.imported.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_reply_without_a_calendar_change_is_an_error() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        let mail = mail();
+        mail.fail_sends(Some("smtp down"));
+        run(&calendar, &mail, &lead_ics(), OLD, RsvpResponse::Accepted)
+            .await
+            .expect_err("responded needs the reply");
+    }
+
+    #[tokio::test]
+    async fn declining_deletes_our_copy_before_replying() {
+        let mut inner = FakeCalendarProvider::with_events(vec![]);
+        inner.found_by_uid.insert(UID.into(), found(true));
+        let calendar = FailingDelete(inner);
+        let mail = mail();
+        let account = account();
+        let lead = lead_ics();
+        let req = request(&account, &lead, OLD, RsvpResponse::Declined);
+        respond_to_invite(&calendar, &mail, &req)
+            .await
+            .expect_err("delete fails");
+        assert!(mail.raw_sent().is_empty(), "nothing may be sent when the delete failed");
+    }
+
+    #[tokio::test]
+    async fn a_failed_decline_reply_after_the_delete_keeps_the_removed_outcome() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), found(true));
+        let mail = mail();
+        mail.fail_sends(Some("smtp down"));
+        let out = run(&calendar, &mail, &lead_ics(), OLD, RsvpResponse::Declined)
+            .await
+            .expect("not an error");
+        let InviteResponseOutcome::Removed {
+            reply_sent_to,
+            reply_error,
+        } = out
+        else {
+            panic!("expected Removed, got {out:?}");
+        };
+        assert_eq!(reply_sent_to, None);
+        assert!(reply_error.is_some_and(|m| m.contains("smtp down")));
+        assert_eq!(calendar.deleted.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -582,13 +769,17 @@ mod tests {
     async fn outcomes_are_logged_without_event_details() {
         let _seam = crate::services::events::seam_test_lock();
         let logs = crate::services::logger::install_for_testing();
+        let doc = lead_ics()
+            .replace(UID, "zebra-uid")
+            .replace("Planning", "Zebra Quarterly")
+            .replace("Lead@Example.com", "lead@zebra-org.test");
         let calendar = FakeCalendarProvider::with_events(vec![]);
-        run(&calendar, &mail(), &lead_ics(), OLD, RsvpResponse::Accepted)
+        run(&calendar, &mail(), &doc, OLD, RsvpResponse::Accepted)
             .await
             .expect("respond");
         let mut failing = FakeCalendarProvider::with_events(vec![]);
-        failing.find_errors.insert(UID.into(), "boom".into());
-        run(&failing, &mail(), &lead_ics(), OLD, RsvpResponse::Accepted)
+        failing.find_errors.insert("zebra-uid".into(), "boom".into());
+        run(&failing, &mail(), &doc, OLD, RsvpResponse::Accepted)
             .await
             .expect_err("lookup fails");
         // Other tests in this module log through the same global seam.
@@ -596,7 +787,7 @@ mod tests {
         let has = |level: &str| events.iter().any(|e| e.level == level && e.source == "sync");
         assert!(has("success") && has("error"), "{events:?}");
         for e in &events {
-            for secret in ["Planning", "example", UID] {
+            for secret in ["Zebra Quarterly", "zebra-org", "zebra-uid"] {
                 assert!(!e.message.contains(secret), "{}", e.message);
             }
         }
@@ -609,7 +800,13 @@ mod tests {
         let first = add_invite_to_calendar(&calendar, CalendarKind::Google, &doc, "Europe/Madrid")
             .await
             .expect("add");
-        assert_eq!(first, InviteResponseOutcome::Imported { reply_sent_to: None });
+        assert_eq!(
+            first,
+            InviteResponseOutcome::Imported {
+                reply_sent_to: None,
+                reply_error: None
+            }
+        );
         assert_eq!(calendar.imported.lock().unwrap().len(), 1);
         let second = add_invite_to_calendar(&calendar, CalendarKind::Google, &doc, "Europe/Madrid")
             .await
@@ -622,11 +819,12 @@ mod tests {
     fn outcomes_serialize_with_a_kind_tag() {
         let json = serde_json::to_value(InviteResponseOutcome::Imported {
             reply_sent_to: Some("lead@example.com".into()),
+            reply_error: Some("smtp down".into()),
         })
         .expect("json");
         assert_eq!(
             json,
-            serde_json::json!({"kind": "imported", "replySentTo": "lead@example.com"})
+            serde_json::json!({"kind": "imported", "replySentTo": "lead@example.com", "replyError": "smtp down"})
         );
         let json = serde_json::to_value(InviteResponseOutcome::AlreadyInCalendar).expect("json");
         assert_eq!(json, serde_json::json!({"kind": "alreadyInCalendar"}));
