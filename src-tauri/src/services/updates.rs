@@ -1,6 +1,7 @@
 //! App release update check.
 //!
-//! Periodically fetches the latest GitHub release and, when it is newer than
+//! Periodically fetches the release manifest from the project site and, when
+//! the release it names is newer than
 //! the running build, emits an `app-update-available` event the frontend
 //! renders as a toast with a Download action. Split per the repo convention:
 //! pure planners (`parse_version`, `should_check`, `plan_notification`), a
@@ -18,9 +19,11 @@ use tauri::{AppHandle, Emitter};
 use crate::db::Database;
 use crate::models::error::AppError;
 
-/// GitHub's `/releases/latest` endpoint excludes drafts and prereleases
-/// server-side; `plan_notification` re-checks the flags anyway.
-pub const GITHUB_LATEST_RELEASE_URL: &str = "https://api.github.com/repos/emailops/emailops/releases/latest";
+/// Static release manifest on the project site, rewritten on every published
+/// release. One URL for every install, with no version, platform or id in it:
+/// the site's daily request count is the only adoption signal it yields
+/// (docs/DECISIONS.md, 2026-11-20).
+pub const UPDATE_MANIFEST_URL: &str = "https://getemailops.com/update/latest.json";
 
 /// Unix seconds of the last *successful* fetch. Failed fetches leave it
 /// untouched so they retry on the next tick.
@@ -30,13 +33,17 @@ pub const PREF_UPDATE_LAST_CHECK_AT: &str = "app_update_last_check_at";
 /// Written at emit time so the same release never re-notifies.
 pub const PREF_UPDATE_NOTIFIED_VERSION: &str = "app_update_notified_version";
 
-/// Normalized version of the latest stable release seen on GitHub, written on
+/// Normalized version of the latest stable release seen in the manifest, written on
 /// every successful fetch (newer or not). Backs the persistent sidebar link,
 /// which — unlike the once-per-version toast — must survive app restarts.
 pub const PREF_UPDATE_LATEST_VERSION: &str = "app_update_latest_version";
 
 /// Release page URL (`html_url`) paired with [`PREF_UPDATE_LATEST_VERSION`].
 pub const PREF_UPDATE_LATEST_URL: &str = "app_update_latest_url";
+
+/// `"false"` turns the check off (Settings → Privacy & Security); unset or any
+/// other value leaves it on. While off, the app never requests the manifest.
+pub const PREF_UPDATE_CHECK_ENABLED: &str = "app_update_check_enabled";
 
 /// Minimum spacing between successful checks, enforced across restarts via
 /// [`PREF_UPDATE_LAST_CHECK_AT`].
@@ -50,7 +57,8 @@ const TICK_INTERVAL: Duration = Duration::from_secs(3_600);
 /// Stagger the first check past startup work, mirroring `vacuum_loop`.
 const STARTUP_DELAY: Duration = Duration::from_secs(60);
 
-/// The subset of a GitHub release object this feature reads.
+/// The release manifest. It keeps the field names of a GitHub release object,
+/// which the check read before the manifest moved to the project site.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ReleaseInfo {
     pub tag_name: String,
@@ -177,13 +185,27 @@ pub fn available_update(db: &Database, current_version: &str) -> Option<UpdateAv
 pub(crate) type FetchLatestFn =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ReleaseInfo, String>> + Send>> + Send + Sync>;
 
-/// One check attempt: gate on [`should_check`], fetch, persist prefs, and
+/// One check attempt: gate on [`PREF_UPDATE_CHECK_ENABLED`] and [`should_check`], fetch, persist prefs, and
 /// return the event the caller should emit (`None` = nothing to do).
 pub(crate) async fn update_check_tick(
     db: &Database,
     current_version: &str,
     fetch: &FetchLatestFn,
 ) -> Option<UpdateAvailableEvent> {
+    match db.get_preference(PREF_UPDATE_CHECK_ENABLED) {
+        Ok(Some(value)) if value == "false" => return None,
+        Ok(_) => {}
+        // Unreadable setting: do not contact the site on a guess.
+        Err(e) => {
+            crate::services::logger::log(
+                "error",
+                "system",
+                format!("update check: failed to read the enabled pref: {e}"),
+            );
+            return None;
+        }
+    }
+
     let now = crate::services::clock::now_secs();
     let last_check_at = match db.get_preference(PREF_UPDATE_LAST_CHECK_AT) {
         Ok(value) => value.and_then(|s| s.parse::<i64>().ok()),
@@ -268,23 +290,22 @@ pub(crate) async fn update_check_tick(
 // ── Executors (loop + HTTP) ───────────────────────────────────────────────────
 
 /// Build the reqwest-backed fetcher once at spawn time.
-pub fn make_github_fetch() -> Result<FetchLatestFn, AppError> {
+pub fn make_manifest_fetch() -> Result<FetchLatestFn, AppError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        // GitHub rejects UA-less requests with 403.
-        .user_agent(concat!("EmailOps/", env!("CARGO_PKG_VERSION")))
+        // A constant, with no app version: the request says nothing about this install.
+        .user_agent("EmailOps")
         .build()?;
     Ok(Arc::new(move || {
         let client = client.clone();
         Box::pin(async move {
             let response = client
-                .get(GITHUB_LATEST_RELEASE_URL)
-                .header("Accept", "application/vnd.github+json")
+                .get(UPDATE_MANIFEST_URL)
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
             if !response.status().is_success() {
-                return Err(format!("GitHub API returned {}", response.status()));
+                return Err(format!("update manifest returned {}", response.status()));
             }
             response.json::<ReleaseInfo>().await.map_err(|e| e.to_string())
         })
@@ -515,6 +536,31 @@ mod tests {
     }
 
     #[test]
+    fn release_info_deserializes_from_site_manifest() {
+        // Shape of getemailops.com/update/latest.json: the two fields the
+        // check reads, nothing else.
+        let json = r#"{
+            "tag_name": "v0.7.0",
+            "html_url": "https://github.com/emailops/emailops/releases/tag/v0.7.0"
+        }"#;
+        let info: ReleaseInfo = serde_json::from_str(json).expect("must deserialize");
+        assert_eq!(info.tag_name, "v0.7.0");
+        assert_eq!(
+            info.html_url,
+            "https://github.com/emailops/emailops/releases/tag/v0.7.0"
+        );
+        assert!(!info.prerelease);
+        assert!(!info.draft);
+    }
+
+    #[test]
+    fn update_manifest_is_one_fixed_https_url_on_the_project_site() {
+        // Privacy contract (docs/DECISIONS.md, 2026-11-20): the same URL for
+        // every install, with no version, platform or id in it.
+        assert_eq!(UPDATE_MANIFEST_URL, "https://getemailops.com/update/latest.json");
+    }
+
+    #[test]
     fn release_info_honors_explicit_prerelease_and_draft_flags() {
         let json = r#"{ "tag_name": "v0.7.0-rc.1", "html_url": "https://x", "prerelease": true, "draft": true }"#;
         let info: ReleaseInfo = serde_json::from_str(json).expect("must deserialize");
@@ -580,6 +626,46 @@ mod tests {
     }
 
     // ── update_check_tick ─────────────────────────────────────────────────────
+
+    #[test]
+    fn tick_never_fetches_while_the_check_is_turned_off() {
+        let _g = lock();
+        let _clock = clock::install_for_testing(1_000_000);
+        let _logger = logger::install_for_testing();
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(PREF_UPDATE_CHECK_ENABLED, "false").unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let fetch = fake_fetch(calls.clone(), Ok(release("v0.7.0")));
+
+        let event = run_tick(&db, "0.6.2", &fetch);
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "a disabled check must not contact the site"
+        );
+        assert!(event.is_none());
+        restore_seams();
+    }
+
+    #[test]
+    fn tick_fetches_again_once_the_check_is_turned_back_on() {
+        let _g = lock();
+        let _clock = clock::install_for_testing(1_000_000);
+        let _logger = logger::install_for_testing();
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(PREF_UPDATE_CHECK_ENABLED, "false").unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let fetch = fake_fetch(calls.clone(), Ok(release("v0.7.0")));
+        run_tick(&db, "0.6.2", &fetch);
+
+        db.set_preference(PREF_UPDATE_CHECK_ENABLED, "true").unwrap();
+        let event = run_tick(&db, "0.6.2", &fetch);
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(event.is_some());
+        restore_seams();
+    }
 
     #[test]
     fn tick_fetches_persists_prefs_and_returns_event_once() {
