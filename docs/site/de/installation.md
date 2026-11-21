@@ -229,6 +229,8 @@ sudo pacman -S gnome-keyring
 EmailOps prüft höchstens einmal am Tag auf getemailops.com, ob es eine neue Version gibt. Wenn ja, meldet
 ein Hinweis **EmailOps X.Y.Z ist verfügbar** mit der Schaltfläche **Herunterladen**. Schließen
 blendet ihn für 24 Stunden aus; er kommt wieder, bis Sie das Update installieren.
+Um die Prüfung zu beenden, schalten Sie **Nach neuen Versionen suchen** unter
+**Einstellungen → Datenschutz & Sicherheit** aus.
 
 <!-- claim:inst-updating-2 -->
 Beim ersten Start nach einem Update zeigt ein Dialog die Neuerungen dieser Version in der

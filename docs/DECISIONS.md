@@ -4918,9 +4918,11 @@ carrying `tag_name` and `html_url`; the request has a constant user agent and no
 identifier, app version or platform. The site's requests per day for that path are the
 count of installs in use. Every release rewrites the file in the website repo after the
 GitHub release is published (release skill, Phase 9 step 7), and the user docs and the
-site's privacy policy say what the request is. This supersedes the endpoint in the
-2026-07-24 update-notification entry and adds one app-side signal to the 2026-08-26
-"no telemetry" entry; everything else in both stands.
+site's privacy policy say what the request is. **Settings → Privacy & Security → Check for
+new versions** (pref `app_update_check_enabled`, on by default) turns the check off, and
+the app then never requests the file. This supersedes the endpoint and the "no Settings
+toggle" choice in the 2026-07-24 update-notification entry and adds one app-side signal
+to the 2026-08-26 "no telemetry" entry; everything else in both stands.
 **Context:** Downloads were flat and nothing told installs in use apart from installers
 fetched: GitHub sees the update checks but reports no count. The check already existed,
 so counting it adds no new request and no new data. It only changes which host sees the

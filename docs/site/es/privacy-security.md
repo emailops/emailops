@@ -139,6 +139,8 @@ para todo el mundo, y la petición no lleva nada sobre ti, tu correo ni tu copia
 identificador, ni versión de la app, ni sistema operativo. El alojamiento de la web ve la
 petición, como cualquier servidor web, y el número de peticiones por día es el único dato que
 tiene el proyecto sobre cuántas copias están en uso.
+**Comprobar si hay versiones nuevas**, en **Ajustes → Privacidad y seguridad**, desactiva la
+comprobación: la app deja de contactar con getemailops.com y ya no te avisa de versiones nuevas.
 (El código fuente contiene una función opcional de trazas con OpenTelemetry para
 desarrollo local; queda fuera de todas las compilaciones de publicación.)
 

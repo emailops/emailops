@@ -41,6 +41,10 @@ pub const PREF_UPDATE_LATEST_VERSION: &str = "app_update_latest_version";
 /// Release page URL (`html_url`) paired with [`PREF_UPDATE_LATEST_VERSION`].
 pub const PREF_UPDATE_LATEST_URL: &str = "app_update_latest_url";
 
+/// `"false"` turns the check off (Settings → Privacy & Security); unset or any
+/// other value leaves it on. While off, the app never requests the manifest.
+pub const PREF_UPDATE_CHECK_ENABLED: &str = "app_update_check_enabled";
+
 /// Minimum spacing between successful checks, enforced across restarts via
 /// [`PREF_UPDATE_LAST_CHECK_AT`].
 const CHECK_MIN_INTERVAL_SECS: i64 = 86_400;
@@ -181,13 +185,27 @@ pub fn available_update(db: &Database, current_version: &str) -> Option<UpdateAv
 pub(crate) type FetchLatestFn =
     Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<ReleaseInfo, String>> + Send>> + Send + Sync>;
 
-/// One check attempt: gate on [`should_check`], fetch, persist prefs, and
+/// One check attempt: gate on [`PREF_UPDATE_CHECK_ENABLED`] and [`should_check`], fetch, persist prefs, and
 /// return the event the caller should emit (`None` = nothing to do).
 pub(crate) async fn update_check_tick(
     db: &Database,
     current_version: &str,
     fetch: &FetchLatestFn,
 ) -> Option<UpdateAvailableEvent> {
+    match db.get_preference(PREF_UPDATE_CHECK_ENABLED) {
+        Ok(Some(value)) if value == "false" => return None,
+        Ok(_) => {}
+        // Unreadable setting: do not contact the site on a guess.
+        Err(e) => {
+            crate::services::logger::log(
+                "error",
+                "system",
+                format!("update check: failed to read the enabled pref: {e}"),
+            );
+            return None;
+        }
+    }
+
     let now = crate::services::clock::now_secs();
     let last_check_at = match db.get_preference(PREF_UPDATE_LAST_CHECK_AT) {
         Ok(value) => value.and_then(|s| s.parse::<i64>().ok()),
@@ -608,6 +626,46 @@ mod tests {
     }
 
     // ── update_check_tick ─────────────────────────────────────────────────────
+
+    #[test]
+    fn tick_never_fetches_while_the_check_is_turned_off() {
+        let _g = lock();
+        let _clock = clock::install_for_testing(1_000_000);
+        let _logger = logger::install_for_testing();
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(PREF_UPDATE_CHECK_ENABLED, "false").unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let fetch = fake_fetch(calls.clone(), Ok(release("v0.7.0")));
+
+        let event = run_tick(&db, "0.6.2", &fetch);
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "a disabled check must not contact the site"
+        );
+        assert!(event.is_none());
+        restore_seams();
+    }
+
+    #[test]
+    fn tick_fetches_again_once_the_check_is_turned_back_on() {
+        let _g = lock();
+        let _clock = clock::install_for_testing(1_000_000);
+        let _logger = logger::install_for_testing();
+        let db = Database::new_for_testing().unwrap();
+        db.set_preference(PREF_UPDATE_CHECK_ENABLED, "false").unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let fetch = fake_fetch(calls.clone(), Ok(release("v0.7.0")));
+        run_tick(&db, "0.6.2", &fetch);
+
+        db.set_preference(PREF_UPDATE_CHECK_ENABLED, "true").unwrap();
+        let event = run_tick(&db, "0.6.2", &fetch);
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(event.is_some());
+        restore_seams();
+    }
 
     #[test]
     fn tick_fetches_persists_prefs_and_returns_event_once() {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A switch to turn the update check off.** **Settings → Privacy & Security →
+  Check for new versions** is on by default. Turned off, the app never contacts
+  getemailops.com and no longer tells you about new versions.
+
 ### Changed
 
 - **The daily update check asks getemailops.com instead of GitHub.** The app

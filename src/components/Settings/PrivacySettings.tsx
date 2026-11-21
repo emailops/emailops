@@ -10,6 +10,8 @@ import { useOverlay } from '@/stores/overlayStore';
 import { TrustedSendersSection } from './TrustedSendersSection';
 
 const MIN_MAIN_PASSWORD_CHARS = 6;
+/** Mirrors `PREF_UPDATE_CHECK_ENABLED` in `services/updates.rs`: on unless "false". */
+const UPDATE_CHECK_PREF = 'app_update_check_enabled';
 
 // ── Small reusable toggle row ─────────────────────────────────────────────────
 
@@ -201,6 +203,7 @@ export function PrivacySettings() {
   const { addLog } = useLogStore();
   const [hasPassword, setHasPassword] = useState(false);
   const [allowRemoteContent, setAllowRemoteContent] = useState(false);
+  const [updateCheck, setUpdateCheck] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -208,10 +211,11 @@ export function PrivacySettings() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load on mount only
   useEffect(() => {
-    Promise.all([api.hasMainPassword(), api.getPref('privacy.allow_remote_content')])
-      .then(([hasPw, remoteVal]) => {
+    Promise.all([api.hasMainPassword(), api.getPref('privacy.allow_remote_content'), api.getPref(UPDATE_CHECK_PREF)])
+      .then(([hasPw, remoteVal, updateVal]) => {
         setHasPassword(hasPw);
         setAllowRemoteContent(remoteVal === 'true');
+        setUpdateCheck(updateVal !== 'false');
       })
       .catch((e) => {
         // Without the stored values the toggles would show guesses, so the
@@ -233,6 +237,23 @@ export function PrivacySettings() {
         setAllowRemoteContent(!value);
         setSaveError(errorText(e));
         addLog('error', 'system', `Failed to save remote content setting: ${errorText(e)}`);
+      }
+    },
+    [addLog],
+  );
+
+  const handleToggleUpdateCheck = useCallback(
+    async (value: boolean) => {
+      setSaveError(null);
+      setUpdateCheck(value);
+      try {
+        await api.setPref(UPDATE_CHECK_PREF, value ? 'true' : 'false');
+        addLog('success', 'system', `Update check turned ${value ? 'on' : 'off'}`);
+      } catch (e) {
+        // Not saved: show the setting that is actually in effect.
+        setUpdateCheck(!value);
+        setSaveError(errorText(e));
+        addLog('error', 'system', `Failed to save the update check setting: ${errorText(e)}`);
       }
     },
     [addLog],
@@ -340,6 +361,20 @@ export function PrivacySettings() {
             </h4>
             <p className="text-xs text-gray-500 mb-2">{t('settings:privacy.trustedSenders.help')}</p>
             <TrustedSendersSection />
+          </div>
+
+          <div className="mt-3">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              {t('settings:privacy.updates')}
+            </h4>
+            <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+              <ToggleRow
+                label={t('settings:privacy.updateCheckToggle')}
+                description={t('settings:privacy.updateCheckToggleDesc')}
+                checked={updateCheck}
+                onChange={handleToggleUpdateCheck}
+              />
+            </div>
           </div>
 
           <div className="mt-3">

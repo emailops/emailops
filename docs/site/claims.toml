@@ -1522,6 +1522,7 @@ checks = [
   { file = 'src-tauri/Cargo.toml', lacks = 'sentry', covers = ["sends no crash reports"] },
   { file = 'package.json', lacks = 'sentry', covers = ["sends no crash reports"] },
   { manual = 'The update request is pinned by services::updates::tests::update_manifest_is_one_fixed_https_url_on_the_project_site (behind the desktop feature, which the docs check builds without); that nothing else calls the project is a whole-program claim, confirm with the network audit the page describes.' },
+  { manual = 'The switch is covered by src/components/Settings/PrivacySettings.updateCheck.test.tsx (vitest) and services::updates::tests::tick_never_fetches_while_the_check_is_turned_off (behind the desktop feature).', covers = ["Check for new versions in Settings → Privacy & Security turns the check off: the app then never contacts getemailops.com and no longer tells you about new versions."] },
 ]
 
 [priv-local-ai-1]

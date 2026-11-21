@@ -136,6 +136,8 @@ names the latest version. The file and its address are the same for everyone, an
 carries nothing about you, your mail or your copy of the app: no identifier, no app version,
 no operating system. The website's host sees the request, as any web server does, and the
 number of requests per day is the only figure the project has on how many copies are in use.
+**Check for new versions** in **Settings → Privacy & Security** turns the check off: the app
+then never contacts getemailops.com and no longer tells you about new versions.
 (The source tree contains an optional OpenTelemetry tracing feature for local development; it is
 compiled out of every release build.)
 

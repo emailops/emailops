@@ -142,6 +142,8 @@ sind für alle gleich, und die Anfrage enthält nichts über Sie, Ihre E-Mails o
 der App: keine Kennung, keine App-Version, kein Betriebssystem. Der Hoster der Website sieht
 die Anfrage wie jeder Webserver, und die Zahl der Anfragen pro Tag ist die einzige Angabe, die
 das Projekt darüber hat, wie viele Kopien in Gebrauch sind.
+**Nach neuen Versionen suchen** unter **Einstellungen → Datenschutz & Sicherheit** schaltet die
+Prüfung ab: Die App kontaktiert getemailops.com dann nie und meldet keine neuen Versionen mehr.
 (Der Quellbaum enthält eine optionale OpenTelemetry-Tracing-Funktion für die
 lokale Entwicklung; sie wird aus jedem Release-Build herauskompiliert.)
 

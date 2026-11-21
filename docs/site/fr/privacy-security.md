@@ -143,6 +143,9 @@ vous, vos e-mails ou votre copie de l'application : ni identifiant, ni version d
 l'application, ni système d'exploitation. L'hébergeur du site voit la requête, comme tout
 serveur web, et le nombre de requêtes par jour est le seul chiffre dont dispose le projet sur
 le nombre de copies en service.
+**Vérifier les nouvelles versions**, dans **Paramètres → Confidentialité et sécurité**, désactive
+la vérification : l'application ne contacte alors plus getemailops.com et ne vous signale plus
+les nouvelles versions.
 (Le dépôt contient une fonctionnalité optionnelle de
 traçage OpenTelemetry pour le développement local ; elle est exclue de toutes les versions
 publiées.)
