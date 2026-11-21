@@ -226,7 +226,7 @@ sudo pacman -S gnome-keyring
 ## Aktualisieren {#updating}
 
 <!-- claim:inst-updating-1 -->
-EmailOps prüft höchstens einmal am Tag auf GitHub, ob es eine neue Version gibt. Wenn ja, meldet
+EmailOps prüft höchstens einmal am Tag auf getemailops.com, ob es eine neue Version gibt. Wenn ja, meldet
 ein Hinweis **EmailOps X.Y.Z ist verfügbar** mit der Schaltfläche **Herunterladen**. Schließen
 blendet ihn für 24 Stunden aus; er kommt wieder, bis Sie das Update installieren.
 

@@ -1,6 +1,7 @@
 //! App release update check.
 //!
-//! Periodically fetches the latest GitHub release and, when it is newer than
+//! Periodically fetches the release manifest from the project site and, when
+//! the release it names is newer than
 //! the running build, emits an `app-update-available` event the frontend
 //! renders as a toast with a Download action. Split per the repo convention:
 //! pure planners (`parse_version`, `should_check`, `plan_notification`), a
@@ -18,9 +19,11 @@ use tauri::{AppHandle, Emitter};
 use crate::db::Database;
 use crate::models::error::AppError;
 
-/// GitHub's `/releases/latest` endpoint excludes drafts and prereleases
-/// server-side; `plan_notification` re-checks the flags anyway.
-pub const GITHUB_LATEST_RELEASE_URL: &str = "https://api.github.com/repos/emailops/emailops/releases/latest";
+/// Static release manifest on the project site, rewritten on every published
+/// release. One URL for every install, with no version, platform or id in it:
+/// the site's daily request count is the only adoption signal it yields
+/// (docs/DECISIONS.md, 2026-11-20).
+pub const UPDATE_MANIFEST_URL: &str = "https://getemailops.com/update/latest.json";
 
 /// Unix seconds of the last *successful* fetch. Failed fetches leave it
 /// untouched so they retry on the next tick.
@@ -30,7 +33,7 @@ pub const PREF_UPDATE_LAST_CHECK_AT: &str = "app_update_last_check_at";
 /// Written at emit time so the same release never re-notifies.
 pub const PREF_UPDATE_NOTIFIED_VERSION: &str = "app_update_notified_version";
 
-/// Normalized version of the latest stable release seen on GitHub, written on
+/// Normalized version of the latest stable release seen in the manifest, written on
 /// every successful fetch (newer or not). Backs the persistent sidebar link,
 /// which — unlike the once-per-version toast — must survive app restarts.
 pub const PREF_UPDATE_LATEST_VERSION: &str = "app_update_latest_version";
@@ -50,7 +53,8 @@ const TICK_INTERVAL: Duration = Duration::from_secs(3_600);
 /// Stagger the first check past startup work, mirroring `vacuum_loop`.
 const STARTUP_DELAY: Duration = Duration::from_secs(60);
 
-/// The subset of a GitHub release object this feature reads.
+/// The release manifest. It keeps the field names of a GitHub release object,
+/// which the check read before the manifest moved to the project site.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ReleaseInfo {
     pub tag_name: String,
@@ -268,23 +272,22 @@ pub(crate) async fn update_check_tick(
 // ── Executors (loop + HTTP) ───────────────────────────────────────────────────
 
 /// Build the reqwest-backed fetcher once at spawn time.
-pub fn make_github_fetch() -> Result<FetchLatestFn, AppError> {
+pub fn make_manifest_fetch() -> Result<FetchLatestFn, AppError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
-        // GitHub rejects UA-less requests with 403.
-        .user_agent(concat!("EmailOps/", env!("CARGO_PKG_VERSION")))
+        // A constant, with no app version: the request says nothing about this install.
+        .user_agent("EmailOps")
         .build()?;
     Ok(Arc::new(move || {
         let client = client.clone();
         Box::pin(async move {
             let response = client
-                .get(GITHUB_LATEST_RELEASE_URL)
-                .header("Accept", "application/vnd.github+json")
+                .get(UPDATE_MANIFEST_URL)
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
             if !response.status().is_success() {
-                return Err(format!("GitHub API returned {}", response.status()));
+                return Err(format!("update manifest returned {}", response.status()));
             }
             response.json::<ReleaseInfo>().await.map_err(|e| e.to_string())
         })
@@ -512,6 +515,31 @@ mod tests {
         );
         assert!(!info.prerelease);
         assert!(!info.draft);
+    }
+
+    #[test]
+    fn release_info_deserializes_from_site_manifest() {
+        // Shape of getemailops.com/update/latest.json: the two fields the
+        // check reads, nothing else.
+        let json = r#"{
+            "tag_name": "v0.7.0",
+            "html_url": "https://github.com/emailops/emailops/releases/tag/v0.7.0"
+        }"#;
+        let info: ReleaseInfo = serde_json::from_str(json).expect("must deserialize");
+        assert_eq!(info.tag_name, "v0.7.0");
+        assert_eq!(
+            info.html_url,
+            "https://github.com/emailops/emailops/releases/tag/v0.7.0"
+        );
+        assert!(!info.prerelease);
+        assert!(!info.draft);
+    }
+
+    #[test]
+    fn update_manifest_is_one_fixed_https_url_on_the_project_site() {
+        // Privacy contract (docs/DECISIONS.md, 2026-11-20): the same URL for
+        // every install, with no version, platform or id in it.
+        assert_eq!(UPDATE_MANIFEST_URL, "https://getemailops.com/update/latest.json");
     }
 
     #[test]

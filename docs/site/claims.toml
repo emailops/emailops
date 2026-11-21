@@ -1521,7 +1521,7 @@ checks = [
   { file = 'src-tauri/Cargo.toml', has = 'opentelemetry      = { version = "0.33", optional = true }', covers = ["The source tree contains an optional OpenTelemetry tracing feature for local development; it is compiled out of every release build."] },
   { file = 'src-tauri/Cargo.toml', lacks = 'sentry', covers = ["sends no crash reports"] },
   { file = 'package.json', lacks = 'sentry', covers = ["sends no crash reports"] },
-  { manual = '"No phone-home of any kind" is a whole-program claim; confirm with the network audit the page describes.' },
+  { manual = 'The update request is pinned by services::updates::tests::update_manifest_is_one_fixed_https_url_on_the_project_site (behind the desktop feature, which the docs check builds without); that nothing else calls the project is a whole-program claim, confirm with the network audit the page describes.' },
 ]
 
 [priv-local-ai-1]

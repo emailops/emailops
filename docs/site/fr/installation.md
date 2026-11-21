@@ -225,7 +225,7 @@ sudo pacman -S gnome-keyring
 ## Mettre à jour {#updating}
 
 <!-- claim:inst-updating-1 -->
-EmailOps vérifie sur GitHub s'il existe une nouvelle version, au plus une fois par jour. Si
+EmailOps vérifie sur getemailops.com s'il existe une nouvelle version, au plus une fois par jour. Si
 c'est le cas, un avis indique **EmailOps X.Y.Z est disponible** avec un bouton **Télécharger**.
 Le fermer le masque pendant 24 heures ; il revient tant que la mise à jour n'est pas installée.
 

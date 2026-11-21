@@ -71,6 +71,7 @@ these hosts, all of which you can name:
 | Your mail provider (Gmail, Microsoft Graph, your IMAP/SMTP server) | Every sync and send | Yes — it is your mailbox |
 | Your calendar provider (Google, Outlook) | Calendar sync, if enabled | Calendar data only |
 | Hugging Face | Only while downloading an AI model you picked | No |
+| getemailops.com | Once a day, to read which version is the latest | No |
 | Your OpenAI-compatible server | Only if you switch the AI provider to it | **Yes — prompts include email content** |
 | OpenRouter | Only if you switch the AI provider to it | **Yes — prompts include email content** |
 
@@ -129,9 +130,13 @@ email footer; nothing in it identifies you or the recipient.
 ## No telemetry
 
 <!-- claim:priv-no-telemetry-1 -->
-The app collects no usage analytics, sends no crash reports, and has no phone-home of any
-kind in released builds. There is no opt-out because there is nothing to opt out of. (The
-source tree contains an optional OpenTelemetry tracing feature for local development; it is
+The app collects no usage analytics and sends no crash reports. The one request it makes to
+the project is the daily update check: it downloads a small file from getemailops.com that
+names the latest version. The file and its address are the same for everyone, and the request
+carries nothing about you, your mail or your copy of the app: no identifier, no app version,
+no operating system. The website's host sees the request, as any web server does, and the
+number of requests per day is the only figure the project has on how many copies are in use.
+(The source tree contains an optional OpenTelemetry tracing feature for local development; it is
 compiled out of every release build.)
 
 ## Local AI by default

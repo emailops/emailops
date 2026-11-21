@@ -511,23 +511,31 @@ invariants: `homebrew/README.md`.
    `git add homebrew/Casks/emailops.rb && git commit -m "chore: update Homebrew cask to vX.Y.Z"`,
    and push `main`.
 
-7. **Rebuild the website docs**, when the developer asks for it. Amplify
-   syncs `docs/site` from the newest `v*` tag on every build, so publishing
-   the tag is not enough: the site needs a new build. With no AWS credentials
-   on this machine, trigger it with an empty commit on the website repo's
-   `main` (`$EMAILOPS_WEB_REPO`; ask the developer if it is unset), which
-   may hold the developer's own uncommitted work. Check nothing is
-   staged first, then:
+7. **Publish the update manifest and rebuild the website docs.** Mandatory on
+   every release, and only after the GitHub release is published: installed
+   copies learn about a new version from
+   `https://getemailops.com/update/latest.json` (`services::updates`), so a
+   release without this step notifies nobody. The same push rebuilds the
+   docs: Amplify syncs `docs/site` from the newest `v*` tag on every build.
+   The website checkout is `$EMAILOPS_WEB_REPO` (ask the developer if it is
+   unset) and may hold the developer's own uncommitted work: check nothing
+   is staged first, stage only the manifest, and confirm before pushing.
 
    ```bash
-   git -C "$EMAILOPS_WEB_REPO" commit --allow-empty -m "chore: rebuild the docs for EmailOps vX.Y.Z"
+   mkdir -p "$EMAILOPS_WEB_REPO/static/update"
+   # Prettier's layout: the website's lint checks this file.
+   printf '{\n  "tag_name": "vX.Y.Z",\n  "html_url": "https://github.com/emailops/emailops/releases/tag/vX.Y.Z"\n}\n' \
+     > "$EMAILOPS_WEB_REPO/static/update/latest.json"
+   git -C "$EMAILOPS_WEB_REPO" add static/update/latest.json
+   git -C "$EMAILOPS_WEB_REPO" commit -m "chore: publish the update manifest for EmailOps vX.Y.Z"
    git -C "$EMAILOPS_WEB_REPO" push origin main
    ```
 
    Before pushing, `bash scripts/sync-docs.sh` and `hugo --gc --minify -d <scratch>`
    in that repo confirm the docs of the new tag build (`content/*/docs` is
-   gitignored). After the deploy, check a page that changed under
-   `https://getemailops.com/en/docs/…` (`/docs/…` redirects there).
+   gitignored). After the deploy, `curl -s https://getemailops.com/update/latest.json`
+   must name the new tag, and a page that changed under
+   `https://getemailops.com/en/docs/…` (`/docs/…` redirects there) must show it.
 
 **Invariant:** never replace a DMG asset on an already-published tag — the
 cask pins its sha256, so swapping the file breaks every install of that

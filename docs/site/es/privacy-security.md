@@ -73,6 +73,7 @@ estos destinos, todos identificables:
 | Tu proveedor de correo (Gmail, Microsoft Graph, tu servidor IMAP/SMTP) | En cada sincronización y envío | Sí — es tu buzón |
 | Tu proveedor de calendario (Google, Outlook) | Sincronización de calendario, si está activada | Solo datos de calendario |
 | Hugging Face | Solo mientras descargas un modelo de IA que hayas elegido | No |
+| getemailops.com | Una vez al día, para leer cuál es la última versión | No |
 | Tu servidor compatible con OpenAI | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 | OpenRouter | Solo si cambias el proveedor de IA a él | **Sí — los prompts incluyen contenido de correo** |
 
@@ -131,9 +132,14 @@ pie de un correo; no contiene nada que os identifique ni a ti ni al destinatario
 ## Sin telemetría
 
 <!-- claim:priv-no-telemetry-1 -->
-La app no recopila analíticas de uso, no envía informes de fallos y no tiene ninguna llamada
-a casa en las versiones publicadas. No hay opción de exclusión porque no hay nada de lo que
-excluirse. (El código fuente contiene una función opcional de trazas con OpenTelemetry para
+La app no recopila analíticas de uso ni envía informes de fallos. La única petición que hace
+al proyecto es la comprobación diaria de actualizaciones: descarga de getemailops.com un
+fichero pequeño que indica cuál es la última versión. El fichero y su dirección son los mismos
+para todo el mundo, y la petición no lleva nada sobre ti, tu correo ni tu copia de la app: ni
+identificador, ni versión de la app, ni sistema operativo. El alojamiento de la web ve la
+petición, como cualquier servidor web, y el número de peticiones por día es el único dato que
+tiene el proyecto sobre cuántas copias están en uso.
+(El código fuente contiene una función opcional de trazas con OpenTelemetry para
 desarrollo local; queda fuera de todas las compilaciones de publicación.)
 
 ## IA local por defecto
