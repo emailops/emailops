@@ -312,6 +312,8 @@ mod tests {
             is_read: false,
             is_sent,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             triage_status: None,
             category: "primary".into(),
             mailbox: mailbox.into(),

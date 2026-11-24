@@ -1396,6 +1396,9 @@ impl ImapClient {
             // caller's `mailbox` value.
             is_sent: false,
             is_starred: fetched.flagged,
+            // `BODY.PEEK[]` is the whole message: its length is RFC822.SIZE.
+            size_bytes: i64::try_from(fetched.raw.len()).ok(),
+            has_attachments: None,
             // The RFC822 fetch already carried every header; before this we
             // read five and dropped the rest. This is also where a server-side
             // SpamAssassin / rspamd verdict lives, which matters most on IMAP
@@ -4031,6 +4034,15 @@ mod tests {
                 .0
                 .is_starred
         );
+    }
+
+    /// `BODY.PEEK[]` already downloads the whole message, attachments
+    /// included: its length is the message's size (RFC822.SIZE), for free.
+    #[test]
+    fn the_size_is_the_length_of_the_fetched_message() {
+        let raw = "From: a@example.com\r\nSubject: s\r\n\r\nbody";
+        let (email, _) = ImapClient::parse_message(1, &fetched(raw, Some(NOW))).unwrap();
+        assert_eq!(email.size_bytes, Some(raw.len() as i64));
     }
 
     #[test]

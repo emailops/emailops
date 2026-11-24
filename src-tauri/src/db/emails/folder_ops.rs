@@ -360,6 +360,8 @@ mod tests {
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }

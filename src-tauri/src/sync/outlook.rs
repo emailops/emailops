@@ -1947,6 +1947,9 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         // derives from the caller's `mailbox` value.
         is_sent: false,
         is_starred: graph_flag_is_starred(msg.flag.as_ref().and_then(|f| f.flag_status.as_deref())),
+        // Graph's message resource has no size: unknown.
+        size_bytes: None,
+        has_attachments: None,
         headers,
     };
 

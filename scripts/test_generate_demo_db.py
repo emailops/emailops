@@ -121,6 +121,29 @@ class MemoryFactsAreSearchable(unittest.TestCase):
         self.assertEqual(indexed, facts)
 
 
+class EveryDemoMessageHasASize(unittest.TestCase):
+    """The full-width list's Size column and sort need sizes; real sync stores
+    the provider's, the demo makes one up from what the message holds."""
+
+    def _db(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE emails (id TEXT PRIMARY KEY, size_bytes INTEGER)")
+        conn.execute("CREATE TABLE email_bodies (email_id TEXT PRIMARY KEY, body TEXT)")
+        conn.execute("CREATE TABLE email_attachment_meta (email_id TEXT, file_size INTEGER)")
+        for email_id, body in (("plain", "x" * 1000), ("attached", "x" * 1000)):
+            conn.execute("INSERT INTO emails (id) VALUES (?)", (email_id,))
+            conn.execute("INSERT INTO email_bodies VALUES (?, ?)", (email_id, body))
+        conn.execute("INSERT INTO email_attachment_meta VALUES ('attached', 300000)")
+        return conn
+
+    def test_a_message_is_its_body_and_headers_and_its_attachments_encoded(self):
+        conn = self._db()
+        gen.fill_message_sizes(conn)
+        sizes = dict(conn.execute("SELECT id, size_bytes FROM emails"))
+        self.assertEqual(sizes["plain"], 1000 + gen.DEMO_HEADER_BYTES)
+        self.assertEqual(sizes["attached"], 1000 + gen.DEMO_HEADER_BYTES + 400000)
+
+
 class ThreadMessagesAreAddressedToTheOtherSide(unittest.TestCase):
     """A message the owner sends goes to the counterparty. It used to list the
     owner as its own recipient, so research read "From: YOU, To: YOU" and

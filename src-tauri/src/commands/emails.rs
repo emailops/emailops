@@ -43,8 +43,11 @@ fn emit_log(_app: &AppHandle, level: &str, source: &str, message: &str) {
 
 /// `account_id: None` selects the unified ("All accounts") view — emails
 /// merged across every enabled account. `unread_only` lists only the unread
-/// rows; omitted, every row.
+/// rows; omitted, every row. `sort_by` (`date` | `sender` | `subject` |
+/// `size`) and `sort_dir` (`asc` | `desc`) order the list; omitted, newest
+/// first. Any other value is refused.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_emails(
     state: State<'_, AppState>,
     account_id: Option<String>,
@@ -52,7 +55,10 @@ pub async fn get_emails(
     offset: Option<i32>,
     mailbox: Option<String>,
     unread_only: Option<bool>,
+    sort_by: Option<String>,
+    sort_dir: Option<String>,
 ) -> Result<Vec<Email>, AppError> {
+    let sort = crate::db::emails::list_sort::ListSort::parse(sort_by.as_deref(), sort_dir.as_deref())?;
     services::emails::get_emails(
         &state.db,
         account_id.as_deref(),
@@ -61,6 +67,7 @@ pub async fn get_emails(
         mailbox.as_deref(),
         None,
         unread_only.unwrap_or(false),
+        sort,
     )
 }
 

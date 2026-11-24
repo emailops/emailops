@@ -342,6 +342,8 @@ fn case_email(id: String, thread_id: String, account_email: &str, m: &CaseMessag
         is_read: true,
         is_sent,
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: None,
         triage_status: None,
         category: "primary".to_string(),
