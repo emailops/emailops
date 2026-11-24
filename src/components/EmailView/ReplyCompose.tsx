@@ -587,7 +587,8 @@ export function ReplyCompose({
       inlineImages: prepared.inlineImages.length,
       attachments: attachments.length + draftFiles.files.length,
     });
-    if (!ready || attachmentsLoading || draftFiles.isStoring) return;
+    // The AI is about to replace the body: what would go out is not final.
+    if (!ready || attachmentsLoading || draftFiles.isStoring || isLoadingDraft) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
       // The signature is not the user's text: "attached" in it is no promise.

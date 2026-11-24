@@ -105,6 +105,39 @@ describe('ReplyCompose Instructions for AI', () => {
     expect(container.textContent).toContain('The AI took too long');
   });
 
+  it('does not send while the AI writes the reply, not even from Send anyway', async () => {
+    const onSend = vi.fn(async () => {});
+    await written({ onSend });
+    // A pre-send warning ("attached" with no file) offers Send anyway.
+    await setValue(q<HTMLTextAreaElement>('[data-testid="body"]'), '<p>Hi Alice, the plan is attached.</p>');
+    await act(async () => q<HTMLButtonElement>('[data-testid="reply-send"]').click());
+    const sendAnyway = [...container.querySelectorAll('button')].find(
+      (b) => b.textContent === 'compose:sendWarnings.sendAnyway',
+    );
+    if (!sendAnyway) throw new Error('Send anyway not offered');
+
+    // The user asks the AI for a new draft before answering the warning.
+    await act(async () => {
+      root.render(
+        <ReplyCompose
+          email={email}
+          threadEmails={[email]}
+          accounts={[account]}
+          defaultAccountId="a1"
+          onSend={onSend}
+          onCancel={() => {}}
+          initialBody=""
+          mode="reply"
+          onGenerateDraft={() => {}}
+          onPolishDraft={() => {}}
+          isLoadingDraft
+        />,
+      );
+    });
+    await act(async () => sendAnyway.click());
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it('never saves the instructions with the draft nor sends them', async () => {
     const onSend = vi.fn(async () => {});
     await written({ onSend });
