@@ -16,6 +16,7 @@ import type { Email, EmailCategory } from '@/types';
 import { ActiveSearchNotice } from './ActiveSearchNotice';
 import { BulkToolbar } from './BulkToolbar';
 import type { RulePrefill } from './EmailRow';
+import { FolderCleanup } from './FolderCleanup';
 import { InboxSearchBox } from './InboxSearchBox';
 import { ReadFilterToggle } from './ReadFilterToggle';
 import { VirtualEmailList } from './VirtualEmailList';
@@ -618,6 +619,7 @@ export function Inbox({
       {searchQuery && !isLoading && !listError && visibleEmails.length === 0 && (
         <ActiveSearchNotice query={searchQuery} onClear={clearSearchQuery} />
       )}
+      <FolderCleanup />
       <VirtualEmailList
         emails={visibleEmails}
         selectedEmailId={selectedEmailId}

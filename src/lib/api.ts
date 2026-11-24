@@ -615,6 +615,26 @@ export async function deleteEmail(accountId: string, emailId: string): Promise<v
 }
 
 /**
+ * Delete messages of one account's Trash or Spam forever, in the background;
+ * `emailIds: null` empties the whole folder. Resolves once the run is queued:
+ * progress and the outcome arrive as `delete-forever-progress` and
+ * `delete-forever-finished`, tagged with `runId`.
+ */
+export async function deleteForever(
+  accountId: string,
+  folder: 'trash' | 'spam',
+  emailIds: string[] | null,
+  runId: string,
+): Promise<void> {
+  return invoke('delete_forever', { accountId, folder, emailIds, runId });
+}
+
+/** Stop a `deleteForever` run before its next batch. */
+export async function cancelDeleteForever(runId: string): Promise<void> {
+  return invoke('cancel_delete_forever', { runId });
+}
+
+/**
  * Past thread used as precedent in an AI-generated draft. Surfaced in the
  * reply panel so the user can audit what the model was grounded on.
  */

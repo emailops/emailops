@@ -113,14 +113,16 @@ auch überall sonst zu sehen ist:
 |---|---|
 | Eine Nachricht als gelesen oder ungelesen markieren | Dieselbe Nachricht wird im Konto als gelesen markiert |
 | Eine Nachricht löschen | Die Nachricht wandert in den **Papierkorb** des Kontos (Gelöschte Elemente bei Outlook) und bleibt dort wiederherstellbar, bis der Anbieter ihn leert – bei Gmail 30 Tage |
+| **Endgültig löschen**, **Papierkorb leeren** oder **Spam leeren**, bei einem IMAP- oder Outlook-Konto | Die Nachrichten werden aus dem Papierkorb oder Spam des Kontos endgültig gelöscht; kein anderer Ordner wird angefasst |
 | Eine Nachricht in einen anderen Ordner verschieben, oder **Als Spam bestätigen** | Die Nachricht wird auch im Konto verschoben — Als Spam bestätigen legt sie im Spam-Ordner des Anbieters ab |
 | **Kein Spam — in den Posteingang verschieben**, oder **Kein Spam** bei einer Nachricht in **Spam** | Die Nachricht wandert zurück in den Posteingang des Kontos |
 | Einen Ordner anlegen, umbenennen oder löschen | Der Ordner ändert sich auch im Konto |
 | Einen Entwurf speichern | Der Entwurf wird bei Gmail und Outlook in den Entwürfen des Kontos gespeichert; bei einem IMAP-Konto bleibt er auf diesem Computer |
 
 <!-- claim:priv-what-emailops-2 -->
-EmailOps löscht eine Nachricht nie endgültig: Löschungen gehen immer in den Papierkorb,
-niemals in ein hartes Löschen. Der Lesestatus wird zuerst lokal gesetzt, damit die App offline
+Eine gelöschte Nachricht kommt in den Papierkorb, wo sie sich noch wiederherstellen lässt;
+**Endgültig löschen** und **Papierkorb leeren** / **Spam leeren** löschen Nachrichten endgültig, und nur
+nachdem Sie es bestätigt haben. Der Lesestatus wird zuerst lokal gesetzt, damit die App offline
 funktioniert; das Konto zieht im Hintergrund nach. Alles andere — Labels, Filter, Ordner, die
 Sie nicht angefasst haben — bleibt genau so, wie es ist.
 

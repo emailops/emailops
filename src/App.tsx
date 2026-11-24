@@ -984,6 +984,14 @@ function AppInner() {
       }),
     );
 
+    // A "Delete forever" / "Empty" run ended: what it removed leaves the list.
+    // Its dialog shows the outcome.
+    unlisteners.push(
+      listen('delete-forever-finished', () => {
+        silentRefetchEmailsRef.current();
+      }),
+    );
+
     // The outbox dispatcher sent or failed queued messages (undo send /
     // scheduled send): update the Scheduled view, announce failures, show the
     // Sent copy and refresh an open conversation a queued reply landed in.

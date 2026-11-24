@@ -109,14 +109,15 @@ everywhere else:
 |---|---|
 | Marking a message read or unread | The same message is marked read on the account |
 | Deleting a message | The message is moved to the account's **Trash** (Deleted Items on Outlook), where it stays recoverable until the provider empties it — 30 days on Gmail |
+| **Delete forever**, **Empty Trash** or **Empty Spam**, on an IMAP or Outlook account | The messages are erased for good from the account's Trash or Spam; no other folder is touched |
 | Moving a message to another folder, or **Confirm junk** | The message moves on the account too — Confirm junk files it in the provider's junk folder |
 | **Not spam — move to Inbox**, or **Not junk** on a message in **Spam** | The message moves back to the account's inbox |
 | Creating, renaming or deleting a folder | The folder changes on the account too |
 | Saving a draft | The draft is saved to the account's Drafts on Gmail and Outlook; on an IMAP account it stays on this computer |
 
 <!-- claim:priv-what-emailops-2 -->
-EmailOps never permanently erases a message: deletes always go to Trash, never to a hard
-delete. Reading is applied locally first so the app works offline, and the account catches up
+Deleting a message sends it to Trash, where it can still be recovered; **Delete forever** and
+**Empty Trash** / **Empty Spam** erase messages for good, and only after you confirm. Reading is applied locally first so the app works offline, and the account catches up
 in the background. Everything else — labels, filters, folders you have not touched — is left
 exactly as it is.
 
