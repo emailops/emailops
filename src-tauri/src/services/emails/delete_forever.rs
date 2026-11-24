@@ -98,7 +98,7 @@ pub fn plan_delete_forever(
 
 /// An error in the same `{code, params, message}` shape `AppError` has at
 /// the command boundary, owned so a report can carry it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteForeverError {
     pub code: String,
@@ -107,12 +107,16 @@ pub struct DeleteForeverError {
 }
 
 impl From<&AppError> for DeleteForeverError {
+    /// Through `AppError`'s own wire format, which keeps library and OS
+    /// detail (SQLite messages, file paths) out of the webview and logs it.
     fn from(e: &AppError) -> Self {
-        Self {
-            code: e.code().to_string(),
-            params: e.params().into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-            message: e.to_string(),
-        }
+        serde_json::to_value(e)
+            .and_then(serde_json::from_value)
+            .unwrap_or_else(|_| Self {
+                code: e.code().to_string(),
+                params: std::collections::BTreeMap::new(),
+                message: e.code().to_string(),
+            })
     }
 }
 
@@ -237,14 +241,22 @@ pub async fn execute_delete_forever(
                 }),
             }
         }
-        // Deleted upstream; the rows stay in the view until this succeeds,
-        // and a later run finds them gone and removes them.
+        // Gone from the account either way. Their rows stay in the view if
+        // this fails, and a later run finds them gone and removes them.
+        report.removed += count(gone.len());
         if let Err(e) = db.hard_delete_emails(&gone) {
+            crate::services::logger::log(
+                "error",
+                "sync",
+                format!(
+                    "{} message(s) were deleted forever but stay listed here until the next Delete forever: {e}",
+                    gone.len()
+                ),
+            );
             report.error = Some((&e).into());
-            report.not_attempted = count(gone.len() + left);
+            report.not_attempted = count(left);
             return report;
         }
-        report.removed += count(gone.len());
         on_progress(report.progress());
     }
     report
@@ -617,6 +629,19 @@ mod tests {
                 message_id_header: None
             }]]
         );
+    }
+
+    // Reports reach the webview: library and OS detail (SQLite messages,
+    // file paths) stays out of them, as at the command boundary.
+    #[test]
+    fn an_internal_error_reaches_the_report_without_its_detail() {
+        let error = AppError::IoError("/private/path/to/emailops.db is locked".to_string());
+
+        let carried = DeleteForeverError::from(&error);
+
+        assert_eq!(carried.code, "io");
+        assert_eq!(carried.message, "File error");
+        assert!(!carried.params.contains_key("detail"), "got {:?}", carried.params);
     }
 
     // ── executor ──────────────────────────────────────────────────────────
