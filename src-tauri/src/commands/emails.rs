@@ -295,6 +295,73 @@ pub async fn delete_email(
     Ok(())
 }
 
+/// Longest `run_id` accepted: a UUID fits with room to spare.
+const MAX_RUN_ID_LEN: usize = 64;
+
+/// Delete messages of one account's Trash or Spam forever, in the
+/// background, and return at once. `email_ids: None` empties the whole
+/// folder (what its list view shows). The run reports
+/// `delete-forever-progress` and, once, `delete-forever-finished`, both
+/// tagged with the caller's `run_id`; `cancel_delete_forever` stops it
+/// before its next batch.
+#[tauri::command]
+pub async fn delete_forever(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: crate::sync::provider::DeleteForeverFolder,
+    email_ids: Option<Vec<String>>,
+    run_id: String,
+) -> Result<(), AppError> {
+    use crate::services::background_tasks::BackgroundTask;
+
+    if run_id.is_empty() || run_id.len() > MAX_RUN_ID_LEN {
+        return Err(AppError::InvalidInput("invalid run id".to_string()));
+    }
+    if let Some(ids) = &email_ids {
+        if ids.is_empty() || ids.len() > MAX_THREADS_PER_ACTION {
+            return Err(AppError::InvalidInput(format!(
+                "between 1 and {MAX_THREADS_PER_ACTION} messages per action"
+            )));
+        }
+    }
+    let core = state.core();
+    let ticket = core.delete_forever_runs.begin(&run_id);
+    let task = BackgroundTask::DeleteForever {
+        account_id: account_id.clone(),
+        run_id: run_id.clone(),
+    };
+    state
+        .dispatcher
+        .dispatch(
+            task,
+            Box::new(move || {
+                Box::pin(async move {
+                    services::emails::run_delete_forever(
+                        &core.db,
+                        &account_id,
+                        folder,
+                        email_ids,
+                        &run_id,
+                        Some(app),
+                        &ticket,
+                    )
+                    .await;
+                })
+            }),
+        )
+        .await;
+    Ok(())
+}
+
+/// Stop a `delete_forever` run before its next batch. What it already
+/// deleted stays deleted; the finished event reports the rest as untouched.
+#[tauri::command]
+pub async fn cancel_delete_forever(state: State<'_, AppState>, run_id: String) -> Result<(), AppError> {
+    state.delete_forever_runs.cancel(&run_id);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn send_reply(
     app: AppHandle,

@@ -94,6 +94,12 @@ pub enum AppError {
     #[error("This account has no Junk folder to file spam in")]
     NoSpamFolder,
 
+    /// Deleting forever on an IMAP server without UIDPLUS while other
+    /// messages of the folder are flagged `\Deleted`: the plain `EXPUNGE`
+    /// it would need removes those too, so nothing is deleted.
+    #[error("This mail server can only delete forever every message marked for deletion in the folder at once, and other messages there are marked too — nothing was deleted")]
+    ExpungeNotSafe,
+
     /// Undo, edit, delete or "send now" on an outbox message that is no
     /// longer waiting: the dispatcher has already started sending it (or it
     /// was sent or cancelled meanwhile).
@@ -151,6 +157,7 @@ impl AppError {
             AppError::Cancelled => "cancelled",
             AppError::NoArchiveFolder => "no_archive_folder",
             AppError::NoSpamFolder => "no_spam_folder",
+            AppError::ExpungeNotSafe => "expunge_not_safe",
             AppError::OutboxNotPending => "outbox_not_pending",
             AppError::AttachmentConfirmationRequired { .. } => "attachment_confirmation_required",
             AppError::FileNotDownloaded { .. } => "file_not_downloaded",
@@ -198,6 +205,7 @@ impl AppError {
             | AppError::Cancelled
             | AppError::NoArchiveFolder
             | AppError::NoSpamFolder
+            | AppError::ExpungeNotSafe
             | AppError::OutboxNotPending => {}
             AppError::FileNotDownloaded { filename } => {
                 p.insert("filename", filename.clone());
@@ -296,6 +304,7 @@ mod tests {
         assert_eq!(AppError::Cancelled.code(), "cancelled");
         assert_eq!(AppError::NoArchiveFolder.code(), "no_archive_folder");
         assert_eq!(AppError::NoSpamFolder.code(), "no_spam_folder");
+        assert_eq!(AppError::ExpungeNotSafe.code(), "expunge_not_safe");
         assert_eq!(AppError::OutboxNotPending.code(), "outbox_not_pending");
         assert_eq!(
             AppError::FileNotDownloaded {

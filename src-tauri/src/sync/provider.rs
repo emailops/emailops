@@ -35,6 +35,49 @@ pub fn provider_supports_mailbox_writes(provider: &str) -> bool {
     matches!(provider, "gmail" | "imap" | "outlook")
 }
 
+/// Whether the app can delete a provider's messages forever (Trash and Spam
+/// only, see [`EmailProvider::delete_forever`]). Not Gmail: `messages.delete`
+/// and `batchDelete` need the full `https://mail.google.com/` scope, and the
+/// app requests `gmail.modify`, which only moves mail to Trash. Gmail empties
+/// Trash and Spam itself after 30 days.
+pub fn provider_supports_delete_forever(provider: &str) -> bool {
+    matches!(provider, "imap" | "outlook")
+}
+
+/// The folders whose messages can be deleted forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeleteForeverFolder {
+    Trash,
+    Spam,
+}
+
+impl DeleteForeverFolder {
+    /// The `emails.mailbox` value of the messages filed in this folder.
+    pub fn mailbox(self) -> &'static str {
+        match self {
+            Self::Trash => "trash",
+            Self::Spam => "spam",
+        }
+    }
+
+    /// The list view that shows this folder (`get_emails` / `count_emails`).
+    pub fn view(self) -> &'static str {
+        match self {
+            Self::Trash => "deleted",
+            Self::Spam => "spam",
+        }
+    }
+}
+
+/// One message to delete forever: its provider id and, when known, its RFC
+/// 5322 Message-ID, which IMAP checks the UID against before deleting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteForeverTarget {
+    pub id: String,
+    pub message_id_header: Option<String>,
+}
+
 /// An attachment to include in an outgoing email.
 ///
 /// `content_id` + `is_inline = true` mark this as an inline image referenced
@@ -728,6 +771,26 @@ pub trait EmailProvider: Send + Sync {
         ))
     }
 
+    /// Delete messages of `folder` forever — not recoverable from the
+    /// provider's own clients. A message that is not in `folder` under its id
+    /// must be left alone: this never reaches any other folder.
+    ///
+    /// Like [`Self::batch_get_messages`], `Err` means the whole batch failed
+    /// (offline, auth) and nothing can be said about any message. Otherwise
+    /// one result per target, in order: `Ok` deleted, `AppError::NotFound`
+    /// already gone under that id, any other `Err` still there.
+    ///
+    /// Callers gate on [`provider_supports_delete_forever`].
+    async fn delete_forever(
+        &self,
+        _folder: DeleteForeverFolder,
+        _messages: &[DeleteForeverTarget],
+    ) -> Result<Vec<Result<()>>> {
+        Err(AppError::InvalidInput(
+            "deleting forever is not supported by this provider".to_string(),
+        ))
+    }
+
     /// Where a message the app already stores lives at the provider right now.
     /// Lets sync catch up with moves the user made in the provider's own
     /// clients, which the insert-only fetch passes never see.
@@ -970,6 +1033,9 @@ pub struct FakeEmailProvider {
     /// What `trash_message` answers: `None` (the message keeps its id, as on
     /// Gmail) unless set — models IMAP re-keying it in Trash.
     trash_location: std::sync::RwLock<Option<MessageLocation>>,
+    /// Ids `delete_forever` refuses one by one (the rest of the batch goes
+    /// through) — a message the server would not remove.
+    undeletable_messages: std::sync::RwLock<std::collections::HashSet<String>>,
     /// When `Some`, `send_reply` / `send_new_email` fail with this message and
     /// record nothing — a provider refusing the send (5xx, offline).
     send_failure: std::sync::RwLock<Option<String>>,
@@ -1058,6 +1124,10 @@ pub enum FakeMailboxOp {
     Spam {
         message_id: String,
     },
+    DeleteForever {
+        folder: DeleteForeverFolder,
+        message_id: String,
+    },
 }
 
 /// A folder-management call recorded by [`FakeEmailProvider`].
@@ -1132,6 +1202,7 @@ impl FakeEmailProvider {
             after_batch: std::sync::RwLock::new(None),
             archive_location: std::sync::RwLock::new(None),
             trash_location: std::sync::RwLock::new(None),
+            undeletable_messages: std::sync::RwLock::new(std::collections::HashSet::new()),
             send_failure: std::sync::RwLock::new(None),
             listing_failure: std::sync::RwLock::new(None),
             signature: std::sync::RwLock::new(None),
@@ -1156,6 +1227,15 @@ impl FakeEmailProvider {
     /// Make `trash_message` answer `location` from now on.
     pub fn set_trash_location(&self, location: MessageLocation) {
         *self.trash_location.write().unwrap_or_else(PoisonError::into_inner) = Some(location);
+    }
+
+    /// Make `delete_forever` refuse `message_id` from now on, leaving it in
+    /// place while the rest of its batch is deleted.
+    pub fn refuse_delete_forever(&self, message_id: impl Into<String>) {
+        self.undeletable_messages
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message_id.into());
     }
 
     /// Report `uid_validity` for `mailbox` from now on, replacing any earlier
@@ -2004,6 +2084,50 @@ impl EmailProvider for FakeEmailProvider {
             .clone())
     }
 
+    /// A configured write failure fails the whole batch, except "message
+    /// gone", which answers each message as already deleted.
+    async fn delete_forever(
+        &self,
+        folder: DeleteForeverFolder,
+        messages: &[DeleteForeverTarget],
+    ) -> Result<Vec<Result<()>>> {
+        self.record_call("delete_forever");
+        let gone = match self.mailbox_write_gate() {
+            Ok(()) => false,
+            Err(AppError::NotFound(_)) => true,
+            Err(e) => return Err(e),
+        };
+        let refused = self
+            .undeletable_messages
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let mut results = Vec::with_capacity(messages.len());
+        for target in messages {
+            if gone {
+                results.push(Err(AppError::NotFound("Fake message is gone".to_string())));
+                continue;
+            }
+            if refused.contains(&target.id) {
+                results.push(Err(AppError::SyncError("Fake server kept the message".to_string())));
+                continue;
+            }
+            self.messages
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(|m| m.email.id != target.id);
+            self.mailbox_ops
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(FakeMailboxOp::DeleteForever {
+                    folder,
+                    message_id: target.id.clone(),
+                });
+            results.push(Ok(()));
+        }
+        Ok(results)
+    }
+
     /// Models both provider shapes: the message is found under its own id
     /// (Gmail), or — when it was moved and re-keyed — under the same
     /// Message-ID header at a new id (IMAP/Graph).
@@ -2704,6 +2828,16 @@ mod tests {
             !provider_supports_mailbox_writes("exchange-ews"),
             "a provider nobody wired must stay local-only"
         );
+    }
+
+    // Gmail's `messages.delete` / `batchDelete` need the full
+    // `https://mail.google.com/` scope; the app holds `gmail.modify` only.
+    #[test]
+    fn deleting_forever_is_offered_on_imap_and_outlook_but_not_gmail() {
+        assert!(provider_supports_delete_forever("imap"));
+        assert!(provider_supports_delete_forever("outlook"));
+        assert!(!provider_supports_delete_forever("gmail"));
+        assert!(!provider_supports_delete_forever("exchange-ews"));
     }
 
     #[tokio::test]

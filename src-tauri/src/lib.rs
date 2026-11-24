@@ -175,6 +175,8 @@ macro_rules! app_commands {
             commands::emails::get_thread_new_content,
             commands::emails::mark_as_read,
             commands::emails::delete_email,
+            commands::emails::delete_forever,
+            commands::emails::cancel_delete_forever,
             commands::emails::apply_thread_action,
             commands::emails::snooze_threads,
             commands::emails::unsnooze_threads,
@@ -829,6 +831,7 @@ pub fn run() {
                 dispatcher,
                 tool_registry: Arc::new(services::chat::tools::default_registry()),
                 rule_applies: Arc::default(),
+                delete_forever_runs: Arc::default(),
             });
             app.manage(AppState::new(core, scheduler));
 

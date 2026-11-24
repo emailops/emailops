@@ -72,6 +72,9 @@ pub struct AppCore {
     /// Retroactive attachment-rule applies in flight, one per rule — so a new
     /// apply, an edit or a delete of the rule cancels the one running.
     pub rule_applies: Arc<services::attachments::RuleApplies>,
+    /// "Delete forever" / "Empty Trash" runs in flight, so Cancel can reach
+    /// the one the dialog started.
+    pub delete_forever_runs: Arc<services::emails::DeleteForeverRuns>,
 }
 
 impl AppCore {
@@ -98,6 +101,7 @@ impl AppCore {
             dispatcher: Arc::new(services::background_tasks::FakeDispatcher::new()),
             tool_registry: Arc::new(services::chat::tools::default_registry()),
             rule_applies: Arc::default(),
+            delete_forever_runs: Arc::default(),
         }
     }
 
