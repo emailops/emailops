@@ -22,7 +22,7 @@ const INITIAL_BACKOFF_MS: u64 = 1_000;
 /// Fields fetched for every event — enough to build a `ProviderCalendarEvent`
 /// without a second round-trip.
 const EVENT_SELECT_FIELDS: &str = "id,subject,body,bodyPreview,location,start,end,isAllDay,isCancelled,\
-    organizer,attendees,onlineMeeting,onlineMeetingUrl,webLink,originalStartTimeZone";
+    organizer,attendees,responseStatus,onlineMeeting,onlineMeetingUrl,webLink,originalStartTimeZone";
 
 /// Fields fetched for every calendar in `/me/calendars`.
 const CALENDAR_SELECT_FIELDS: &str = "id,name,hexColor,color,isDefaultCalendar,canEdit,owner";
@@ -33,6 +33,9 @@ pub struct OutlookCalendarClient {
     refresh_token: Option<String>,
     account_id: Option<String>,
     base_url: String,
+    /// The mailbox's own address: Graph reports its answer in `responseStatus`,
+    /// not in its `attendees` entry, so parsing needs to know which one it is.
+    owner_email: Option<String>,
 }
 
 impl OutlookCalendarClient {
@@ -43,7 +46,13 @@ impl OutlookCalendarClient {
             refresh_token,
             account_id,
             base_url: GRAPH_API_BASE.to_string(),
+            owner_email: None,
         }
+    }
+
+    pub fn with_owner_email(mut self, owner_email: impl Into<String>) -> Self {
+        self.owner_email = Some(owner_email.into());
+        self
     }
 
     /// Test-only base URL override (wiremock).
@@ -341,7 +350,11 @@ impl CalendarProvider for OutlookCalendarClient {
             }
             let page: serde_json::Value = response.json().await?;
             if let Some(items) = page.get("value").and_then(|v| v.as_array()) {
-                events.extend(items.iter().filter_map(parse_graph_event));
+                events.extend(
+                    items
+                        .iter()
+                        .filter_map(|raw| parse_graph_event(raw, self.owner_email.as_deref())),
+                );
             }
             match page.get("@odata.nextLink").and_then(|v| v.as_str()) {
                 Some(next) => url = next.to_string(),
@@ -369,7 +382,7 @@ impl CalendarProvider for OutlookCalendarClient {
             ));
         }
         let raw: serde_json::Value = response.json().await?;
-        parse_graph_event(&raw)
+        parse_graph_event(&raw, self.owner_email.as_deref())
             .ok_or_else(|| AppError::SyncError("Outlook returned an unparseable created event".to_string()))
     }
 
@@ -1164,7 +1177,11 @@ fn epoch_to_rfc3339(epoch_seconds: i64) -> Result<String> {
 
 /// Parse one Graph `event` resource into the provider-neutral shape. Returns
 /// `None` when id or times are missing/unparseable.
-pub(crate) fn parse_graph_event(raw: &serde_json::Value) -> Option<ProviderCalendarEvent> {
+///
+/// On an invitee's copy Graph leaves the mailbox's own `attendees` entry at
+/// "none" and reports its answer in `responseStatus`; with `owner_email` that
+/// answer replaces the owner's entry.
+pub(crate) fn parse_graph_event(raw: &serde_json::Value, owner_email: Option<&str>) -> Option<ProviderCalendarEvent> {
     let id = raw.get("id")?.as_str()?.to_string();
     let start_time = parse_graph_time(raw.get("start")?)?;
     let end_time = parse_graph_time(raw.get("end")?)?;
@@ -1182,6 +1199,10 @@ pub(crate) fn parse_graph_event(raw: &serde_json::Value) -> Option<ProviderCalen
         structured_meeting_urls.push(legacy.to_string());
     }
 
+    let owner_response = raw
+        .get("responseStatus")
+        .and_then(|s| s.get("response"))
+        .and_then(|v| v.as_str());
     let attendees = raw
         .get("attendees")
         .and_then(|v| v.as_array())
@@ -1193,12 +1214,16 @@ pub(crate) fn parse_graph_event(raw: &serde_json::Value) -> Option<ProviderCalen
                         .and_then(|e| e.get("address"))
                         .and_then(|v| v.as_str())?
                         .to_string();
-                    let response = normalize_graph_response(
-                        a.get("status")
+                    let is_owner = owner_email.is_some_and(|owner| owner.eq_ignore_ascii_case(&email));
+                    let graph_response = match owner_response {
+                        Some(owner_answer) if is_owner => owner_answer,
+                        _ => a
+                            .get("status")
                             .and_then(|s| s.get("response"))
                             .and_then(|v| v.as_str())
                             .unwrap_or_default(),
-                    );
+                    };
+                    let response = normalize_graph_response(graph_response);
                     Some(crate::models::CalendarAttendee { email, response })
                 })
                 .collect()
@@ -1387,7 +1412,7 @@ mod tests {
             "webLink": "https://outlook.office365.com/calendar/item/xyz"
         });
 
-        let event = parse_graph_event(&raw).expect("parse");
+        let event = parse_graph_event(&raw, None).expect("parse");
         assert_eq!(event.provider_event_id, "ev-graph-1");
         assert_eq!(event.title, "Quarterly review");
         assert_eq!(event.start_time, 1784707200); // 2026-07-22T08:00:00Z
@@ -1422,6 +1447,70 @@ mod tests {
     }
 
     #[test]
+    fn owner_answer_comes_from_response_status() {
+        // An invitee's copy: Graph leaves the owner's own entry at "none" and
+        // carries the owner's answer in `responseStatus`.
+        let raw = serde_json::json!({
+            "id": "ev-invitee",
+            "start": {"dateTime": "2026-07-22T08:00:00.0000000", "timeZone": "UTC"},
+            "end": {"dateTime": "2026-07-22T09:00:00.0000000", "timeZone": "UTC"},
+            "organizer": {"emailAddress": {"address": "organizer@example.com"}},
+            "responseStatus": {"response": "tentativelyAccepted", "time": "2026-07-20T10:00:00Z"},
+            "attendees": [
+                {"emailAddress": {"address": "organizer@example.com"}, "status": {"response": "none"}},
+                {"emailAddress": {"address": "Me@Example.com"}, "status": {"response": "none"}}
+            ]
+        });
+
+        let event = parse_graph_event(&raw, Some("me@example.com")).expect("parse");
+
+        let rsvps: Vec<(&str, &str)> = event
+            .attendees
+            .iter()
+            .map(|a| (a.email.as_str(), a.response.as_str()))
+            .collect();
+        assert_eq!(
+            rsvps,
+            vec![
+                ("organizer@example.com", "needsAction"),
+                ("Me@Example.com", "tentative")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_events_asks_for_and_maps_the_owner_answer() {
+        use wiremock::matchers::{method, path, query_param_contains};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/calendars/cal-1/calendarView"))
+            .and(query_param_contains("$select", "responseStatus"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{
+                "id": "ev-invitee",
+                "start": {"dateTime": "2026-07-22T08:00:00.0000000", "timeZone": "UTC"},
+                "end": {"dateTime": "2026-07-22T09:00:00.0000000", "timeZone": "UTC"},
+                "responseStatus": {"response": "accepted"},
+                "attendees": [{"emailAddress": {"address": "me@example.com"}, "status": {"response": "none"}}]
+            }]})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = OutlookCalendarClient::new("tok".into(), None, None)
+            .with_base_url(server.uri())
+            .with_owner_email("me@example.com");
+        let events = client
+            .list_events("cal-1", 1_784_678_400, 1_784_764_800)
+            .await
+            .expect("list");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].attendees[0].response, "accepted");
+    }
+
+    #[test]
     fn legacy_online_meeting_url_is_second_priority() {
         let raw = serde_json::json!({
             "id": "ev-legacy",
@@ -1429,7 +1518,7 @@ mod tests {
             "end": {"dateTime": "2026-07-22T09:00:00.0000000", "timeZone": "UTC"},
             "onlineMeetingUrl": "https://acme.webex.com/meet/jdoe"
         });
-        let event = parse_graph_event(&raw).expect("parse");
+        let event = parse_graph_event(&raw, None).expect("parse");
         assert_eq!(event.structured_meeting_urls, vec!["https://acme.webex.com/meet/jdoe"]);
     }
 
@@ -1441,7 +1530,7 @@ mod tests {
             "start": {"dateTime": "2026-07-22T08:00:00.0000000", "timeZone": "UTC"},
             "end": {"dateTime": "2026-07-22T09:00:00.0000000", "timeZone": "UTC"}
         });
-        let event = parse_graph_event(&raw).expect("parse");
+        let event = parse_graph_event(&raw, None).expect("parse");
         assert_eq!(event.status, "cancelled");
     }
 
@@ -1453,7 +1542,7 @@ mod tests {
             "start": {"dateTime": "2026-07-23T00:00:00.0000000", "timeZone": "UTC"},
             "end": {"dateTime": "2026-07-24T00:00:00.0000000", "timeZone": "UTC"}
         });
-        let event = parse_graph_event(&raw).expect("parse");
+        let event = parse_graph_event(&raw, None).expect("parse");
         assert!(event.is_all_day);
         assert_eq!(event.start_time, 1784764800);
     }
@@ -1461,7 +1550,7 @@ mod tests {
     #[test]
     fn event_without_times_is_skipped() {
         let raw = serde_json::json!({"id": "ev-broken"});
-        assert!(parse_graph_event(&raw).is_none());
+        assert!(parse_graph_event(&raw, None).is_none());
     }
 
     // ── graph_recurrence / build_graph_create_request ──────────────────────
@@ -1529,7 +1618,7 @@ mod tests {
             "start": {"dateTime": "2026-07-28T05:30:00.0000000", "timeZone": "UTC"},
             "end": {"dateTime": "2026-07-28T06:30:00.0000000", "timeZone": "UTC"}
         });
-        let event = parse_graph_event(&raw).expect("parse");
+        let event = parse_graph_event(&raw, None).expect("parse");
         assert_eq!(event.recurring_event_id.as_deref(), Some("master-1"));
     }
 
