@@ -2,10 +2,14 @@ import type { CalendarEvent, RsvpChoice } from '@/types';
 
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
+/** My meeting: I am the organizer, or it has none. Only then can I cancel it for everyone. */
+export function isMyMeeting(event: CalendarEvent, selfEmail: string): boolean {
+  return !event.organizer.trim() || same(event.organizer, selfEmail);
+}
+
 /** The organizer's address, or null when there is none or it is me. */
 export function organizerRecipient(event: CalendarEvent, selfEmail: string): string | null {
-  if (!event.organizer.trim() || same(event.organizer, selfEmail)) return null;
-  return event.organizer;
+  return isMyMeeting(event, selfEmail) ? null : event.organizer;
 }
 
 /** Organizer first, then attendees: minus me and empty addresses,

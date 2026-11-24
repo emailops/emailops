@@ -12,7 +12,13 @@ import {
   linkifySegments,
   visibleAttendees,
 } from '@/lib/calendarEvent';
-import { canRespond, organizerRecipient, participantRecipients, selfResponse } from '@/lib/calendarEventContacts';
+import {
+  canRespond,
+  isMyMeeting,
+  organizerRecipient,
+  participantRecipients,
+  selfResponse,
+} from '@/lib/calendarEventContacts';
 import { eventBounds } from '@/lib/calendarGrid';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isAuthError } from '@/lib/errors';
@@ -143,7 +149,9 @@ export function EventDetailDialog({
     }
   };
 
-  const hasOtherAttendees = event.attendees.some((a) => attendeeStatusMeta(a.response) !== 'organizer');
+  // Only the organizer can cancel for everyone; deleting an invitation just takes it off my calendar.
+  const canNotifyAttendees =
+    isMyMeeting(event, selfEmail) && event.attendees.some((a) => attendeeStatusMeta(a.response) !== 'organizer');
 
   const openLink = (url: string) => {
     openExternal(url).catch((err) => {
@@ -156,7 +164,7 @@ export function EventDetailDialog({
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      const notify = hasOtherAttendees && notifyAttendees;
+      const notify = canNotifyAttendees && notifyAttendees;
       const scope = isRecurringInstance ? deleteScope : 'instance';
       await api.deleteCalendarEvent(
         accountId,
@@ -428,7 +436,7 @@ export function EventDetailDialog({
                     ))}
                   </div>
                 )}
-                {hasOtherAttendees && (
+                {canNotifyAttendees && (
                   <>
                     <label className="flex items-center gap-2 text-sm text-gray-700">
                       <input
