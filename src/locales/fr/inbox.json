@@ -24,6 +24,19 @@
     "unread": "Non lus",
     "empty": "Aucun e-mail non lu"
   },
+  "listColumns": {
+    "sender": "Expéditeur",
+    "recipients": "À",
+    "subject": "Objet",
+    "size": "Taille",
+    "attachment": "Avec pièce jointe",
+    "date": "Date",
+    "sortBy": "Trier par {{column}}",
+    "sortedAscending": "{{column}}, tri croissant",
+    "sortedDescending": "{{column}}, tri décroissant",
+    "columns": "Colonnes",
+    "sizeUnknown": "Taille inconnue"
+  },
   "emptyState": {
     "syncing": "Synchronisation des courriels...",
     "noSearchResults": "Aucun courriel ne correspond à votre recherche",

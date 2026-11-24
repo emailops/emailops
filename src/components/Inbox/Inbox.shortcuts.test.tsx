@@ -11,6 +11,9 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/lib/api', () => ({
   getEmailTagsBatch: vi.fn(async () => ({})),
   getJunkConfig: vi.fn(async () => null),
+  // The list's optional columns (`usePersistedPref`).
+  getPref: vi.fn(async () => null),
+  setPref: vi.fn(async () => {}),
   getJunkVerdicts: vi.fn(async () => []),
 }));
 const listProps = vi.fn();

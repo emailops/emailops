@@ -496,6 +496,18 @@ sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre. Si l
 (chat ou calendrier) s'ouvre ou si la fenêtre rétrécit, une colonne élargie rend cette largeur, la
 liste d'abord, jusqu'à sa largeur par défaut, et la retrouve quand la place revient.
 
+<!-- claim:feat-interface-7 -->
+En disposition pleine largeur, la liste des e-mails a des en-têtes de colonne. Cliquez sur
+**Expéditeur**, **Objet**, **Date** ou **Taille** pour trier toute la liste selon cette colonne,
+toutes ses pages comprises, et cliquez à nouveau pour inverser l'ordre. La liste commence par les
+plus récents et revient à cet ordre en vue divisée ; une recherche, un filtre intelligent et **En
+attente** gardent leur propre ordre, et dans **Envoyés** la première colonne affiche les
+destinataires et ne trie pas. Le bouton **Colonnes**, au bout de l'en-tête, affiche ou masque
+**Taille** et **Avec pièce jointe**, et le choix est conservé d'un redémarrage à l'autre. La taille
+est celle du message entier, pièces jointes comprises, telle que Gmail ou le serveur IMAP l'indique
+à la synchronisation du message. Outlook ne l'indique pas, et le courrier synchronisé avant
+l'existence de la colonne ne l'a pas non plus : les deux affichent un tiret.
+
 ## Raccourcis clavier {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

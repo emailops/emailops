@@ -457,6 +457,16 @@ the panel on the right (chat or calendar) opens or the window gets narrower, a w
 that width back, the list first, down to its default width, and gets it back when there is room
 again.
 
+<!-- claim:feat-interface-7 -->
+In the full-width layout the email list has column headers. Click **Sender**, **Subject**, **Date**
+or **Size** to sort the whole list by that column, every page of it, and click again to reverse the
+order. The list starts newest first and goes back to that order in the split layout; a search, a
+smart filter and **Snoozed** keep their own order, and in **Sent** the first column lists the
+recipients and does not sort. The **Columns** button at the end of the header shows or hides
+**Size** and **Has attachment**, and the choice is kept across restarts. The size is the whole
+message, attachments included, as Gmail or the IMAP server reports it when the message is synced.
+Outlook reports none, and mail synced before the column existed has none either: both show a dash.
+
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

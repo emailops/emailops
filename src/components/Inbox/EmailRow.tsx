@@ -1,13 +1,14 @@
 import type { TFunction } from 'i18next';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { StarIcon } from '@/components/common/MailIcons';
+import { PaperclipIcon, StarIcon } from '@/components/common/MailIcons';
 import { TagChips } from '@/components/common/TagChips';
 import { useFormatters } from '@/hooks/useFormatters';
 import { bulkMoveTargets } from '@/lib/bulkActions';
 import { AVATAR_PALETTE, hashColorClass } from '@/lib/colors';
 import { emailsToDrag, setEmailDragImage, writeEmailDragPayload } from '@/lib/emailDrag';
 import { type PartyEntry, type RowParty, rowParty, senderName } from '@/lib/emailFormatting';
+import { LIST_COLUMN_WIDTH, type ListColumns } from '@/lib/listColumns';
 import { useAccountStore } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
 import { threadRefOf, useEmailStore } from '@/stores/emailStore';
@@ -40,6 +41,8 @@ interface EmailRowProps {
   onChatAboutThread?: (email: Email) => void;
   /** When true, render a single-line, Gmail-style compact row (used in full-width layout). */
   compact?: boolean;
+  /** The optional Size and Has attachment cells of the compact row. */
+  columns?: ListColumns;
   /** Unified ("All accounts") mode: colored left-edge bar identifying the
    *  email's account. Rendered absolutely so it never changes row height
    *  (the virtualizer depends on stable measured heights). `chip` also names
@@ -75,6 +78,7 @@ export function EmailRow({
   onOpenInTab,
   onChatAboutThread,
   compact = false,
+  columns,
   accountBadge,
   isChecked = false,
   selectionActive = false,
@@ -265,7 +269,7 @@ export function EmailRow({
           <StarToggle email={email} />
           <Avatar name={avatar.name} email={avatar.email} size="sm" />
           {partyCell(
-            `text-sm w-24 @2xl:w-28 @4xl:w-44 flex-shrink-0 ${
+            `text-sm ${LIST_COLUMN_WIDTH.party} flex-shrink-0 ${
               email.isRead ? 'text-gray-700' : 'font-semibold text-gray-900'
             }`,
           )}
@@ -309,7 +313,29 @@ export function EmailRow({
             {otherTags.length > 0 && <TagChips tags={otherTags} compact nowrap />}
           </div>
           <SnoozeBadge email={email} />
-          <span className="text-xs text-gray-500 flex-shrink-0 w-20 @2xl:w-24 text-right tabular-nums">
+          {columns?.size && (
+            <span
+              data-testid="row-size"
+              className={`text-xs text-gray-500 flex-shrink-0 ${LIST_COLUMN_WIDTH.size} text-right tabular-nums`}
+              title={typeof email.sizeBytes === 'number' ? undefined : t('inbox:listColumns.sizeUnknown')}
+            >
+              {typeof email.sizeBytes === 'number' ? fmt.bytes(email.sizeBytes) : '—'}
+            </span>
+          )}
+          {columns?.attachment && (
+            <span
+              data-testid="row-attachment"
+              className={`flex-shrink-0 flex justify-center text-gray-400 ${LIST_COLUMN_WIDTH.attachment}`}
+              title={email.hasAttachments ? t('inbox:listColumns.attachment') : undefined}
+            >
+              {email.hasAttachments && (
+                <span role="img" aria-label={t('inbox:listColumns.attachment')}>
+                  <PaperclipIcon className="w-3.5 h-3.5" />
+                </span>
+              )}
+            </span>
+          )}
+          <span className={`text-xs text-gray-500 flex-shrink-0 ${LIST_COLUMN_WIDTH.date} text-right tabular-nums`}>
             {receivedTime}
           </span>
           <EmailActionsMenu

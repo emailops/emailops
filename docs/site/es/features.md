@@ -479,6 +479,18 @@ predeterminado. Una columna deja de crecer antes de que el panel de lectura qued
 calendario) o la ventana se estrecha, una columna ensanchada devuelve ese ancho, primero la lista,
 hasta su ancho predeterminado, y lo recupera cuando vuelve a haber sitio.
 
+<!-- claim:feat-interface-7 -->
+En la vista a ancho completo, la lista de correos tiene encabezados de columna. Haz clic en
+**Remitente**, **Asunto**, **Fecha** o **Tamaño** para ordenar toda la lista por esa columna, con
+todas sus páginas, y vuelve a hacer clic para invertir el orden. La lista empieza por lo más reciente
+y vuelve a ese orden en la vista dividida; una búsqueda, un filtro inteligente y **Pospuestos**
+mantienen su propio orden, y en **Enviados** la primera columna muestra los destinatarios y no
+ordena. El botón **Columnas**, al final del encabezado, muestra u oculta **Tamaño** y **Con
+adjunto**, y la elección se conserva entre reinicios. El tamaño es el del mensaje completo, con sus
+adjuntos, tal como lo indica Gmail o el servidor IMAP al sincronizar el mensaje. Outlook no lo
+indica, y el correo sincronizado antes de que existiera la columna tampoco lo tiene: ambos muestran
+un guion.
+
 ## Atajos de teclado {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

@@ -1,8 +1,18 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePersistedPref } from '@/hooks/usePersistedPref';
 import { useSenderNames } from '@/hooks/useSenderNames';
 import { accountColorClass } from '@/lib/colors';
 import { filterFromQuery } from '@/lib/filterQuery';
+import {
+  DEFAULT_LIST_COLUMNS,
+  DEFAULT_LIST_SORT,
+  LIST_COLUMNS_PREF,
+  type ListColumns,
+  listSortable,
+  nextListSort,
+  parseListColumns,
+} from '@/lib/listColumns';
 import { selectPageFailed } from '@/lib/listPaging';
 import { mailboxTitle } from '@/lib/mailboxTitle';
 import { isUnifiedMode, type SyncProgress, selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
@@ -17,6 +27,7 @@ import { ActiveSearchNotice } from './ActiveSearchNotice';
 import { BulkToolbar } from './BulkToolbar';
 import type { RulePrefill } from './EmailRow';
 import { InboxSearchBox } from './InboxSearchBox';
+import { ListColumnHeader } from './ListColumnHeader';
 import { ReadFilterToggle } from './ReadFilterToggle';
 import { VirtualEmailList } from './VirtualEmailList';
 
@@ -279,6 +290,19 @@ export function Inbox({
   const hasSelection = useSelectionStore((s) => s.ids.size > 0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the deps are the triggers, not values read by the effect
   useEffect(() => clearSelection(), [activeAccountId, listScope, activeFilter, searchQuery, clearSelection]);
+
+  // The full-width list's column header: its sort (session state, applied by
+  // the backend to every page) and its optional columns (a saved preference).
+  // The split layout has no header, so it lists newest first.
+  const listSort = useEmailStore((s) => s.listSort);
+  const setListSort = useEmailStore((s) => s.setListSort);
+  const [listColumns, setListColumns] = usePersistedPref<ListColumns>(LIST_COLUMNS_PREF, DEFAULT_LIST_COLUMNS, {
+    parse: parseListColumns,
+  });
+  const sortIsDefault = listSort.key === DEFAULT_LIST_SORT.key && listSort.dir === DEFAULT_LIST_SORT.dir;
+  useEffect(() => {
+    if (!fullWidth && !sortIsDefault) setListSort(DEFAULT_LIST_SORT);
+  }, [fullWidth, sortIsDefault, setListSort]);
 
   const clearSearchQuery = useEmailStore((s) => s.clearSearchQuery);
   const focusEmailId = useEmailStore((s) => s.focusEmailId);
@@ -618,6 +642,16 @@ export function Inbox({
       {searchQuery && !isLoading && !listError && visibleEmails.length === 0 && (
         <ActiveSearchNotice query={searchQuery} onClear={clearSearchQuery} />
       )}
+      {fullWidth && visibleEmails.length > 0 && (
+        <ListColumnHeader
+          columns={listColumns}
+          onColumnsChange={setListColumns}
+          sort={listSort}
+          onSort={(key) => setListSort(nextListSort(listSort, key))}
+          sortable={listSortable(listScope, Boolean(searchQuery))}
+          inSentView={inSentView}
+        />
+      )}
       <VirtualEmailList
         emails={visibleEmails}
         selectedEmailId={selectedEmailId}
@@ -642,6 +676,7 @@ export function Inbox({
         onOpenInTab={onOpenInTab}
         onChatAboutThread={onChatAboutThread}
         compact={fullWidth}
+        columns={listColumns}
         getAccountBadge={getAccountBadge}
         getOwnerEmail={getOwnerEmail}
         nameOf={nameOf}

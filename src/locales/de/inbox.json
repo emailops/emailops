@@ -24,6 +24,19 @@
     "unread": "Ungelesen",
     "empty": "Keine ungelesenen E-Mails"
   },
+  "listColumns": {
+    "sender": "Absender",
+    "recipients": "An",
+    "subject": "Betreff",
+    "size": "Größe",
+    "attachment": "Mit Anhang",
+    "date": "Datum",
+    "sortBy": "Nach {{column}} sortieren",
+    "sortedAscending": "{{column}}, aufsteigend sortiert",
+    "sortedDescending": "{{column}}, absteigend sortiert",
+    "columns": "Spalten",
+    "sizeUnknown": "Größe unbekannt"
+  },
   "emptyState": {
     "syncing": "E-Mails werden synchronisiert...",
     "noSearchResults": "Keine E-Mails passen zu deiner Suche",

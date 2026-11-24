@@ -24,6 +24,19 @@
     "unread": "Unread",
     "empty": "No unread emails"
   },
+  "listColumns": {
+    "sender": "Sender",
+    "recipients": "To",
+    "subject": "Subject",
+    "size": "Size",
+    "attachment": "Has attachment",
+    "date": "Date",
+    "sortBy": "Sort by {{column}}",
+    "sortedAscending": "{{column}}, sorted ascending",
+    "sortedDescending": "{{column}}, sorted descending",
+    "columns": "Columns",
+    "sizeUnknown": "Size unknown"
+  },
   "emptyState": {
     "syncing": "Syncing emails...",
     "noSearchResults": "No emails match your search",

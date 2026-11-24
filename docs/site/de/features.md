@@ -494,6 +494,18 @@ Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verb
 diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
 Platz frei wird.
 
+<!-- claim:feat-interface-7 -->
+In der Ansicht mit voller Breite hat die E-Mail-Liste Spaltenköpfe. Klicken Sie auf **Absender**,
+**Betreff**, **Datum** oder **Größe**, um die ganze Liste nach dieser Spalte zu sortieren, mit allen
+ihren Seiten, und klicken Sie erneut, um die Reihenfolge umzukehren. Die Liste beginnt mit den
+neuesten E-Mails und kehrt in der geteilten Ansicht zu dieser Reihenfolge zurück; eine Suche, ein
+intelligenter Filter und **Zurückgestellt** behalten ihre eigene Reihenfolge, und in **Gesendet**
+zeigt die erste Spalte die Empfänger und sortiert nicht. Die Schaltfläche **Spalten** am Ende der
+Kopfzeile blendet **Größe** und **Mit Anhang** ein oder aus, und die Auswahl bleibt über Neustarts
+erhalten. Die Größe ist die der ganzen Nachricht, Anhänge eingeschlossen, so wie Gmail oder der
+IMAP-Server sie beim Synchronisieren der Nachricht angibt. Outlook gibt keine an, und E-Mails, die
+vor dieser Spalte synchronisiert wurden, haben auch keine: Beide zeigen einen Strich.
+
 ## Tastenkombinationen {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->
