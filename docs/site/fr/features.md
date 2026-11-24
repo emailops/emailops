@@ -496,6 +496,19 @@ sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre. Si l
 (chat ou calendrier) s'ouvre ou si la fenêtre rétrécit, une colonne élargie rend cette largeur, la
 liste d'abord, jusqu'à sa largeur par défaut, et la retrouve quand la place revient.
 
+<!-- claim:feat-interface-7 -->
+**Paramètres → Apparence → Affichage des conversations** choisit comment une conversation ouverte
+s'affiche. **Ouvrir le dernier message, déplier les autres un par un**, le réglage par défaut, ouvre
+le message le plus récent et affiche fermés les précédents, qui s'ouvrent d'un clic. **Votre dernier
+message d’abord, tous les messages ouverts** place en haut le dernier message que vous avez envoyé
+depuis ce compte et en dessous le reste de la conversation, du plus ancien au plus récent, avec tous
+les messages ouverts et chacun une seule fois ; une conversation dans laquelle vous n'avez pas écrit
+l'indique et affiche tous les messages du plus ancien au plus récent. Ouvrir une autre conversation
+la fait commencer en haut, sauf si elle a été ouverte sur un message précis depuis un lien, qui est
+alors affiché comme dans la vue par défaut. L'affichage ne change que ce qui est à l'écran : **Répondre**, **Répondre
+à tous** et **Transférer** répondent, citent et joignent les mêmes messages dans les deux cas, et le
+choix est conservé d'un redémarrage à l'autre.
+
 ## Raccourcis clavier {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

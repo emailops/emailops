@@ -494,6 +494,19 @@ Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verb
 diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
 Platz frei wird.
 
+<!-- claim:feat-interface-7 -->
+**Einstellungen → Erscheinungsbild → Konversationsansicht** legt fest, wie eine geöffnete
+Konversation angezeigt wird. **Neueste Nachricht öffnen, die anderen einzeln aufklappen**, die
+Voreinstellung, öffnet die neueste Nachricht und zeigt die früheren geschlossen, zum Öffnen per Klick.
+**Ihre letzte Nachricht zuerst, alle Nachrichten geöffnet** zeigt oben die letzte Nachricht, die Sie
+von diesem Konto gesendet haben, und darunter den Rest der Konversation, die älteste zuerst, mit allen
+Nachrichten geöffnet und jeder nur einmal; eine Konversation, in der Sie nichts geschrieben haben,
+weist darauf hin und zeigt alle Nachrichten, die älteste zuerst. Eine andere Konversation beginnt
+beim Öffnen oben, außer sie wurde über einen Link bei einer bestimmten Nachricht geöffnet, die wie in
+der Standardansicht angezeigt wird. Die Ansicht ändert nur, was zu sehen ist: **Antworten**, **Allen antworten** und
+**Weiterleiten** beantworten, zitieren und hängen in beiden dieselben Nachrichten an, und die Wahl
+bleibt über Neustarts erhalten.
+
 ## Tastenkombinationen {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->
