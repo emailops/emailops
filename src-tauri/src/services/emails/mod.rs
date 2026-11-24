@@ -35,7 +35,7 @@ pub use compose::{
     refresh_provider_drafts, send_draft, ComposeInput, ComposePlan,
 };
 pub use draft_files::{store_composer_file, sweep_abandoned_draft_files};
-pub use drafts::{generate_draft, generate_new_draft, DraftResult, DraftSource};
+pub use drafts::{generate_draft, generate_new_draft, polish_draft, DraftKind, DraftResult, DraftSource};
 pub(crate) use events::emit_account_log;
 pub use events::SyncProgress;
 pub use folders::{create_folder, delete_folder, move_email, move_emails, rename_folder, MoveFailure, MoveReport};

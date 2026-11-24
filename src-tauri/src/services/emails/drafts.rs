@@ -48,7 +48,8 @@ Language: Match the language of the message you are answering.
 
 /// What a draft is for. A forward follows the signature's "replies and
 /// forwards" option, so it plans as a reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum DraftKind {
     New,
     Reply,
@@ -306,6 +307,22 @@ fn emit_log(level: &str, message: &str) {
     crate::services::logger::log(level, "drafts", message);
 }
 
+/// Who the AI writes as and how, from Settings → AI drafts, with the defaults
+/// for a blank setting.
+fn persona_and_style(db: &Database) -> Result<(String, String)> {
+    let persona = db
+        .get_preference("draft_persona")?
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "a freelance CTO and technical consultant".to_string());
+    let style = db
+        .get_preference("draft_style")?
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            "concise, friendly but professional, uses short paragraphs, avoids corporate jargon".to_string()
+        });
+    Ok((persona, style))
+}
+
 /// Generate a reply draft for `email_id`.
 ///
 /// Runs synchronously on the caller's tokio task. Frontend-facing callers
@@ -318,16 +335,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         .ok_or_else(|| AppError::NotFound(format!("Email {} not found", email_id)))?;
     let thread = thread_up_to(db.get_thread(&email.account_id, &email.thread_id)?, &email.id);
 
-    let persona = db
-        .get_preference("draft_persona")?
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "a freelance CTO and technical consultant".to_string());
-    let style = db
-        .get_preference("draft_style")?
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            "concise, friendly but professional, uses short paragraphs, avoids corporate jargon".to_string()
-        });
+    let (persona, style) = persona_and_style(db)?;
     let prompt_template = db
         .get_preference("draft_prompt_template")?
         .filter(|s| !s.trim().is_empty())
@@ -385,7 +393,7 @@ pub async fn generate_draft(db: &Arc<Database>, email_id: &str, instructions: Op
         instructions,
         sign_off: sign_off.clone(),
         language: language.as_deref(),
-    });
+    })?;
 
     // ── Model call ───────────────────────────────────────────────────────
     emit_log("info", "calling model…");
@@ -488,8 +496,8 @@ Subject: {subject}\n\n\
 }
 
 /// The new-email prompt, whole, or an error saying how much to shorten the
-/// brief. Pure. Never cut: the brief and the closing instruction end the
-/// prompt, so a cut that keeps the start drops exactly them.
+/// instructions and draft. Pure. Never cut: they and the closing instruction
+/// end the prompt, so a cut that keeps the start drops exactly them.
 fn fit_new_draft_prompt(prompt: String) -> Result<String> {
     if prompt.len() <= MAX_PROMPT_CHARS {
         return Ok(prompt);
@@ -497,8 +505,20 @@ fn fit_new_draft_prompt(prompt: String) -> Result<String> {
     // Bytes over the limit: cutting that many characters always fits.
     let over = prompt.len() - MAX_PROMPT_CHARS;
     Err(AppError::InvalidInput(format!(
-        "the brief is too long for an AI draft: shorten it by at least {over} characters"
+        "the instructions and draft are too long for an AI draft: shorten them by at least {over} characters"
     )))
+}
+
+/// What the user has already written in a new email, shown to the model as
+/// background for Generate: it may reuse or rewrite it, and follows the
+/// instructions. Pure. Empty when there is no text.
+fn background_draft_section(draft: Option<&str>) -> String {
+    match draft.map(str::trim) {
+        Some(text) if !text.is_empty() => format!(
+            "The user's current draft, as background: reuse what is useful and rewrite the rest freely.\n{text}\n\n"
+        ),
+        _ => String::new(),
+    }
 }
 
 /// Generate a draft for a brand-new email (no existing thread). Used by the
@@ -511,26 +531,21 @@ fn fit_new_draft_prompt(prompt: String) -> Result<String> {
 /// user. Sources is returned empty; the result body still flows through the
 /// same `DraftResult` shape so callers can save it via the existing
 /// `db.save_draft` path.
+///
+/// `draft` is what the compose window already holds: background the model may
+/// reuse, never instructions.
 pub async fn generate_new_draft(
     db: &Arc<Database>,
     account_id: &str,
     to: &[String],
     subject: &str,
     instructions: Option<&str>,
+    draft: Option<&str>,
 ) -> Result<DraftResult> {
     let (to_clean, subject) = clean_new_draft_inputs(to, subject)?;
     let subject = subject.as_str();
 
-    let persona = db
-        .get_preference("draft_persona")?
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "a freelance CTO and technical consultant".to_string());
-    let style = db
-        .get_preference("draft_style")?
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            "concise, friendly but professional, uses short paragraphs, avoids corporate jargon".to_string()
-        });
+    let (persona, style) = persona_and_style(db)?;
 
     emit_log(
         "info",
@@ -548,7 +563,11 @@ pub async fn generate_new_draft(
         .and_then(crate::services::accounts::sender_display_name)
         .unwrap_or_default();
     let sign_off = plan_sign_off(load_signature(db, account_id).as_ref(), DraftKind::New, sender_name);
-    let instructions_section = per_draft_section(instructions, &sign_off_rule(&sign_off));
+    let instructions_section = format!(
+        "{}{}",
+        background_draft_section(draft),
+        per_draft_section(instructions, &sign_off_rule(&sign_off))
+    );
 
     // Honor the user's explicit AI output language (ai_output_language_v2 →
     // ai_output_language → ui_language → English), same as chat / classify /
@@ -587,6 +606,141 @@ pub async fn generate_new_draft(
     emit_log(
         "success",
         &format!("new draft generated ({} chars, {}ms)", body.len(), elapsed),
+    );
+    Ok(DraftResult {
+        body,
+        sources: Vec::new(),
+    })
+}
+
+/// The head of the polish prompt. Only the user's persona and style vary, so
+/// it is the same on every polish and stays in the prefix cache.
+const POLISH_PROMPT_HEAD: &str = "You are an email assistant for {persona}.
+Writing style: {style}
+
+Polish the email draft the user is writing: improve its wording, clarity and flow, following the \
+user's instructions for this edit when there are any. Keep every fact, name, number, date, link and \
+commitment, and keep its intended meaning: never add facts, offers or promises, and never drop a \
+question or a request. Keep the language of the draft unless the instructions name another. The \
+instructions are for you: never copy them into the draft.
+Return only the polished draft: no subject line, no signature, no comment on what you changed.
+
+";
+
+struct PolishPromptInput<'a> {
+    persona: &'a str,
+    style: &'a str,
+    /// The draft as the user wrote it, signature left out.
+    draft: &'a str,
+    instructions: Option<&'a str>,
+}
+
+/// Assemble the polish prompt, split for the prefix cache. Pure. The draft and
+/// the instructions are never cut: over `MAX_PROMPT_CHARS` it is an error
+/// saying how much to shorten them.
+fn plan_polish_prompt(input: &PolishPromptInput<'_>) -> Result<ReplyPrompt> {
+    let prefix = POLISH_PROMPT_HEAD
+        .replace("{persona}", input.persona)
+        .replace("{style}", input.style);
+    // The instructions come last, next to where the model starts writing.
+    let mut suffix = format!("Draft:\n{}\n\n", input.draft.trim());
+    if let Some(instructions) = input.instructions.map(str::trim).filter(|i| !i.is_empty()) {
+        suffix.push_str(&format!("Instructions for this edit: {instructions}\n\n"));
+    }
+    suffix.push_str("Polished draft:\n");
+
+    let len = prefix.len() + suffix.len();
+    if len > MAX_PROMPT_CHARS {
+        // Bytes over the limit: cutting that many characters always fits.
+        let over = len - MAX_PROMPT_CHARS;
+        return Err(AppError::InvalidInput(format!(
+            "the draft and instructions are too long to polish with AI: shorten them by at least {over} characters"
+        )));
+    }
+    Ok(ReplyPrompt { prefix, suffix })
+}
+
+/// Generation budget for a polish: about one token per two characters of the
+/// draft, so a polished draft is not cut off, within the band a draft gets.
+fn polish_max_tokens(draft_chars: usize) -> u32 {
+    u32::try_from(draft_chars / 2).unwrap_or(u32::MAX).clamp(800, 3_000)
+}
+
+/// Polish the draft the user is writing: same facts and meaning, edited as
+/// the instructions say. `kind` decides who signs, as for a generated draft.
+pub async fn polish_draft(
+    db: &Arc<Database>,
+    account_id: &str,
+    kind: DraftKind,
+    draft: &str,
+    instructions: Option<&str>,
+) -> Result<DraftResult> {
+    let ai = AiService::new(db.clone())?;
+    polish_draft_with(&ai, db, account_id, kind, draft, instructions).await
+}
+
+/// [`polish_draft`] with the AI service injected, for tests. A reply the model
+/// cut off at its length limit, or an empty one, is an error: the user's draft
+/// must never be replaced by part of it.
+pub async fn polish_draft_with(
+    ai: &AiService,
+    db: &Database,
+    account_id: &str,
+    kind: DraftKind,
+    draft: &str,
+    instructions: Option<&str>,
+) -> Result<DraftResult> {
+    if draft.trim().is_empty() {
+        return Err(AppError::InvalidInput("there is no draft to polish".into()));
+    }
+    let (persona, style) = persona_and_style(db)?;
+    let prompt = plan_polish_prompt(&PolishPromptInput {
+        persona: &persona,
+        style: &style,
+        draft,
+        instructions,
+    })?;
+    let account = db.get_account(account_id)?;
+    let sender_name = account
+        .as_ref()
+        .and_then(crate::services::accounts::sender_display_name)
+        .unwrap_or_default();
+    let sign_off = plan_sign_off(load_signature(db, account_id).as_ref(), kind, sender_name);
+
+    crate::services::logger::log("info", "ai", "Polishing the draft…");
+    let start = std::time::Instant::now();
+    let result = ai
+        .complete_with_prefix_result(
+            &prompt.prefix,
+            &prompt.suffix,
+            "polish_draft",
+            Some(CompletionOptions {
+                temperature: Some(0.3),
+                max_tokens: Some(polish_max_tokens(draft.chars().count())),
+                think: None,
+                json_shape: None,
+            }),
+        )
+        .await?;
+    if result.truncated {
+        return Err(AppError::AiError(
+            "the polished draft was cut off at the model's length limit; your draft is unchanged".into(),
+        ));
+    }
+    let body = without_own_sign_off(result.text.trim(), &sign_off);
+    if body.trim().is_empty() {
+        return Err(AppError::AiError(
+            "the model returned an empty draft; your draft is unchanged".into(),
+        ));
+    }
+    crate::services::logger::log(
+        "success",
+        "ai",
+        format!(
+            "draft polished ({} chars, {}ms)",
+            body.len(),
+            start.elapsed().as_millis()
+        ),
     );
     Ok(DraftResult {
         body,
@@ -744,8 +898,10 @@ const PER_DRAFT_PLACEHOLDERS: [&str; 3] = ["{thread_context}", "{rag_context}", 
 /// The thread is fitted into whatever `MAX_PROMPT_CHARS` leaves after the
 /// template, precedents and instructions (never less than
 /// `MIN_THREAD_CHARS`), shared out by [`allocate_thread_budget`], so the
-/// closing instruction is never truncated away.
-fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
+/// closing instruction is never truncated away. The user's instructions are
+/// never cut either: when they alone push the prompt past the budget, it is
+/// an error saying how much to shorten them.
+fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> Result<ReplyPrompt> {
     let template = input
         .template
         .replace("{persona}", input.persona)
@@ -765,8 +921,20 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
     );
     let instructions_section = per_draft_section(input.instructions, &rules);
 
-    let fixed_len = template.len() + input.rag_context.len() + instructions_section.len();
     let overhead = closing_instruction(input.thread.len(), "").len() + THREAD_HEADER_CHARS * input.thread.len();
+    // Only the instructions are this draft's input: a long template is the
+    // user's setting and keeps working as before.
+    let least_without = template.len() + rules.len() + overhead + MIN_THREAD_CHARS;
+    let least_with = template.len() + instructions_section.len() + overhead + MIN_THREAD_CHARS;
+    if least_without <= MAX_PROMPT_CHARS && least_with > MAX_PROMPT_CHARS {
+        // Bytes over the limit: cutting that many characters always fits.
+        let over = least_with - MAX_PROMPT_CHARS;
+        return Err(AppError::InvalidInput(format!(
+            "the instructions are too long for an AI draft: shorten them by at least {over} characters"
+        )));
+    }
+
+    let fixed_len = template.len() + input.rag_context.len() + instructions_section.len();
     let thread_budget = MAX_PROMPT_CHARS
         .saturating_sub(fixed_len + overhead)
         .max(MIN_THREAD_CHARS);
@@ -786,10 +954,10 @@ fn plan_reply_prompt(input: &ReplyPromptInput<'_>) -> ReplyPrompt {
         suffix.push_str(&instructions_section);
     }
 
-    ReplyPrompt {
+    Ok(ReplyPrompt {
         prefix: prefix.to_string(),
         suffix,
-    }
+    })
 }
 
 /// Share `budget` chars across a thread's message bodies (`lens`, oldest
@@ -1437,6 +1605,7 @@ mod tests {
             sign_off,
             language: None,
         })
+        .expect("fits")
     }
 
     // ── Language of the draft ───────────────────────────────────────────
@@ -1651,8 +1820,8 @@ mod tests {
             sign_off: by_name(),
             language,
         };
-        let spanish = plan_reply_prompt(&input(Some("Spanish")));
-        let unknown = plan_reply_prompt(&input(None));
+        let spanish = plan_reply_prompt(&input(Some("Spanish"))).expect("fits");
+        let unknown = plan_reply_prompt(&input(None)).expect("fits");
         assert_eq!(spanish.prefix, unknown.prefix);
         assert_ne!(spanish.suffix, unknown.suffix);
     }
@@ -2018,7 +2187,8 @@ mod tests {
             instructions: None,
             sign_off: by_name(),
             language: None,
-        });
+        })
+        .expect("fits");
         assert_eq!(p.prefix, "Just write something nice.");
         assert_eq!(p.suffix, reply_rules(&by_name()));
     }
@@ -2112,5 +2282,223 @@ mod tests {
         let ctx = build_rag_context(&[src], "me@example.com");
         assert!(ctx.contains("Test Subject"), "subject must appear in RAG context");
         assert!(ctx.contains("Test snippet"), "snippet must appear in RAG context");
+    }
+
+    // ── Reply instructions that do not fit ─────────────────────────────────
+
+    #[test]
+    fn reply_prompt_refuses_instructions_too_long_instead_of_cutting_them() {
+        let long = format!("{}END OF INSTRUCTIONS", "x".repeat(MAX_PROMPT_CHARS));
+        let err = plan_reply_prompt(&ReplyPromptInput {
+            template: DEFAULT_PROMPT_TEMPLATE,
+            persona: "a consultant",
+            style: "brief",
+            thread: &[msg("Alice", "can we meet?")],
+            rag_context: "",
+            instructions: Some(&long),
+            sign_off: by_name(),
+            language: None,
+        })
+        .expect_err("instructions over the budget must not reach the model");
+        match err {
+            AppError::InvalidInput(detail) => assert!(
+                detail.contains("shorten them by at least") && detail.contains("instructions"),
+                "must say how much to shorten the instructions; got: {detail}"
+            ),
+            other => panic!("must be InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reply_prompt_without_instructions_never_refuses_a_long_template() {
+        // A long custom template is the user's setting, not this draft's
+        // input: it keeps working as before, instructions or not.
+        let template = format!("{}\n{{thread_context}}\n{{instructions}}Reply:", "rule ".repeat(3_000));
+        let p = plan_signed(&[msg("Alice", "hi")], None, by_name(), &template, "");
+        assert!(p.suffix.contains("Message 1"));
+    }
+
+    // ── New draft: the body as background ──────────────────────────────────
+
+    #[test]
+    fn the_current_draft_is_background_for_a_new_draft() {
+        let section = background_draft_section(Some("  Hi Carla, quick note about the proposal.  "));
+        assert!(
+            section.contains("Hi Carla, quick note about the proposal."),
+            "{section}"
+        );
+        assert!(section.contains("background"), "{section}");
+    }
+
+    #[test]
+    fn no_draft_adds_no_background() {
+        assert_eq!(background_draft_section(None), "");
+        assert_eq!(background_draft_section(Some("  \n ")), "");
+    }
+
+    #[test]
+    fn a_new_draft_prompt_without_a_body_is_unchanged() {
+        let instructions = per_draft_section(Some("be brief"), &sign_off_rule(&by_name()));
+        let to = vec!["ana@example.com".to_string()];
+        let before = build_new_draft_prompt("p", "s", Language::En, &to, "Hi", &instructions);
+        let after = build_new_draft_prompt(
+            "p",
+            "s",
+            Language::En,
+            &to,
+            "Hi",
+            &format!("{}{instructions}", background_draft_section(None)),
+        );
+        assert_eq!(before, after);
+    }
+
+    // ── Polish ─────────────────────────────────────────────────────────────
+
+    fn polish(draft: &str, instructions: Option<&str>) -> Result<ReplyPrompt> {
+        plan_polish_prompt(&PolishPromptInput {
+            persona: "a consultant",
+            style: "brief",
+            draft,
+            instructions,
+        })
+    }
+
+    #[test]
+    fn polish_prompt_prefix_is_identical_for_every_draft() {
+        let a = polish("Hi Ana, thursday ok", None).expect("fits");
+        let b = polish("Hola Bruno, el viernes", Some("make it warmer")).expect("fits");
+        assert_eq!(a.prefix, b.prefix, "the cached head must not depend on the draft");
+        assert!(a.prefix.contains("a consultant") && a.prefix.contains("brief"));
+        assert!(!a.prefix.contains("thursday") && !b.prefix.contains("warmer"));
+    }
+
+    #[test]
+    fn polish_prompt_puts_the_instructions_after_the_draft() {
+        let p = polish("Hi Ana, thursday ok", Some("make it warmer")).expect("fits");
+        let draft_at = p.suffix.find("Hi Ana, thursday ok").expect("draft in the suffix");
+        let instructions_at = p.suffix.find("make it warmer").expect("instructions in the suffix");
+        assert!(draft_at < instructions_at, "{}", p.suffix);
+    }
+
+    #[test]
+    fn polish_prompt_without_instructions_has_no_instruction_line() {
+        let p = polish("Hi Ana, thursday ok", Some("   ")).expect("fits");
+        assert!(!p.suffix.contains("Instructions for this edit"), "{}", p.suffix);
+    }
+
+    #[test]
+    fn polish_prompt_keeps_the_facts_meaning_and_language() {
+        let p = polish("Hi Ana, thursday ok", None).expect("fits");
+        assert!(p.prefix.contains("Keep every fact"), "{}", p.prefix);
+        assert!(p.prefix.contains("intended meaning"), "{}", p.prefix);
+        assert!(p.prefix.contains("language"), "{}", p.prefix);
+        assert!(p.prefix.contains("never copy them into the draft"), "{}", p.prefix);
+    }
+
+    #[test]
+    fn polish_prompt_refuses_an_input_too_long_instead_of_cutting_it() {
+        let draft = format!("{}END OF DRAFT", "x".repeat(MAX_PROMPT_CHARS));
+        let err = polish(&draft, Some("tidy it")).expect_err("over the budget must not reach the model cut");
+        match err {
+            AppError::InvalidInput(detail) => assert!(
+                detail.contains("shorten them by at least"),
+                "must say how much to shorten; got: {detail}"
+            ),
+            other => panic!("must be InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn polish_max_tokens_follows_the_draft_within_bounds() {
+        assert_eq!(polish_max_tokens(100), 800);
+        assert_eq!(polish_max_tokens(4_000), 2_000);
+        assert_eq!(polish_max_tokens(50_000), 3_000);
+    }
+
+    async fn polish_with_fake(fake: Arc<crate::ai::provider::FakeAiProvider>, draft: &str) -> Result<DraftResult> {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let ai = AiService::with_provider(db.clone(), fake);
+        polish_draft_with(
+            &ai,
+            &db,
+            "acc-1",
+            DraftKind::Reply,
+            draft,
+            Some("SECRET-STEER make it warmer"),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn polish_returns_the_models_text_never_the_instructions() {
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new());
+        fake.push_completion("Hi Ana,\n\nThursday at 10:00 works well for me.\n\nBest regards,");
+        let result = polish_with_fake(fake.clone(), "Hi Ana, thursday 10:00 ok")
+            .await
+            .expect("polished");
+
+        assert_eq!(
+            result.body,
+            "Hi Ana,\n\nThursday at 10:00 works well for me.\n\nBest regards,"
+        );
+        assert!(!result.body.contains("SECRET-STEER"));
+        assert!(result.sources.is_empty());
+        let calls = fake.prefix_completion_calls();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].1.contains("Hi Ana, thursday 10:00 ok") && calls[0].1.contains("SECRET-STEER"));
+    }
+
+    #[tokio::test]
+    async fn polish_refuses_a_draft_the_model_cut_off() {
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new());
+        fake.push_truncated_completion("Hi Ana,\n\nThursday at 10:00 works");
+        let err = polish_with_fake(fake, "Hi Ana, thursday 10:00 ok")
+            .await
+            .expect_err("a cut-off polish must not replace the draft");
+        assert!(
+            matches!(err, AppError::AiError(ref m) if m.contains("unchanged")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn polish_needs_a_draft() {
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new());
+        let err = polish_with_fake(fake.clone(), "  \n ")
+            .await
+            .expect_err("nothing to polish");
+        assert!(matches!(err, AppError::InvalidInput(_)), "{err:?}");
+        assert!(fake.prefix_completion_calls().is_empty() && fake.completion_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn polish_leaves_the_name_to_the_app_signature() {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        db.insert_account(&crate::models::Account {
+            id: "acc-1".to_string(),
+            provider: "gmail".to_string(),
+            email: "ana@example.com".to_string(),
+            name: "Ana Example".to_string(),
+            created_at: 0,
+            sort_order: 0,
+            enabled: true,
+            sync_from_timestamp: None,
+            color: crate::models::AccountColor::Blue,
+        })
+        .expect("account");
+        db.upsert_account_signature("acc-1", "<p>Ana Example</p>", true, true, 0)
+            .expect("signature");
+        let fake = Arc::new(crate::ai::provider::FakeAiProvider::new());
+        fake.push_completion("Hi Bruno,\n\nThe budget arrives on Friday.\n\nBest regards,\nAna Example");
+        let ai = AiService::with_provider(db.clone(), fake);
+
+        let result = polish_draft_with(&ai, &db, "acc-1", DraftKind::New, "budget friday", None)
+            .await
+            .expect("polished");
+
+        assert_eq!(
+            result.body,
+            "Hi Bruno,\n\nThe budget arrives on Friday.\n\nBest regards,"
+        );
     }
 }

@@ -76,7 +76,7 @@
     "generate": "Mit KI erzeugen",
     "generating": "Wird erzeugt…",
     "generatingLong": "Entwurf wird erzeugt… ähnliche Threads werden abgerufen",
-    "newTitle": "Diese E-Mail mit KI aus Empfängern, Betreff und getippten Notizen entwerfen",
+    "newTitle": "Diese E-Mail mit KI aus Empfängern, Betreff, deinen Anweisungen und dem bereits Geschriebenen entwerfen. Braucht einen Empfänger und einen Betreff.",
     "rewrite": "Neu schreiben",
     "shorten": "Kürzer",
     "expand": "Länger",
@@ -84,8 +84,14 @@
     "toneFormal": "Förmlich",
     "toneCasual": "Locker",
     "toneFriendly": "Freundlich",
-    "instructionPlaceholder": "Sag der KI, was sie antworten soll (optional), z. B. zusagen, aber Donnerstag vorschlagen",
-    "regenerate": "Neu generieren"
+    "instructionPlaceholder": "Anweisungen für die KI, werden nie gesendet (optional), z. B. zusagen, aber Donnerstag vorschlagen",
+    "regenerate": "Neu generieren",
+    "polish": "Überarbeiten",
+    "polishing": "Wird überarbeitet…",
+    "polishTitle": "Überarbeitet deinen Entwurf nach den Anweisungen und behält seine Fakten und seinen Sinn",
+    "polishNeedsDraft": "Schreib zuerst etwas und überarbeite es dann",
+    "failed": "Die KI konnte nicht fertig werden: {{error}}. Dein Text ist unverändert.",
+    "timedOut": "Die KI hat zu lange gebraucht. Dein Text ist unverändert; versuch es noch einmal."
   },
   "feedback": {
     "general": {

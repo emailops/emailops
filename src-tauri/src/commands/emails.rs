@@ -398,6 +398,62 @@ struct DraftFailedEvent {
     error: String,
 }
 
+/// Send a draft request's outcome to the composer that asked: the body on
+/// `draft-generated`, or the error on `draft-failed` (also logged, `what`
+/// naming the request). Both carry `request_id`, which the frontend matches.
+fn emit_draft_outcome(
+    app: &AppHandle,
+    request_id: String,
+    email_id: String,
+    what: &str,
+    outcome: Result<services::emails::DraftResult, AppError>,
+) {
+    let emitted = match outcome {
+        Ok(result) => app.emit(
+            "draft-generated",
+            DraftGeneratedEvent {
+                request_id,
+                email_id,
+                body: result.body,
+                sources: result.sources,
+            },
+        ),
+        Err(err) => {
+            let message = err.to_string();
+            emit_log(app, "error", "drafts", &format!("{what} failed: {message}"));
+            app.emit(
+                "draft-failed",
+                DraftFailedEvent {
+                    request_id,
+                    email_id,
+                    error: message,
+                },
+            )
+        }
+    };
+    if let Err(e) = emitted {
+        emit_log(
+            app,
+            "error",
+            "drafts",
+            &format!("failed to emit the {what} outcome: {e}"),
+        );
+    }
+}
+
+/// The hard gate every AI draft request passes: the master AI switch and the
+/// per-feature `ai_drafts_enabled` preference, so a user who disabled drafts
+/// in Settings cannot still trigger one from the keyboard or a composer.
+fn ensure_ai_drafts_enabled(state: &AppState) -> Result<(), AppError> {
+    if !state.db.is_ai_enabled()? {
+        return Err(AppError::AiDisabled);
+    }
+    if !state.db.is_ai_drafts_enabled()? {
+        return Err(AppError::InvalidInput("AI drafts are disabled".into()));
+    }
+    Ok(())
+}
+
 /// Kick off AI draft generation for `email_id`.
 ///
 /// Returns a `request_id` immediately and runs the actual work on `ai_queue`
@@ -413,63 +469,18 @@ pub async fn generate_draft(
     instructions: Option<String>,
 ) -> Result<String, AppError> {
     services::ownership::email_in_account(&state.db, &account_id, &email_id)?;
-    // Hard gate: respect both the master AI switch and the per-feature
-    // `ai_drafts_enabled` preference so a user who disabled drafts in
-    // Settings cannot still trigger a generation via the keyboard.
-    if !state.db.is_ai_enabled()? {
-        return Err(AppError::AiDisabled);
-    }
-    if !state.db.is_ai_drafts_enabled()? {
-        return Err(AppError::InvalidInput("AI drafts are disabled".into()));
-    }
+    ensure_ai_drafts_enabled(&state)?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let db = state.db.clone();
-    let app_for_task = app.clone();
     let request_id_for_task = request_id.clone();
-    let email_id_for_task = email_id.clone();
     let task_label = format!("draft:{}", email_id);
 
     state
         .ai_queue
         .submit_named(&task_label, async move {
-            match services::emails::generate_draft(&db, &email_id_for_task, instructions.as_deref()).await {
-                Ok(result) => {
-                    if let Err(e) = app_for_task.emit(
-                        "draft-generated",
-                        DraftGeneratedEvent {
-                            request_id: request_id_for_task.clone(),
-                            email_id: email_id_for_task.clone(),
-                            body: result.body,
-                            sources: result.sources,
-                        },
-                    ) {
-                        emit_log(
-                            &app_for_task,
-                            "error",
-                            "drafts",
-                            &format!("failed to emit draft-generated: {}", e),
-                        );
-                    }
-                }
-                Err(err) => {
-                    let message = err.to_string();
-                    emit_log(
-                        &app_for_task,
-                        "error",
-                        "drafts",
-                        &format!("draft generation failed: {}", message),
-                    );
-                    let _ = app_for_task.emit(
-                        "draft-failed",
-                        DraftFailedEvent {
-                            request_id: request_id_for_task.clone(),
-                            email_id: email_id_for_task.clone(),
-                            error: message,
-                        },
-                    );
-                }
-            }
+            let outcome = services::emails::generate_draft(&db, &email_id, instructions.as_deref()).await;
+            emit_draft_outcome(&app, request_id_for_task, email_id, "draft generation", outcome);
         })
         .await;
 
@@ -479,11 +490,12 @@ pub async fn generate_draft(
 /// Kick off AI draft generation for a brand-new email (no thread to reply to).
 ///
 /// Mirrors `generate_draft` but drives `services::emails::generate_new_draft`
-/// from the compose window's recipients + subject (+ optional freeform brief
-/// carried in `instructions`). Returns a `request_id` immediately and runs the
-/// work on `ai_queue`; the frontend listens for the same `draft-generated`
-/// (success) / `draft-failed` (error) events, keyed by `request_id`. `email_id`
-/// is empty on those events since there is no inbound message to reference.
+/// from the compose window's recipients + subject, the user's `instructions`
+/// and, as background, the `draft` the window already holds. Returns a
+/// `request_id` immediately and runs the work on `ai_queue`; the frontend
+/// listens for the same `draft-generated` (success) / `draft-failed` (error)
+/// events, keyed by `request_id`. `email_id` is empty on those events since
+/// there is no inbound message to reference.
 #[tauri::command]
 pub async fn generate_new_draft(
     app: AppHandle,
@@ -492,63 +504,66 @@ pub async fn generate_new_draft(
     to: Vec<String>,
     subject: String,
     instructions: Option<String>,
+    draft: Option<String>,
 ) -> Result<String, AppError> {
-    // Same hard gate as `generate_draft`: honor the master AI switch and the
-    // per-feature drafts toggle so a disabled feature can't be driven from the
-    // compose window either.
-    if !state.db.is_ai_enabled()? {
-        return Err(AppError::AiDisabled);
-    }
-    if !state.db.is_ai_drafts_enabled()? {
-        return Err(AppError::InvalidInput("AI drafts are disabled".into()));
-    }
+    ensure_ai_drafts_enabled(&state)?;
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let db = state.db.clone();
-    let app_for_task = app.clone();
     let request_id_for_task = request_id.clone();
     let task_label = format!("new-draft:{}", account_id);
 
     state
         .ai_queue
         .submit_named(&task_label, async move {
-            match services::emails::generate_new_draft(&db, &account_id, &to, &subject, instructions.as_deref()).await {
-                Ok(result) => {
-                    if let Err(e) = app_for_task.emit(
-                        "draft-generated",
-                        DraftGeneratedEvent {
-                            request_id: request_id_for_task.clone(),
-                            email_id: String::new(),
-                            body: result.body,
-                            sources: result.sources,
-                        },
-                    ) {
-                        emit_log(
-                            &app_for_task,
-                            "error",
-                            "drafts",
-                            &format!("failed to emit draft-generated: {}", e),
-                        );
-                    }
-                }
-                Err(err) => {
-                    let message = err.to_string();
-                    emit_log(
-                        &app_for_task,
-                        "error",
-                        "drafts",
-                        &format!("new draft generation failed: {}", message),
-                    );
-                    let _ = app_for_task.emit(
-                        "draft-failed",
-                        DraftFailedEvent {
-                            request_id: request_id_for_task.clone(),
-                            email_id: String::new(),
-                            error: message,
-                        },
-                    );
-                }
-            }
+            let outcome = services::emails::generate_new_draft(
+                &db,
+                &account_id,
+                &to,
+                &subject,
+                instructions.as_deref(),
+                draft.as_deref(),
+            )
+            .await;
+            emit_draft_outcome(
+                &app,
+                request_id_for_task,
+                String::new(),
+                "new draft generation",
+                outcome,
+            );
+        })
+        .await;
+
+    Ok(request_id)
+}
+
+/// Kick off an AI polish of the draft the user is writing: the same facts and
+/// meaning, edited as `instructions` say. `kind` is a new message or a reply
+/// (who signs differs). Same async contract as `generate_new_draft`: a
+/// `request_id` now, the polished body on `draft-generated` or the error on
+/// `draft-failed`, with an empty `email_id`.
+#[tauri::command]
+pub async fn polish_draft(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_id: String,
+    kind: services::emails::DraftKind,
+    draft: String,
+    instructions: Option<String>,
+) -> Result<String, AppError> {
+    ensure_ai_drafts_enabled(&state)?;
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let db = state.db.clone();
+    let request_id_for_task = request_id.clone();
+    let task_label = format!("polish-draft:{}", account_id);
+
+    state
+        .ai_queue
+        .submit_named(&task_label, async move {
+            let outcome = services::emails::polish_draft(&db, &account_id, kind, &draft, instructions.as_deref()).await;
+            emit_draft_outcome(&app, request_id_for_task, String::new(), "draft polish", outcome);
         })
         .await;
 

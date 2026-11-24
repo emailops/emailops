@@ -30,7 +30,7 @@ import {
 } from '@/lib/composeDraft';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
-import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
+import { AI_DRAFT_TIMEOUT_MS, createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
@@ -40,6 +40,7 @@ import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
 import type { Account } from '@/types';
+import { AiInstructionBar } from './AiInstructionBar';
 
 /** What the tab bar needs to close this tab the way its own × does. */
 export interface ComposeTabHandle {
@@ -124,6 +125,8 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
   // as ComposeModal, which this view replaces when the user maximizes.
   const draftTrackerRef = useRef(createDraftRequestTracker());
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  // Why the last AI request failed, shown under the instructions.
+  const [aiError, setAiError] = useState<string | null>(null);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
   const [activeField, setActiveField] = useState<RecipientField | null>(null);
@@ -276,8 +279,15 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
   const applyDraftOutcomeRef = useRef<(outcome: DraftOutcome) => void>(() => {});
   applyDraftOutcomeRef.current = (outcome) => {
     setIsGeneratingDraft(false);
+    // A failure or a timeout leaves the body as the user left it.
     if (outcome.kind === 'failed') {
+      setAiError(t('compose:aiDraft.failed', { error: outcome.event.error }));
       addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
+      return;
+    }
+    if (outcome.kind === 'timedOut') {
+      setAiError(t('compose:aiDraft.timedOut'));
+      addLog('error', 'ai', 'AI draft timed out; the composer keeps its text');
       return;
     }
     const draft = plainTextToHtml(outcome.event.body);
@@ -308,6 +318,8 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
 
   const canDraftWithAi = mergePendingRecipient(toRecipients, toInput).length > 0 && !!subject.trim();
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  // What the user wrote, signature left out: the draft the AI works on.
+  const typedBody = useMemo(() => prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim(), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
     cc: mergePendingRecipient(ccRecipients, ccInput),
@@ -319,23 +331,44 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
     attachments: attachments.length + draftFiles.files.length,
   });
 
-  const handleDraftWithAI = async () => {
-    const to = mergePendingRecipient(toRecipients, toInput);
-    if (to.length === 0 || !subject.trim()) return;
-    // Whatever is already typed becomes the freeform brief for the model.
-    const brief = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim();
+  /** Start an AI request (`start` returns its id) and wait for its outcome,
+   *  at most `AI_DRAFT_TIMEOUT_MS`. Same contract as ComposeModal. */
+  const requestAi = async (what: string, start: () => Promise<string>) => {
+    setAiError(null);
     setIsGeneratingDraft(true);
-    addLog('info', 'ai', 'Requesting AI draft…');
-    draftTrackerRef.current.begin();
+    addLog('info', 'ai', `Requesting ${what}…`);
+    const token = draftTrackerRef.current.begin();
+    setTimeout(() => {
+      const expired = draftTrackerRef.current.expire(token);
+      if (expired) applyDraftOutcomeRef.current(expired);
+    }, AI_DRAFT_TIMEOUT_MS);
     try {
-      const requestId = await api.generateNewDraft(fromAccountId, to, subject.trim(), brief || null);
+      const requestId = await start();
       const early = draftTrackerRef.current.resolve(requestId);
       if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
       setIsGeneratingDraft(false);
       draftTrackerRef.current.cancel();
-      addLog('error', 'ai', `Failed to start AI draft: ${errorText(err)}`);
+      setAiError(t('compose:aiDraft.failed', { error: errorText(err) }));
+      addLog('error', 'ai', `Failed to start ${what}: ${errorText(err)}`);
     }
+  };
+
+  // The instructions steer the model and are never part of the email; the
+  // body goes to it as the draft (background for Generate, the text Polish
+  // edits).
+  const handleDraftWithAI = (instructions: string) => {
+    const to = mergePendingRecipient(toRecipients, toInput);
+    if (to.length === 0 || !subject.trim()) return;
+    void requestAi('AI draft', () =>
+      api.generateNewDraft(fromAccountId, to, subject.trim(), instructions || null, typedBody || null),
+    );
+  };
+
+  const handlePolishWithAI = (instructions: string) => {
+    if (!typedBody) return;
+    const kind = tab.replyToEmailId ? 'reply' : 'new';
+    void requestAi('AI polish', () => api.polishDraft(fromAccountId, kind, typedBody, instructions || null));
   };
 
   /** Send now (`scheduleAt` null: through the undo window when it is on)
@@ -357,7 +390,8 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
       inlineImages: prepared.inlineImages.length,
       attachments: attachments.length + draftFiles.files.length,
     });
-    if (!ready || draftFiles.isStoring) return;
+    // The AI is about to replace the body: what would go out is not final.
+    if (!ready || draftFiles.isStoring || isGeneratingDraft) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -446,7 +480,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
   };
 
   const handleSend = () => void submit(null);
-  const handleSendKey = useComposerSendKey(handleSend, isSending || sent);
+  const handleSendKey = useComposerSendKey(handleSend, isSending || sent || isGeneratingDraft);
 
   // The autosaved draft keeps the text, not the files: those live here until
   // the message goes out, so closing the tab with some asks first.
@@ -633,9 +667,26 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
           />
         </div>
 
+        {/* Maximizing the compose modal swaps it for this view, so the AI
+            instructions have to exist here too — otherwise the feature
+            silently disappears on maximize. */}
+        {aiDraftsEnabled && (
+          <AiInstructionBar
+            onGenerate={handleDraftWithAI}
+            onPolish={handlePolishWithAI}
+            isGenerating={isGeneratingDraft}
+            hasDraft={typedBody.length > 0}
+            canGenerate={canDraftWithAi && !isSending && !sent}
+            generateTitle={t('compose:aiDraft.newTitle')}
+            error={aiError}
+          />
+        )}
+
+        {/* Body: locked while the AI writes it */}
         <RichTextEditor
           value={bodyHtml}
           onChange={setBodyHtml}
+          disabled={isGeneratingDraft}
           placeholder={t('compose:bodyPlaceholder')}
           contentClassName="min-h-[300px]"
           onAttachFiles={handleFiles}
@@ -714,34 +765,11 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
           className="hidden"
           onChange={(e) => handleFiles(e.target.files)}
         />
-        {/* Maximizing the compose modal swaps it for this view, so the AI
-            draft button has to exist here too — otherwise the feature silently
-            disappears on maximize. Same request-id/event contract as
-            ComposeModal. */}
-        {aiDraftsEnabled && (
-          <button
-            type="button"
-            onClick={handleDraftWithAI}
-            disabled={isSending || sent || isGeneratingDraft || !canDraftWithAi}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
-            title={t('compose:aiDraft.newTitle')}
-          >
-            {isGeneratingDraft ? (
-              <div className="h-3.5 w-3.5 animate-spin rounded-full border-b-2 border-white" />
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 17.657l.707.707M12 21v-1m-3-7a3 3 0 116 0c0 1.657-1.5 2.5-1.5 4h-3c0-1.5-1.5-2.343-1.5-4z"
-                />
-              </svg>
-            )}
-            {isGeneratingDraft ? t('compose:aiDraft.generating') : t('compose:aiDraft.generate')}
-          </button>
-        )}
-        <TranslateComposeControl bodyHtml={bodyHtml} onApply={setBodyHtml} disabled={isSending || sent} />
+        <TranslateComposeControl
+          bodyHtml={bodyHtml}
+          onApply={setBodyHtml}
+          disabled={isSending || sent || isGeneratingDraft}
+        />
         <div className="flex-1" />
         <button
           type="button"
@@ -756,7 +784,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
           label={isSending ? t('compose:sending') : t('compose:send')}
           onSend={handleSend}
           onSchedule={(at) => void submit(at)}
-          disabled={isSending || sent || draftFiles.isStoring || !readyToSend}
+          disabled={isSending || sent || draftFiles.isStoring || isGeneratingDraft || !readyToSend}
         />
       </div>
       <Modal

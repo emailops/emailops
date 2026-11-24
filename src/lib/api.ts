@@ -657,8 +657,9 @@ export async function generateDraft(accountId: string, emailId: string, instruct
 
 /**
  * Kick off AI draft generation for a brand-new email (no thread to reply to).
- * Drives the compose window's recipients + subject, plus an optional freeform
- * brief (`instructions` — typically whatever the user has jotted in the body).
+ * Drives the compose window's recipients + subject, the user's
+ * `instructions` (the Instructions for AI box, never sent) and, as
+ * background, the `draft` already in the body.
  *
  * Same async contract as `generateDraft`: returns a `requestId` immediately;
  * the draft arrives via the `draft-generated` / `draft-failed` events keyed by
@@ -669,8 +670,26 @@ export async function generateNewDraft(
   to: string[],
   subject: string,
   instructions?: string | null,
+  draft?: string | null,
 ): Promise<string> {
-  return invoke('generate_new_draft', { accountId, to, subject, instructions });
+  return invoke('generate_new_draft', { accountId, to, subject, instructions, draft });
+}
+
+/**
+ * Kick off an AI polish of the draft being written (`draft`, plain text with
+ * the signature left out): the same facts and meaning, edited as
+ * `instructions` say. `kind` decides who signs, as for a generated draft.
+ *
+ * Same async contract as `generateNewDraft`: a `requestId` now, the polished
+ * body on `draft-generated` or the error on `draft-failed`.
+ */
+export async function polishDraft(
+  accountId: string,
+  kind: 'new' | 'reply',
+  draft: string,
+  instructions?: string | null,
+): Promise<string> {
+  return invoke('polish_draft', { accountId, kind, draft, instructions });
 }
 
 // ── AI translation ───────────────────────────────────────────────────────────

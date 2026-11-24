@@ -1,5 +1,6 @@
-// The reply composer's free-text instruction for the AI draft: the user says
-// what the reply should do ("accept, but propose Thursday") and (re)generates.
+// The composers' free-text instructions for the AI: the user says what the
+// email should do ("accept, but propose Thursday") and (re)generates, or
+// polishes the draft already written. The instructions are never sent.
 
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -27,12 +28,16 @@ afterEach(() => {
 
 function render(props: Partial<Parameters<typeof AiInstructionBar>[0]> = {}) {
   const onGenerate = vi.fn();
+  const onPolish = vi.fn();
   act(() => {
-    root.render(<AiInstructionBar onGenerate={onGenerate} isGenerating={false} hasDraft={false} {...props} />);
+    root.render(
+      <AiInstructionBar onGenerate={onGenerate} onPolish={onPolish} isGenerating={false} hasDraft={false} {...props} />,
+    );
   });
   const input = container.querySelector('input') as HTMLInputElement;
-  const button = container.querySelector('button') as HTMLButtonElement;
-  return { onGenerate, input, button };
+  const button = container.querySelector('[data-testid="ai-generate"]') as HTMLButtonElement;
+  const polish = container.querySelector('[data-testid="ai-polish"]') as HTMLButtonElement;
+  return { onGenerate, onPolish, input, button, polish };
 }
 
 function type(input: HTMLInputElement, value: string) {
@@ -77,5 +82,57 @@ describe('AiInstructionBar', () => {
   it('offers to regenerate once a draft exists', () => {
     const { button } = render({ hasDraft: true });
     expect(button.textContent).toContain('compose:aiDraft.regenerate');
+  });
+
+  it('polishes the draft with the trimmed instruction', () => {
+    const { onPolish, onGenerate, input, polish } = render({ hasDraft: true });
+    type(input, '  make it more formal  ');
+    act(() => polish.click());
+    expect(onPolish).toHaveBeenCalledWith('make it more formal');
+    expect(onGenerate).not.toHaveBeenCalled();
+  });
+
+  it('polishes without an instruction when the box is empty', () => {
+    const { onPolish, polish } = render({ hasDraft: true });
+    act(() => polish.click());
+    expect(onPolish).toHaveBeenCalledWith('');
+  });
+
+  it('has nothing to polish before there is a draft, and says so', () => {
+    const { onPolish, polish } = render({ hasDraft: false });
+    expect(polish.disabled).toBe(true);
+    expect(polish.title).toBe('compose:aiDraft.polishNeedsDraft');
+    act(() => polish.click());
+    expect(onPolish).not.toHaveBeenCalled();
+  });
+
+  it('does not generate when the composer lacks what a draft needs, and says what', () => {
+    const { onGenerate, input, button } = render({ canGenerate: false, generateTitle: 'needs a subject' });
+    expect(button.disabled).toBe(true);
+    expect(button.title).toBe('needs a subject');
+    type(input, 'say yes');
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(onGenerate).not.toHaveBeenCalled();
+  });
+
+  it('locks both actions while either runs, and shows which one is running', () => {
+    const { onPolish, input, button, polish } = render({ hasDraft: true });
+    type(input, 'warmer');
+    act(() => polish.click());
+    act(() => {
+      root.render(<AiInstructionBar onGenerate={vi.fn()} onPolish={onPolish} isGenerating={true} hasDraft={true} />);
+    });
+    expect(polish.disabled && button.disabled).toBe(true);
+    expect(polish.textContent).toContain('compose:aiDraft.polishing');
+    // The instruction is kept for a retry.
+    expect(input.value).toBe('warmer');
+  });
+
+  it('shows why the last request failed', () => {
+    const { input } = render({ hasDraft: true, error: 'The AI took too long' });
+    expect(container.textContent).toContain('The AI took too long');
+    expect(input.disabled).toBe(false);
   });
 });
