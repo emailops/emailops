@@ -257,6 +257,15 @@ the composer for you to review before anything is sent.
 A draft reads the thread up to the message you are answering, never the replies that came
 after it. You can tell the AI what to say before it writes, and **Regenerate** writes it again.
 
+<!-- claim:ai-ai-drafts-3 -->
+Above the text of a new email, a reply or a reply-all, the **Instructions for AI** box tells
+the AI what you want: what you type there is never sent and never saved with the draft.
+**Generate with AI** writes the email from them; in a new email, the text you already wrote is
+background for it. **Polish** edits the text you wrote as the instructions say and keeps its
+facts and meaning. While the AI works, the text and **Send** are locked; if it fails or takes
+longer than two minutes, your text stays as it was. Instructions or text too long for the AI
+are refused with how much to shorten them, never cut.
+
 ## Classification {#classification}
 
 <!-- claim:ai-classification-1 -->

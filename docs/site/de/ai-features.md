@@ -272,6 +272,16 @@ Ein Entwurf liest den Thread bis zu der Nachricht, auf die Sie antworten, nie di
 Antworten. Sie können der KI vorher sagen, was sie antworten soll, und **Neu generieren**
 schreibt ihn erneut.
 
+<!-- claim:ai-ai-drafts-3 -->
+Über dem Text einer neuen E-Mail, einer Antwort oder einer Antwort an alle sagt das Feld
+**Anweisungen für die KI** der KI, was Sie möchten: Was Sie dort eingeben, wird nie gesendet
+und nie mit dem Entwurf gespeichert. **Mit KI erzeugen** schreibt die E-Mail nach diesen
+Anweisungen; in einer neuen E-Mail dient der bereits geschriebene Text als Hintergrund.
+**Überarbeiten** bearbeitet Ihren Text nach den Anweisungen und behält seine Fakten und seinen
+Sinn. Während die KI arbeitet, sind der Text und **Senden** gesperrt; schlägt sie fehl oder
+braucht sie länger als zwei Minuten, bleibt Ihr Text, wie er war. Zu lange Anweisungen oder
+Texte werden mit der Angabe abgelehnt, um wie viel sie zu kürzen sind, nie abgeschnitten.
+
 ## Klassifizierung {#classification}
 
 <!-- claim:ai-classification-1 -->

@@ -1221,6 +1221,14 @@ checks = [
   { manual = 'Writing a draft needs the local model; the instruction box and Regenerate are not driven by the docs check.' },
 ]
 
+[ai-ai-drafts-3]
+checks = [
+  { tests = ['services::emails::drafts::tests::the_current_draft_is_background_for_a_new_draft'], covers = ["Generate with AI writes the email from them; in a new email, the text you already wrote is background for it."] },
+  { tests = ['services::emails::drafts::tests::polish_returns_the_models_text_never_the_instructions', 'services::emails::drafts::tests::polish_prompt_keeps_the_facts_meaning_and_language'], covers = ["Polish edits the text you wrote as the instructions say and keeps its facts and meaning."] },
+  { tests = ['services::emails::drafts::tests::reply_prompt_refuses_instructions_too_long_instead_of_cutting_them', 'services::emails::drafts::tests::polish_prompt_refuses_an_input_too_long_instead_of_cutting_it', 'services::emails::drafts::tests::fit_new_draft_prompt_refuses_a_long_brief_instead_of_cutting_its_end'], covers = ["Instructions or text too long for the AI are refused with how much to shorten them, never cut."] },
+  { manual = 'Writing a draft needs the local model; the instructions box, the save/send payloads, the locks and the two-minute timeout are covered by vitest (ComposeModal.aiInstructions, ComposeTabView.aiInstructions, ReplyCompose.aiInstructions, EmailView.aiDraft) and are not driven by the docs check.' },
+]
+
 [ai-classification-1]
 checks = [
   { app = true },
