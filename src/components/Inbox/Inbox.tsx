@@ -647,7 +647,11 @@ export function Inbox({
           columns={listColumns}
           onColumnsChange={setListColumns}
           sort={listSort}
-          onSort={(key) => setListSort(nextListSort(listSort, key))}
+          onSort={(key) => {
+            setListSort(nextListSort(listSort, key));
+            // The list reloads from its first page in the new order: show it.
+            if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+          }}
           sortable={listSortable(listScope, Boolean(searchQuery))}
           inSentView={inSentView}
         />

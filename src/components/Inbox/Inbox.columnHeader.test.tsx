@@ -19,7 +19,17 @@ vi.mock('@/lib/api', () => ({
   setPref: vi.fn(async () => {}),
 }));
 vi.mock('./VirtualEmailList', () => ({
-  VirtualEmailList: ({ columns }: { columns?: unknown }) => <p data-testid="columns">{JSON.stringify(columns)}</p>,
+  VirtualEmailList: ({
+    columns,
+    scrollContainerRef,
+  }: {
+    columns?: unknown;
+    scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+  }) => (
+    <div ref={scrollContainerRef} data-testid="scroller">
+      <p data-testid="columns">{JSON.stringify(columns)}</p>
+    </div>
+  ),
 }));
 vi.mock('./InboxSearchBox', () => ({ InboxSearchBox: () => null }));
 
@@ -79,6 +89,21 @@ describe('the full-width list column header', () => {
     });
 
     expect(useEmailStore.getState().listSort).toEqual({ key: 'subject', dir: 'asc' });
+  });
+
+  it('shows the top of the list in its new order', async () => {
+    await mount(true);
+    const scroller = container.querySelector<HTMLDivElement>('[data-testid="scroller"]');
+    if (!scroller) throw new Error('list not rendered');
+    scroller.scrollTop = 900;
+
+    await act(async () => {
+      container
+        .querySelector('[data-testid="list-sort-subject"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(scroller.scrollTop).toBe(0);
   });
 
   it('hands the saved optional columns to the rows', async () => {
