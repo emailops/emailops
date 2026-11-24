@@ -77,6 +77,10 @@
     "afterLeaveNext": "Nächste Konversation öffnen",
     "afterLeavePrevious": "Vorherige Konversation öffnen",
     "afterLeaveList": "Zurück zur Liste",
+    "conversationView": "Konversationsansicht",
+    "conversationViewHelp": "Wie eine geöffnete Konversation angezeigt wird. Mit „Ihre letzte Nachricht zuerst“ sind alle Nachrichten geöffnet: oben die zuletzt von Ihnen geschriebene, darunter der Rest der Konversation, die älteste zuerst. Antworten, Allen antworten und Weiterleiten funktionieren in beiden gleich.",
+    "conversationViewPerMessage": "Neueste Nachricht öffnen, die anderen einzeln aufklappen",
+    "conversationViewOwnFirst": "Ihre letzte Nachricht zuerst, alle Nachrichten geöffnet",
     "defaultSender": "Neue Nachrichten senden von",
     "defaultSenderHelp": "Das Konto, mit dem eine neue Nachricht beginnt. Antworten, Weiterleitungen und Entwürfe behalten ihr eigenes Konto.",
     "defaultSenderView": "Konto der ausgewählten Ansicht"
