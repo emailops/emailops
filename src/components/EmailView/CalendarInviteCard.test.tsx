@@ -32,6 +32,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => api);
 
 import { useAccountStore } from '@/stores/accountStore';
+import { useCalendarChangeStore } from '@/stores/calendarChangeStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
 import type { CalendarInvite, Email, InviteResponseOutcome } from '@/types';
@@ -67,6 +68,7 @@ beforeEach(() => {
   useAccountStore.setState({ accounts: [{ id: 'acc1', provider: 'gmail' }] as never });
   useCalendarIntegrationStore.setState({ enabledIds: new Set(['acc1']), isLoaded: true });
   useLogStore.setState({ entries: [] });
+  useCalendarChangeStore.setState({ lastChange: null });
 });
 
 afterEach(() => {
@@ -190,6 +192,20 @@ describe('CalendarInviteCard', () => {
     await answerYes({ kind: 'cannotImport', reason: 'outlookRecurrence', reasonDetail: 'FREQ=WEEKLY' });
     expect(text()).toContain("Couldn't add it to your calendar: Outlook can't repeat this way (FREQ=WEEKLY)");
     expect(text()).not.toContain("Couldn't send your response");
+  });
+
+  it.each([
+    { kind: 'responded', replySentTo: 'lead@example.com' },
+    { kind: 'imported', replySentTo: 'lead@example.com', replyError: null },
+    { kind: 'removed', replySentTo: 'lead@example.com', replyError: null },
+  ] as InviteResponseOutcome[])('an answer that changed the calendar ($kind) marks it changed', async (outcome) => {
+    await answerYes(outcome);
+    expect(useCalendarChangeStore.getState().lastChange?.accountId).toBe('acc1');
+  });
+
+  it('not_yet_in_calendar_marks_nothing_changed', async () => {
+    await answerYes({ kind: 'notYetInCalendar' });
+    expect(useCalendarChangeStore.getState().lastChange).toBeNull();
   });
 
   it('change_reopens_the_buttons', async () => {

@@ -8,6 +8,7 @@ import {
   visibleEvents,
 } from '@/lib/calendarColor';
 import { errorText, isAuthError } from '@/lib/errors';
+import { useCalendarChangeStore } from '@/stores/calendarChangeStore';
 import { useLogStore } from '@/stores/logStore';
 import type { Calendar, CalendarEvent } from '@/types';
 
@@ -199,6 +200,17 @@ export function useCalendarData(accountIds: readonly string[], rangeStart: numbe
     setError(null);
     setSyncErrors([]);
   }, []);
+
+  // An invite answered from an email changed a shown account's calendar:
+  // re-sync so its events show the new answer. A change made before this view
+  // opened is already covered by the open sync, so start from the current one.
+  const lastChange = useCalendarChangeStore((s) => s.lastChange);
+  const handledChangeRef = useRef(lastChange?.seq ?? 0);
+  useEffect(() => {
+    if (!lastChange || lastChange.seq === handledChangeRef.current) return;
+    handledChangeRef.current = lastChange.seq;
+    if (ids.includes(lastChange.accountId)) void syncAccounts(ids);
+  }, [lastChange, ids, syncAccounts]);
 
   useEffect(() => {
     if (ids.length === 0) return;

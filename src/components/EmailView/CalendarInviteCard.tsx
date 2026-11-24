@@ -5,6 +5,7 @@ import * as api from '@/lib/api';
 import { describeRecurrence } from '@/lib/calendarEvent';
 import { errorText, isAuthError } from '@/lib/errors';
 import { useAccountStore } from '@/stores/accountStore';
+import { useCalendarChangeStore } from '@/stores/calendarChangeStore';
 import { useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useLogStore } from '@/stores/logStore';
 import type { CalendarInvite, Email, InviteResponseOutcome, RsvpChoice } from '@/types';
@@ -27,14 +28,15 @@ interface InviteDone {
 /**
  * Gmail-style calendar invite card rendered above the email body when the
  * email carries a .ics invite. Only loads for accounts with calendar
- * integration (Gmail / Outlook — never IMAP). The RSVP result lives in
- * component state only; the next calendar sync makes it authoritative.
+ * integration (Gmail / Outlook — never IMAP). An answer that changed the
+ * calendar marks it changed, so an open calendar view or panel re-syncs.
  */
 export function CalendarInviteCard({ email }: { email: Email }) {
   const { t, i18n } = useTranslation(['calendar']);
   const { date, time, dateTime } = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
   const accounts = useAccountStore((s) => s.accounts);
+  const markCalendarChanged = useCalendarChangeStore((s) => s.markChanged);
 
   const account = accounts.find((a) => a.id === email.accountId);
   // Only for accounts with calendar integration enabled (Settings →
@@ -94,11 +96,13 @@ export function CalendarInviteCard({ email }: { email: Email }) {
         return;
       case 'responded':
         setRsvpDone({ choice, added: false, alreadyInCalendar: false });
+        markCalendarChanged(email.accountId);
         addLog('success', 'sync', `Calendar invite response sent (${choice})`);
         return;
       case 'imported':
       case 'removed':
         setRsvpDone({ choice, added: outcome.kind === 'imported', alreadyInCalendar: false });
+        markCalendarChanged(email.accountId);
         if (outcome.replyError) {
           setRsvpNote({ kind: 'warn', message: t(`calendar:invite.replyNotSent.${outcome.kind}` as const) });
           // Fixed text: the error can name the organizer; the backend logged its code.
