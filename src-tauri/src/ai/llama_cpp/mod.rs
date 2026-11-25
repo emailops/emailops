@@ -6,11 +6,8 @@
 //                   reuses the KV cache across requests (prefix caching)
 //   planner.rs    — pure prompt-budget / prefix-reuse planning functions
 //   tool_parser.rs — pure parsers that lift tool calls out of generated text
-//   errors.rs     — user-facing AppError constructors (no callers: the
-//                   runtime builds its messages inline)
 
 pub(crate) mod actor;
-pub mod errors;
 pub(crate) mod planner;
 pub mod runtime;
 pub(crate) mod tool_parser;
