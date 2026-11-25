@@ -29,9 +29,11 @@ impl std::fmt::Display for ProviderType {
 
 // ── Shared message types ─────────────────────────────────────────────────────
 
-/// A single message in an AI conversation, provider-neutral.
-/// Most tool calls one round may run, on every provider. The model can ask for
-/// more in the next round, once it has read these results.
+/// Most tool calls one round may run, on every provider: the chat turn runs
+/// only the first this many (`services::chat::turn`), and the embedded runtime
+/// also stops generating once a streamed round carries this many Qwen-syntax
+/// calls. The model can ask for more in the next round, once it has read
+/// these results.
 ///
 /// A round has no other bound than the generation budget: greedy decoding can
 /// tip into listing one distinct search after another and never emit the
@@ -60,6 +62,7 @@ pub(crate) fn close_open_objects(body: &str) -> Option<String> {
     (depth > 0 && !in_string).then(|| format!("{body}{}", "}".repeat(depth)))
 }
 
+/// A single message in an AI conversation, provider-neutral.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiMessage {
     pub role: String,
@@ -365,15 +368,19 @@ pub trait AIProvider: Send + Sync {
     /// (streaming, no tools): the tool round can now stream synthesized prose to
     /// the user without losing the ability to dispatch tool calls.
     ///
-    /// When a turn resolves to tool calls, NO prose tokens are emitted — a
-    /// model's tool-call syntax / planning must never leak into the user-visible
-    /// stream. Providers that expose tool_calls structurally (Ollama,
-    /// OpenRouter) stream content live and accumulate tool_calls separately;
-    /// llama.cpp parses tool-call syntax out of the token stream and so buffers
-    /// the leading tokens until it can tell prose from a tool call.
+    /// Tool-call *syntax* never reaches `on_token`, but prose the model writes
+    /// before its tool calls may: providers that expose tool_calls
+    /// structurally (Ollama, OpenRouter) stream content live and only learn at
+    /// the end that the turn carried calls, and llama.cpp's `StreamGate` holds
+    /// back the leading tokens until it can tell prose from a tool call, but
+    /// forwards prose that comes before a call starting mid-reply. A caller
+    /// that shows the stream must drop what it showed when the returned
+    /// message carries tool calls (the chat turn clears the bubble). The
+    /// returned message's `content` is empty whenever it carries tool calls.
     ///
     /// The default impl falls back to the blocking `chat_with_tools` and emits
-    /// the resulting prose as a single chunk — correct, just not incremental.
+    /// the resulting prose as a single chunk, and only for a turn without tool
+    /// calls — correct, just not incremental.
     async fn chat_stream_with_tools(
         &self,
         messages: Vec<AiMessage>,
@@ -635,6 +642,9 @@ pub struct FakeAiProvider {
     /// How many texts each `embed_batch` call carried, in call order.
     embed_batch_sizes: RwLock<Vec<usize>>,
     prewarm_calls: RwLock<Vec<Vec<AiMessage>>>,
+    /// `chat_stream_with_tools` streams a reply's content even when it carries
+    /// tool calls, as Ollama and OpenRouter do.
+    streams_prose_before_tool_calls: bool,
 }
 
 impl FakeAiProvider {
@@ -672,7 +682,16 @@ impl FakeAiProvider {
             embedding_batch_size: 1,
             embed_batch_sizes: RwLock::new(Vec::new()),
             prewarm_calls: RwLock::new(Vec::new()),
+            streams_prose_before_tool_calls: false,
         }
+    }
+
+    /// Stream a queued reply's content through `on_token` even when the reply
+    /// carries tool calls, like the backends that report tool calls
+    /// structurally after the prose.
+    pub fn streaming_prose_before_tool_calls(mut self) -> Self {
+        self.streams_prose_before_tool_calls = true;
+        self
     }
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
@@ -770,9 +789,6 @@ impl FakeAiProvider {
             });
     }
 
-    /// Queue a fully-formed canned chat response (e.g. one carrying
-    /// `tool_calls`). Returned in FIFO order from `chat_with_tools` /
-    /// `chat_stream_with_tools`.
     /// Make every later chat call hang, sending no token and no reply.
     pub fn hang_chats(&self) {
         *self.chats_hang.write().unwrap_or_else(PoisonError::into_inner) = true;
@@ -799,6 +815,9 @@ impl FakeAiProvider {
             .contains(&made)
     }
 
+    /// Queue a fully-formed canned chat response (e.g. one carrying
+    /// `tool_calls`). Returned in FIFO order from `chat_with_tools` /
+    /// `chat_stream_with_tools`.
     pub fn push_chat_message(&self, msg: AiMessage) {
         self.chats
             .write()
@@ -1090,7 +1109,7 @@ impl AIProvider for FakeAiProvider {
     ) -> Result<ToolStreamResult> {
         let message = self.chat_with_tools(&messages, &tools).await?;
         let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
-        if !has_tool_calls && !message.content.is_empty() {
+        if (!has_tool_calls || self.streams_prose_before_tool_calls) && !message.content.is_empty() {
             let _ = on_token(message.content.clone());
         }
         Ok(ToolStreamResult {

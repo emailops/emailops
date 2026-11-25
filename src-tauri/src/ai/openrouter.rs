@@ -108,7 +108,7 @@ const ERROR_LOG_BYTES: usize = 4_096;
 /// body, whitespace collapsed and cut to [`ERROR_SUMMARY_CHARS`]. `None` for an
 /// HTML page or anything else that is not a short message: a server can return
 /// stack traces and internal paths there (DASA 1.8.1).
-fn summarize_error_body(body: &str) -> Option<String> {
+pub(super) fn summarize_error_body(body: &str) -> Option<String> {
     let text = match serde_json::from_str::<serde_json::Value>(body) {
         Ok(json) => [
             json.pointer("/error/message"),
@@ -551,11 +551,25 @@ pub struct OpenRouterClient {
 }
 
 impl OpenRouterClient {
+    /// A client for openrouter.ai. Redirects are never followed, here or on
+    /// a compatible server: every request carries mail, and a redirect could
+    /// send it on to a host (or a plain-http URL) nobody chose.
     pub fn new(api_key: String, model: String, embedding_model: String) -> Self {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .unwrap_or_else(|e| {
+                crate::services::logger::log(
+                    "warn",
+                    "ai",
+                    format!("could not build the AI HTTP client ({e}); using one without a connect timeout"),
+                );
+                Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap_or_default()
+            });
 
         Self {
             client,
@@ -577,26 +591,10 @@ impl OpenRouterClient {
     /// (e.g. `http://localhost:1234/v1`). `api_key` may be empty. No
     /// OpenRouter routing object or attribution headers are sent.
     ///
-    /// Redirects are never followed: `base_url` passed
-    /// `normalize_ai_base_url`, and a redirect could send the mail in the
-    /// request on to a host (or a plain-http URL) that check never saw.
+    /// Redirects are never followed (see [`Self::new`]): `base_url` passed
+    /// `normalize_ai_base_url`, and a redirect would skip that check.
     pub fn openai_compatible(base_url: &str, api_key: String, model: String, embedding_model: String) -> Self {
         let mut client = Self::new(api_key, model, embedding_model);
-        client.client = Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_else(|e| {
-                crate::services::logger::log(
-                    "warn",
-                    "ai",
-                    format!("could not build the OpenAI-compatible HTTP client ({e}); requests will fail"),
-                );
-                Client::builder()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .unwrap_or_default()
-            });
         client.base_url = base_url.trim().trim_end_matches('/').to_string();
         client.endpoint = Endpoint::OpenAiCompatible;
         client.first_token_timeout = Some(COMPATIBLE_FIRST_TOKEN_TIMEOUT);
@@ -902,7 +900,8 @@ impl OpenRouterClient {
                 ProbePlan::Rejected => {
                     return Err(last_rejection.unwrap_or_else(|| {
                         AppError::AiError(format!(
-                            "OpenRouter rejected the embedding model {}",
+                            "{} rejected the embedding model {}",
+                            self.server_name(),
                             self.embedding_model
                         ))
                     }))
@@ -970,7 +969,7 @@ impl OpenRouterClient {
                 None => (lines.finish().into_iter().collect(), true),
             };
             for line in batch {
-                match parse_sse_line(&line)? {
+                match parse_sse_line(&line, self.server_name())? {
                     None => {}
                     Some(SseEvent::Done) => return reply.finish().map(without_reasoning),
                     Some(SseEvent::Chunk(chunk)) => {
@@ -1110,7 +1109,12 @@ impl OpenRouterClient {
             .timeout(CONNECT_TIMEOUT)
             .send()
             .await
-            .map_err(|e| AppError::AiError(format!("Failed to fetch OpenRouter embedding models: {}", e)))?;
+            .map_err(|e| {
+                AppError::AiError(format!(
+                    "{} did not answer the embedding-model list: {e}",
+                    self.server_name()
+                ))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -1119,14 +1123,19 @@ impl OpenRouterClient {
                 status,
                 &error_text,
                 &self.embedding_model,
-                &format!("Failed to list OpenRouter embedding models (HTTP {status})"),
+                &format!(
+                    "{} refused the embedding-model list (HTTP {status})",
+                    self.server_name()
+                ),
             ));
         }
 
-        let body: OpenRouterEmbeddingsResponse = response
-            .json()
-            .await
-            .map_err(|e| AppError::AiError(format!("Failed to parse OpenRouter embedding models: {}", e)))?;
+        let body: OpenRouterEmbeddingsResponse = response.json().await.map_err(|e| {
+            AppError::AiError(format!(
+                "{} sent an embedding-model list that could not be read: {e}",
+                self.server_name()
+            ))
+        })?;
 
         Ok(body
             .data
@@ -2901,6 +2910,49 @@ mod compatible_server_tests {
         .await;
 
         let result = compatible(&server)
+            .chat_stream(vec![user("mail")], Box::new(|_| true))
+            .await;
+
+        assert!(result.is_err(), "{result:?}");
+        let followed = elsewhere.received_requests().await.expect("recording").len();
+        assert_eq!(followed, 0, "the redirect target must never receive the mail");
+    }
+
+    #[tokio::test]
+    async fn a_compatible_servers_failure_to_list_embedding_models_is_not_blamed_on_openrouter() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/embeddings/models"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+            .mount(&server)
+            .await;
+        let error = compatible(&server)
+            .list_embedding_models()
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("OpenRouter"), "{error}");
+        assert!(error.contains("The OpenAI-compatible server"), "{error}");
+    }
+
+    /// The requests to openrouter.ai carry mail too.
+    #[tokio::test]
+    async fn the_openrouter_client_does_not_follow_a_redirect_either() {
+        let elsewhere = chat_replying(ResponseTemplate::new(200).set_body_raw(
+            sse(&[
+                r#"{"choices":[{"delta":{"content":"leaked"},"finish_reason":"stop"}]}"#,
+                "[DONE]",
+            ]),
+            "text/event-stream",
+        ))
+        .await;
+        let server = chat_replying(
+            ResponseTemplate::new(307).insert_header("Location", format!("{}/chat/completions", elsewhere.uri())),
+        )
+        .await;
+
+        let result = OpenRouterClient::new("key".into(), "vendor/model".into(), String::new())
+            .with_base_url(server.uri())
             .chat_stream(vec![user("mail")], Box::new(|_| true))
             .await;
 
