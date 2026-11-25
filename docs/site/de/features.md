@@ -125,6 +125,16 @@ Archivieren und Löschen Ihren E-Mail-Anbieter sofort, ohne Rückgängig. Das R�
 Zurückstellen bleibt genauso lange verfügbar. **Senden rückgängig machen** ist eine eigene
 Einstellung.
 
+<!-- claim:feat-organize-delete-forever -->
+In **Papierkorb** und **Spam** löscht **Endgültig löschen** in der Auswahlleiste die ausgewählten
+Nachrichten, und **Papierkorb leeren** oder **Spam leeren** über der Liste löscht alle. Sie sehen
+zuerst, wie viele Nachrichten gehen, und bestätigen; ein Balken zeigt den Fortschritt,
+**Abbrechen** hält nach dem laufenden Stapel an, und am Ende steht, wie viele gelöscht wurden und
+warum einzelne nicht gelöscht werden konnten. Nur dieser Ordner wird angefasst. Das funktioniert
+bei IMAP- und Outlook-Konten. Gmail löscht selbst, was seit 30 Tagen im Papierkorb oder Spam
+liegt; früher aus EmailOps zu löschen, bräuchte vollen Zugriff auf das Gmail-Konto, den EmailOps
+nicht anfordert.
+
 <!-- claim:feat-organize-5 -->
 Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,
 zurückgestellt oder in den Spam verschoben —, öffnet sich die nächste. **Einstellungen →

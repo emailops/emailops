@@ -120,6 +120,15 @@ o 30 segundos, 6 por defecto. Desactivado, archivar y eliminar llegan a tu prove
 momento, sin Deshacer. El Deshacer que aparece tras posponer dura lo mismo. **Deshacer envío** es
 un ajuste aparte.
 
+<!-- claim:feat-organize-delete-forever -->
+En **Papelera** y **Spam**, **Eliminar definitivamente** en la barra de la selección borra los
+mensajes seleccionados, y **Vaciar la papelera** o **Vaciar spam** encima de la lista los borra
+todos. Primero ves cuántos mensajes se irán y lo confirmas; una barra muestra el avance,
+**Cancelar** se detiene tras el lote en curso, y al final se indica cuántos se borraron y por qué
+no se pudo con alguno. Solo se toca esa carpeta. Funciona en cuentas IMAP y Outlook. Gmail borra
+por su cuenta lo que lleva 30 días en la papelera o el spam; borrarlo antes desde EmailOps
+requeriría acceso completo a la cuenta de Gmail, que EmailOps no pide.
+
 <!-- claim:feat-organize-5 -->
 Cuando la conversación que estás leyendo sale de la lista — archivada, eliminada, pospuesta o
 movida a Spam —, se abre la siguiente. **Ajustes → Apariencia → Después de archivar o eliminar**

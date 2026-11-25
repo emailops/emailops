@@ -817,6 +817,14 @@ checks = [
   { manual = 'The 6-second length and the early commit when another archive/delete starts or another view opens are covered by src/lib/pendingActions.test.ts and src/stores/emailStore tests (vitest), not by a check this harness runs.', covers = ["(or sooner, if you archive or delete something else or open another view)"] },
 ]
 
+[feat-organize-delete-forever]
+checks = [
+  { tests = ['services::emails::delete_forever::tests::messages_the_provider_deleted_are_removed_here_and_counted', 'services::emails::delete_forever::tests::a_message_the_provider_kept_stays_and_is_reported', 'services::emails::delete_forever::tests::cancel_stops_between_batches_and_leaves_the_rest_in_place', 'services::emails::delete_forever::tests::selected_messages_outside_the_folder_stay_and_are_reported', 'sync::imap::tests::delete_forever_flags_and_uid_expunges_only_the_given_messages', 'sync::imap::tests::delete_forever_refuses_ids_of_another_folder_without_connecting', 'sync::outlook::tests::deleting_forever_posts_permanent_delete_per_message'], covers = ["Only that folder is touched.", "This works on IMAP and Outlook accounts."] },
+  { tests = ['sync::provider::tests::deleting_forever_is_offered_on_imap_and_outlook_but_not_gmail', 'services::emails::delete_forever::tests::a_gmail_account_is_refused_before_anything_is_read'], covers = ["Gmail erases what has been in Trash or Spam for 30 days on its own; erasing sooner from EmailOps would need full access to the Gmail account, which EmailOps does not ask for."] },
+  { manual = 'The toolbar button, the Empty bar, the count and confirmation, the progress bar, Cancel and the summary are the dialog: src/components/Inbox/DeleteForeverDialog.test.tsx, FolderCleanup.test.tsx and BulkToolbar.test.tsx (vitest), which the docs check does not run. The demo accounts are offline IMAP accounts, so a run there ends in a sign-in error.', covers = ["In Trash and Spam, Delete forever in the selection toolbar erases the selected messages, and Empty Trash or Empty Spam above the list erases them all.", "You see how many messages will go and confirm first; a bar shows the progress, Cancel stops after the current batch, and the end says how many were erased and why any could not be."] },
+]
+fix = 'Delete forever is IMAP and Outlook only (provider_supports_delete_forever); if a provider was added or Gmail gained it, update the paragraph in all four languages.'
+
 [feat-organize-undo-window]
 checks = [
   { app = true },
@@ -1499,13 +1507,14 @@ checks = [
   { tests = ['services::emails::compose::tests::compose_draft_stays_local_for_unsupported_provider', 'sync::provider::tests::every_shipped_provider_has_its_drafts_folder_read_and_only_imap_is_never_written'], covers = ["on an IMAP account it stays on this computer"] },
   { tests = ['services::emails::thread_actions::tests::not_spam_moves_the_spam_messages_to_the_inbox_and_records_not_junk', 'services::emails::thread_actions::tests::not_spam_records_not_junk_under_the_id_the_provider_gave_the_message'], covers = ["The message moves back to the account's inbox"] },
   { manual = 'Moves, Confirm junk and folder changes writing to the account need a real provider; the demo accounts are offline.' },
+  { tests = ['sync::imap::tests::delete_forever_flags_and_uid_expunges_only_the_given_messages', 'sync::outlook::tests::deleting_forever_posts_permanent_delete_per_message', 'services::emails::delete_forever::tests::selected_messages_outside_the_folder_stay_and_are_reported'], covers = ["Delete forever, Empty Trash or Empty Spam, on an IMAP or Outlook account", "The messages are erased for good from the account's Trash or Spam; no other folder is touched"] },
 ]
 fix = 'Every action that writes to the account must be in this table: if one was added or removed, update the rows in all four languages.'
 
 [priv-what-emailops-2]
 checks = [
   { tests = ['services::emails::mailbox_state::tests::mark_read_survives_a_failing_push'], covers = ["Reading is applied locally first so the app works offline, and the account catches up in the background."] },
-  { manual = 'Delete-to-Trash on each provider needs a real account; IMAP delete semantics are not pinned by a test.' },
+  { manual = 'Delete-to-Trash on each provider needs a real account; IMAP delete semantics are not pinned by a test. The confirmation before Delete forever and Empty Trash / Empty Spam is src/components/Inbox/DeleteForeverDialog.test.tsx (vitest), which the docs check does not run.' },
 ]
 
 [priv-what-emailops-3]

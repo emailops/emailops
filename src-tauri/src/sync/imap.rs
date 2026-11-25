@@ -874,7 +874,7 @@ impl ImapClient {
                     .map_err(|e| e.to_string())
             } else {
                 match imap_search::uid_search(session, "DELETED") {
-                    Ok(flagged) if plain_expunge_is_safe(uid, &flagged) => {
+                    Ok(flagged) if plain_expunge_is_safe(&[uid], &flagged) => {
                         session.expunge().map(|_| ()).map_err(|e| e.to_string())
                     }
                     Ok(_) => Err("other messages in the folder are flagged \\Deleted too".to_string()),
@@ -947,6 +947,105 @@ impl ImapClient {
             }
         }
         Ok(new_uid)
+    }
+
+    /// The blocking half of [`EmailProvider::delete_forever`] on an open
+    /// session: `targets` are `(UID, stored Message-ID)` in `folder`, and the
+    /// answer has one result per target, in order.
+    ///
+    /// Each UID is checked against its Message-ID first, then the ones that
+    /// match are flagged `\Deleted` and expunged with `UID EXPUNGE`
+    /// (UIDPLUS), which removes those UIDs and nothing else. A plain
+    /// `EXPUNGE` removes every `\Deleted` message of the folder, so without
+    /// UIDPLUS it runs only when no other message is flagged — before and
+    /// after flagging ours; otherwise nothing is deleted
+    /// ([`AppError::ExpungeNotSafe`]). What is still there afterwards is
+    /// unflagged and reported.
+    fn delete_forever_on_session<T: std::io::Read + std::io::Write>(
+        session: &mut imap::Session<T>,
+        folder: &ImapFolder,
+        targets: &[(u32, Option<String>)],
+    ) -> Result<Vec<Result<()>>> {
+        if !Self::select_folder_checked(session, folder)? {
+            return Err(AppError::SyncError(format!(
+                "IMAP {folder:?} folder not found on server"
+            )));
+        }
+        let all: Vec<u32> = targets.iter().map(|(uid, _)| *uid).collect();
+        let found = imap_search::uid_fetch_identities_in(session, &uid_set(&all))?;
+        let verdicts = forever_verdicts(targets, &found);
+        let mut results: Vec<Result<()>> = verdicts
+            .iter()
+            .map(|verdict| match verdict {
+                ForeverVerdict::Delete(_) => Ok(()),
+                ForeverVerdict::Missing => Err(AppError::NotFound(
+                    "The message is no longer in this folder".to_string(),
+                )),
+                ForeverVerdict::Changed => Err(AppError::SyncError(
+                    "The message changed on the server since the last sync; sync the account and try again".to_string(),
+                )),
+            })
+            .collect();
+        let doomed: Vec<u32> = verdicts
+            .iter()
+            .filter_map(|verdict| match verdict {
+                ForeverVerdict::Delete(uid) => Some(*uid),
+                _ => None,
+            })
+            .collect();
+        if doomed.is_empty() {
+            return Ok(results);
+        }
+        let doomed_set = uid_set(&doomed);
+        let refuse = |results: &mut Vec<Result<()>>, uids: &[u32], error: &dyn Fn() -> AppError| {
+            for (verdict, result) in verdicts.iter().zip(results.iter_mut()) {
+                if matches!(verdict, ForeverVerdict::Delete(uid) if uids.contains(uid)) {
+                    *result = Err(error());
+                }
+            }
+        };
+
+        let uidplus = imap_search::advertises(session, "UIDPLUS");
+        if !uidplus && !plain_expunge_is_safe(&doomed, &imap_search::uid_search(session, "DELETED")?) {
+            refuse(&mut results, &doomed, &|| AppError::ExpungeNotSafe);
+            return Ok(results);
+        }
+        imap_search::uid_store_deleted(session, &doomed_set, true)?;
+        let expunged = if uidplus {
+            session
+                .run_command_and_read_response(format!("UID EXPUNGE {doomed_set}"))
+                .map(|_| ())
+                .map_err(|e| imap_search::describe_error(&e))
+        } else if plain_expunge_is_safe(&doomed, &imap_search::uid_search(session, "DELETED")?) {
+            session
+                .run_command_and_read_response("EXPUNGE")
+                .map(|_| ())
+                .map_err(|e| imap_search::describe_error(&e))
+        } else {
+            // Another client flagged a message meanwhile.
+            imap_search::uid_store_deleted(session, &doomed_set, false)?;
+            refuse(&mut results, &doomed, &|| AppError::ExpungeNotSafe);
+            return Ok(results);
+        };
+        if let Err(e) = expunged {
+            crate::services::logger::log("warn", "sync", format!("IMAP EXPUNGE failed: {e}"));
+        }
+
+        let left = imap_search::uid_search(session, &format!("UID {doomed_set}"))?;
+        let left: Vec<u32> = left.into_iter().filter(|uid| doomed.contains(uid)).collect();
+        if !left.is_empty() {
+            if let Err(e) = imap_search::uid_store_deleted(session, &uid_set(&left), false) {
+                crate::services::logger::log(
+                    "warn",
+                    "sync",
+                    format!("Could not clear the deletion mark on messages the server kept: {e}"),
+                );
+            }
+            refuse(&mut results, &left, &|| {
+                AppError::SyncError("The server kept the message after deleting it".to_string())
+            });
+        }
+        Ok(results)
     }
 
     /// The blocking half of [`EmailProvider::archive_message`]: the archive
@@ -2474,6 +2573,56 @@ impl EmailProvider for ImapClient {
         }))
     }
 
+    /// `\Deleted` + `UID EXPUNGE` in the folder's own mailbox, on one
+    /// connection (see [`Self::delete_forever_on_session`]). An id whose UID
+    /// lives in another folder is refused without being sent.
+    async fn delete_forever(
+        &self,
+        folder: provider::DeleteForeverFolder,
+        messages: &[provider::DeleteForeverTarget],
+    ) -> Result<Vec<Result<()>>> {
+        let expected = match folder {
+            provider::DeleteForeverFolder::Trash => ImapFolder::Trash,
+            provider::DeleteForeverFolder::Spam => ImapFolder::Spam,
+        };
+        let mut results: Vec<Option<Result<()>>> = Vec::with_capacity(messages.len());
+        let mut slots = Vec::new();
+        let mut targets = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            let (source, uid_str) = self.parse_message_ref(&message.id);
+            match uid_str.parse::<u32>() {
+                Ok(uid) if source == expected => {
+                    slots.push(index);
+                    targets.push((uid, message.message_id_header.clone()));
+                    results.push(None);
+                }
+                _ => results.push(Some(Err(AppError::InvalidInput(format!(
+                    "The message is not in {expected:?} on the server; sync the account and try again"
+                ))))),
+            }
+        }
+        if !targets.is_empty() {
+            let creds = self.credentials.clone();
+            let slot = Arc::clone(&self.session);
+            let answers = tokio::task::spawn_blocking(move || -> Result<Vec<Result<()>>> {
+                let mut session = Self::checkout_session(&slot, &creds)
+                    .map_err(|e| AppError::SyncError(format!("IMAP connect failed: {e}")))?;
+                let result = Self::delete_forever_on_session(&mut session, &expected, &targets);
+                slot.checkin(session);
+                result
+            })
+            .await
+            .map_err(task_failed)??;
+            for (index, answer) in slots.into_iter().zip(answers) {
+                results[index] = Some(answer);
+            }
+        }
+        Ok(results
+            .into_iter()
+            .map(|r| r.unwrap_or_else(|| Err(AppError::SyncError("The mail server did not answer".to_string()))))
+            .collect())
+    }
+
     /// One connection: `LIST`, then an `EXAMINE` per stored mailbox. A failed
     /// `LIST` still checks the inbox; a mailbox that will not open is skipped.
     async fn folder_uid_validities(&self) -> Result<Vec<provider::FolderUidValidity>> {
@@ -2863,8 +3012,38 @@ impl ImapClient {
 /// Whether a plain `EXPUNGE` may remove the original of `uid` after a COPY.
 /// Pure. It removes every message flagged `\Deleted` in the folder, flagged by
 /// any client, so only when none but `uid` is.
-fn plain_expunge_is_safe(uid: u32, flagged_deleted: &[u32]) -> bool {
-    flagged_deleted.iter().all(|&flagged| flagged == uid)
+fn plain_expunge_is_safe(ours: &[u32], flagged_deleted: &[u32]) -> bool {
+    flagged_deleted.iter().all(|flagged| ours.contains(flagged))
+}
+
+/// What "Delete forever" may do with one UID of the selected folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ForeverVerdict {
+    Delete(u32),
+    /// The folder no longer holds the UID.
+    Missing,
+    /// The UID now names another message (the server rebuilt the folder).
+    Changed,
+}
+
+/// Pure: check each `(UID, stored Message-ID)` against what the folder holds.
+/// Without a stored Message-ID the UID is all there is to go by, as for a
+/// move to Trash.
+fn forever_verdicts(targets: &[(u32, Option<String>)], found: &[imap_search::FetchedIdentity]) -> Vec<ForeverVerdict> {
+    targets
+        .iter()
+        .map(|(uid, expected)| match found.iter().find(|f| f.uid == *uid) {
+            None => ForeverVerdict::Missing,
+            Some(held) => match expected {
+                Some(expected) if held.message_id.as_deref() != Some(expected.as_str()) => ForeverVerdict::Changed,
+                _ => ForeverVerdict::Delete(*uid),
+            },
+        })
+        .collect()
+}
+
+fn uid_set(uids: &[u32]) -> String {
+    uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
 }
 
 /// The search key a move checks its UID against, or `None` when the
@@ -2927,8 +3106,237 @@ mod tests {
     #[test]
     fn a_plain_expunge_runs_only_when_no_other_message_is_flagged_deleted() {
         for (flagged, safe) in [(vec![7], true), (vec![], true), (vec![7, 9], false), (vec![9], false)] {
-            assert_eq!(plain_expunge_is_safe(7, &flagged), safe, "flagged {flagged:?}");
+            assert_eq!(plain_expunge_is_safe(&[7], &flagged), safe, "flagged {flagged:?}");
         }
+        assert!(plain_expunge_is_safe(&[7, 8], &[8, 7]), "every flagged one is ours");
+    }
+
+    // ── delete_forever_on_session ─────────────────────────────────────────
+
+    const CAPABILITY_UIDPLUS: &str = "* CAPABILITY IMAP4rev1 UIDPLUS\r\n{tag} OK done\r\n";
+    const CAPABILITY_PLAIN: &str = "* CAPABILITY IMAP4rev1\r\n{tag} OK done\r\n";
+    const DONE: &str = "{tag} OK done\r\n";
+
+    fn targets(list: &[(u32, &str)]) -> Vec<(u32, Option<String>)> {
+        list.iter().map(|(uid, mid)| (*uid, Some((*mid).to_string()))).collect()
+    }
+
+    /// The commands the client sent, tags stripped.
+    fn commands(written: &Arc<std::sync::Mutex<Vec<u8>>>) -> Vec<String> {
+        sent_text(written)
+            .split("\r\n")
+            .filter_map(|line| line.split_once(' ').map(|(_, rest)| rest.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn delete_forever_flags_and_uid_expunges_only_the_given_messages() {
+        let replies: Vec<String> = [
+            LISTED,
+            SELECTED,
+            &identities_reply(&[(7, "<a@example.com>"), (8, "<b@example.com>")]),
+            CAPABILITY_UIDPLUS,
+            DONE,
+            "* 1 EXPUNGE\r\n* 1 EXPUNGE\r\n{tag} OK done\r\n",
+            NO_HITS,
+        ]
+        .iter()
+        .map(|r| (*r).to_string())
+        .collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let results = ImapClient::delete_forever_on_session(
+            &mut session,
+            &ImapFolder::Trash,
+            &targets(&[(7, "<a@example.com>"), (8, "<b@example.com>")]),
+        )
+        .expect("batch");
+
+        assert!(results.iter().all(Result::is_ok), "got {results:?}");
+        let sent = commands(&written);
+        assert!(sent.contains(&"SELECT \"Trash\"".to_string()), "sent: {sent:?}");
+        assert!(
+            sent.contains(&"UID STORE 7,8 +FLAGS.SILENT (\\Deleted)".to_string()),
+            "sent: {sent:?}"
+        );
+        assert!(sent.contains(&"UID EXPUNGE 7,8".to_string()), "sent: {sent:?}");
+        assert!(
+            !sent.contains(&"EXPUNGE".to_string()),
+            "never a plain EXPUNGE: {sent:?}"
+        );
+    }
+
+    // Without UIDPLUS the only expunge is the plain one, which removes every
+    // \Deleted message of the folder: with another one flagged, nothing goes.
+    #[test]
+    fn delete_forever_without_uidplus_refuses_when_other_messages_are_flagged() {
+        let replies: Vec<String> = [
+            LISTED,
+            SELECTED,
+            &identities_reply(&[(7, "<a@example.com>")]),
+            CAPABILITY_PLAIN,
+            "* SEARCH 9\r\n{tag} OK done\r\n",
+        ]
+        .iter()
+        .map(|r| (*r).to_string())
+        .collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let results = ImapClient::delete_forever_on_session(
+            &mut session,
+            &ImapFolder::Trash,
+            &targets(&[(7, "<a@example.com>")]),
+        )
+        .expect("batch");
+
+        assert!(
+            matches!(results[..], [Err(AppError::ExpungeNotSafe)]),
+            "got {results:?}"
+        );
+        let sent = commands(&written);
+        assert!(
+            !sent.iter().any(|c| c.starts_with("UID STORE") || c.contains("EXPUNGE")),
+            "sent: {sent:?}"
+        );
+    }
+
+    #[test]
+    fn delete_forever_without_uidplus_expunges_when_only_its_messages_are_flagged() {
+        let replies: Vec<String> = [
+            LISTED,
+            SELECTED,
+            &identities_reply(&[(7, "<a@example.com>")]),
+            CAPABILITY_PLAIN,
+            NO_HITS,
+            DONE,
+            "* SEARCH 7\r\n{tag} OK done\r\n",
+            "* 1 EXPUNGE\r\n{tag} OK done\r\n",
+            NO_HITS,
+        ]
+        .iter()
+        .map(|r| (*r).to_string())
+        .collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let results = ImapClient::delete_forever_on_session(
+            &mut session,
+            &ImapFolder::Trash,
+            &targets(&[(7, "<a@example.com>")]),
+        )
+        .expect("batch");
+
+        assert!(matches!(results[..], [Ok(())]), "got {results:?}");
+        assert!(commands(&written).contains(&"EXPUNGE".to_string()));
+    }
+
+    // A UID that now names another message (the server rebuilt the folder)
+    // is left alone; one that is gone already counts as gone.
+    #[test]
+    fn delete_forever_skips_a_uid_whose_message_id_changed_and_reports_a_missing_one() {
+        let replies: Vec<String> = [
+            LISTED,
+            SELECTED,
+            &identities_reply(&[(7, "<a@example.com>"), (8, "<someone-else@example.com>")]),
+            CAPABILITY_UIDPLUS,
+            DONE,
+            "* 1 EXPUNGE\r\n{tag} OK done\r\n",
+            NO_HITS,
+        ]
+        .iter()
+        .map(|r| (*r).to_string())
+        .collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let results = ImapClient::delete_forever_on_session(
+            &mut session,
+            &ImapFolder::Spam,
+            &targets(&[(7, "<a@example.com>"), (8, "<b@example.com>"), (9, "<c@example.com>")]),
+        )
+        .expect("batch");
+
+        assert!(matches!(results[0], Ok(())), "got {results:?}");
+        assert!(matches!(results[1], Err(AppError::SyncError(_))), "got {results:?}");
+        assert!(matches!(results[2], Err(AppError::NotFound(_))), "got {results:?}");
+        let sent = commands(&written);
+        assert!(sent.contains(&"SELECT \"Junk\"".to_string()), "sent: {sent:?}");
+        assert!(
+            sent.contains(&"UID STORE 7 +FLAGS.SILENT (\\Deleted)".to_string()),
+            "sent: {sent:?}"
+        );
+        assert!(sent.contains(&"UID EXPUNGE 7".to_string()), "sent: {sent:?}");
+    }
+
+    #[test]
+    fn a_message_still_there_after_the_expunge_is_reported_and_unflagged() {
+        let replies: Vec<String> = [
+            LISTED,
+            SELECTED,
+            &identities_reply(&[(7, "<a@example.com>")]),
+            CAPABILITY_UIDPLUS,
+            DONE,
+            DONE,
+            "* SEARCH 7\r\n{tag} OK done\r\n",
+            DONE,
+        ]
+        .iter()
+        .map(|r| (*r).to_string())
+        .collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let results = ImapClient::delete_forever_on_session(
+            &mut session,
+            &ImapFolder::Trash,
+            &targets(&[(7, "<a@example.com>")]),
+        )
+        .expect("batch");
+
+        assert!(matches!(results[..], [Err(AppError::SyncError(_))]), "got {results:?}");
+        assert!(commands(&written).contains(&"UID STORE 7 -FLAGS.SILENT (\\Deleted)".to_string()));
+    }
+
+    // The id says which folder the UID lives in: one from another folder is
+    // never sent, and no connection is opened for nothing.
+    #[tokio::test]
+    async fn delete_forever_refuses_ids_of_another_folder_without_connecting() {
+        let client = imap_client_synced_from(None);
+        let other = |id: &str| provider::DeleteForeverTarget {
+            id: id.to_string(),
+            message_id_header: None,
+        };
+
+        let results = EmailProvider::delete_forever(
+            &client,
+            provider::DeleteForeverFolder::Trash,
+            &[other("acc-1::7"), other("acc-1::SPAM::8"), other("acc-1::TRASH::x")],
+        )
+        .await
+        .expect("answered per message");
+
+        assert_eq!(results.len(), 3);
+        assert!(
+            results.iter().all(|r| matches!(r, Err(AppError::InvalidInput(_)))),
+            "got {results:?}"
+        );
+    }
+
+    #[test]
+    fn a_folder_the_server_does_not_have_fails_the_whole_batch() {
+        let none = "* LIST () \"/\" \"INBOX\"\r\n{tag} OK done\r\n";
+        let missing = "{tag} NO [NONEXISTENT] no such mailbox\r\n";
+        let replies: Vec<String> = [none, missing, missing, missing, missing, missing, missing]
+            .iter()
+            .map(|r| (*r).to_string())
+            .collect();
+        let (mut session, written) = recorded_session_answering(&replies);
+
+        let result = ImapClient::delete_forever_on_session(
+            &mut session,
+            &ImapFolder::Trash,
+            &targets(&[(7, "<a@example.com>")]),
+        );
+
+        assert!(result.is_err());
+        assert!(!commands(&written).iter().any(|c| c.starts_with("UID STORE")));
     }
 
     // ── locate_message ────────────────────────────────────────────────────

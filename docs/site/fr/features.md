@@ -127,6 +127,16 @@ vue) : Annuler se contente donc de les remettre en place.
 à votre fournisseur de messagerie, sans Annuler. L’annulation proposée après une mise en attente
 dure aussi longtemps. **Annuler l’envoi** est un réglage distinct.
 
+<!-- claim:feat-organize-delete-forever -->
+Dans **Corbeille** et **Indésirables**, **Supprimer définitivement** dans la barre de sélection
+efface les messages sélectionnés, et **Vider la corbeille** ou **Vider les indésirables** au-dessus
+de la liste les efface tous. Vous voyez d'abord combien de messages vont partir et vous
+confirmez ; une barre montre la progression, **Annuler** s'arrête après le lot en cours, et la fin
+indique combien ont été effacés et pourquoi certains n'ont pas pu l'être. Seul ce dossier est
+touché. Cela fonctionne sur les comptes IMAP et Outlook. Gmail efface de lui-même ce qui est dans
+la corbeille ou les indésirables depuis 30 jours ; effacer plus tôt depuis EmailOps demanderait
+un accès complet au compte Gmail, qu'EmailOps ne demande pas.
+
 <!-- claim:feat-organize-5 -->
 Quand la conversation que vous lisez quitte la liste — archivée, supprimée, mise en attente ou
 déplacée dans les spams —, la suivante s'ouvre. **Paramètres → Apparence → Après l’archivage ou

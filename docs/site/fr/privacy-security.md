@@ -112,14 +112,16 @@ que ce que vous faites ici soit ce que vous voyez partout ailleurs :
 |---|---|
 | Marquer un message comme lu ou non lu | Le même message est marqué comme lu sur le compte |
 | Supprimer un message | Le message est placé dans la **Corbeille** du compte (Éléments supprimés sur Outlook), où il reste récupérable jusqu'à ce que le fournisseur la vide : 30 jours sur Gmail |
+| **Supprimer définitivement**, **Vider la corbeille** ou **Vider les indésirables**, sur un compte IMAP ou Outlook | Les messages sont effacés pour de bon de la corbeille ou des indésirables du compte ; aucun autre dossier n'est touché |
 | Déplacer un message vers un autre dossier, ou **Confirmer** | Le message est aussi déplacé sur le compte — Confirmer le range dans le dossier des indésirables du fournisseur |
 | **Pas un spam — déplacer vers la boîte de réception**, ou **Pas indésirable** sur un message des **Indésirables** | Le message revient dans la boîte de réception du compte |
 | Créer, renommer ou supprimer un dossier | Le dossier change aussi sur le compte |
 | Enregistrer un brouillon | Le brouillon est enregistré dans les Brouillons du compte sur Gmail et Outlook ; sur un compte IMAP, il reste sur cet ordinateur |
 
 <!-- claim:priv-what-emailops-2 -->
-EmailOps ne supprime jamais définitivement un message : les suppressions vont toujours à la
-corbeille, jamais à un effacement définitif. La lecture est appliquée d'abord en local pour que
+Supprimer un message l'envoie à la corbeille, où il reste récupérable ; **Supprimer définitivement**
+et **Vider la corbeille** / **Vider les indésirables** effacent des messages pour de bon, et seulement
+après votre confirmation. La lecture est appliquée d'abord en local pour que
 l'application fonctionne hors ligne, et le compte se met à jour en arrière-plan. Tout le
 reste — libellés, filtres, dossiers auxquels vous n'avez pas touché — reste exactement en
 l'état.

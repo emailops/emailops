@@ -358,5 +358,51 @@
     "unblockFailed": "Blockierung konnte nicht aufgehoben werden",
     "blockedBanner": "Sie haben diesen Absender blockiert. Neue E-Mails landen im Spam.",
     "unblockAction": "Blockierung aufheben"
+  },
+  "deleteForever": {
+    "action": "Endgültig löschen",
+    "empty": {
+      "trash": "Papierkorb leeren",
+      "spam": "Spam leeren"
+    },
+    "barText": {
+      "trash": "Alle Nachrichten im Papierkorb endgültig löschen, hier und in Ihrem Konto.",
+      "spam": "Alle Nachrichten im Spam endgültig löschen, hier und in Ihrem Konto."
+    },
+    "gmailNote": {
+      "trash": "Gmail löscht Nachrichten, die seit 30 Tagen im Papierkorb liegen. Um sie früher zu löschen, nutzen Sie Gmail: Dafür braucht es vollen Zugriff auf Ihr Gmail-Konto, den EmailOps nicht anfordert.",
+      "spam": "Gmail löscht Nachrichten, die seit 30 Tagen im Spam liegen. Um sie früher zu löschen, nutzen Sie Gmail: Dafür braucht es vollen Zugriff auf Ihr Gmail-Konto, den EmailOps nicht anfordert."
+    },
+    "titleSelected": "Endgültig löschen",
+    "counting": "Nachrichten werden gezählt…",
+    "alreadyEmpty": {
+      "trash": "Der Papierkorb ist bereits leer.",
+      "spam": "Spam ist bereits leer."
+    },
+    "confirmTrash_one": "{{count}} Nachricht im Papierkorb wird endgültig gelöscht, hier und in Ihrem Konto. Das lässt sich nicht rückgängig machen.",
+    "confirmTrash_other": "{{count}} Nachrichten im Papierkorb werden endgültig gelöscht, hier und in Ihrem Konto. Das lässt sich nicht rückgängig machen.",
+    "confirmTrash_many": "{{count}} Nachrichten im Papierkorb werden endgültig gelöscht, hier und in Ihrem Konto. Das lässt sich nicht rückgängig machen.",
+    "confirmSpam_one": "{{count}} Nachricht im Spam wird endgültig gelöscht, hier und in Ihrem Konto. Das lässt sich nicht rückgängig machen.",
+    "confirmSpam_other": "{{count}} Nachrichten im Spam werden endgültig gelöscht, hier und in Ihrem Konto. Das lässt sich nicht rückgängig machen.",
+    "confirmSpam_many": "{{count}} Nachrichten im Spam werden endgültig gelöscht, hier und in Ihrem Konto. Das lässt sich nicht rückgängig machen.",
+    "confirmButton": "Endgültig löschen",
+    "progress": "Endgültig löschen: {{processed}} von {{total}}",
+    "cancelling": "Wird nach dem laufenden Stapel angehalten…",
+    "removed_one": "{{count}} Nachricht endgültig gelöscht.",
+    "removed_other": "{{count}} Nachrichten endgültig gelöscht.",
+    "removed_many": "{{count}} Nachrichten endgültig gelöscht.",
+    "failed_one": "{{count}} Nachricht konnte nicht gelöscht werden und ist noch da:",
+    "failed_other": "{{count}} Nachrichten konnten nicht gelöscht werden und sind noch da:",
+    "failed_many": "{{count}} Nachrichten konnten nicht gelöscht werden und sind noch da:",
+    "cancelled_one": "Abgebrochen: {{count}} Nachricht blieb unverändert.",
+    "cancelled_other": "Abgebrochen: {{count}} Nachrichten blieben unverändert.",
+    "cancelled_many": "Abgebrochen: {{count}} Nachrichten blieben unverändert.",
+    "stopped_one": "Angehalten: {{count}} Nachricht blieb unverändert.",
+    "stopped_other": "Angehalten: {{count}} Nachrichten blieben unverändert.",
+    "stopped_many": "Angehalten: {{count}} Nachrichten blieben unverändert.",
+    "reasonCount": "{{reason}} ({{count}})",
+    "startFailed": "Endgültiges Löschen konnte nicht gestartet werden: {{detail}}",
+    "countFailed": "Die Nachrichten konnten nicht gezählt werden: {{detail}}",
+    "cancelFailed": "Abbrechen fehlgeschlagen: {{detail}}"
   }
 }
