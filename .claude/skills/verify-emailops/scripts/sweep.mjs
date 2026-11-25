@@ -555,6 +555,29 @@ await step('Calendario', 'evento de día completo en su fecha', 'un evento de d�
   }
 });
 
+// ---------- Calendario: importar .ics ----------
+// The demo Gmail account owns a calendar, so the toolbar button shows. The file picker is native (not drivable), so
+// the step stops at the empty dialog: it must offer "Choose file…", import nothing and close with Cancel.
+await step('Calendario', 'importar .ics: botón y diálogo vacío', 'la vista completa del calendario de la cuenta Gmail demo ofrece «Import .ics»; su diálogo pide elegir un archivo, no ofrece importar nada y Cancel lo cierra', async () => {
+  try {
+    await click('button=Inbox'); await sleep(600);
+    await click('button*=ulises.emailopslabs@gmail.com'); await sleep(1500);
+    await click('button*=Calendar'); await sleep(1800);
+    await click('button[aria-label="Open full calendar"]'); await sleep(2000);
+    if (!(await exists('button=Import .ics'))) return 'FAIL: no hay botón «Import .ics» en la barra del calendario de la cuenta Gmail demo';
+    await click('button=Import .ics'); await sleep(900);
+    const dialog = () => js(() => [...document.querySelectorAll('.fixed')].find((d) => d.innerText.includes('Import calendar file'))?.innerText.replace(/\n+/g, ' | ') || '');
+    const text = await dialog();
+    const hasChoose = /Choose file/.test(text) && /Choose an \.ics file to see what it contains/.test(text);
+    const importButton = /Import \d+ events?/.test(text) ? (await js(() => [...document.querySelectorAll('button')].find((x) => /^Import \d+ events?$/.test(x.textContent.trim()))?.disabled)) : null;
+    await click('button=Cancel'); await sleep(700);
+    const closed = !(await dialog());
+    return ok(hasChoose && importButton !== false && closed, `diálogo «${text.slice(0, 100)}»; Cancel lo cierra`, `elegir=${hasChoose}, importar deshabilitado=${importButton}, cerrado=${closed}, texto «${text.slice(0, 160)}»`);
+  } finally {
+    await click('button*=ulises@emailopslabs.dev'); await sleep(1200);
+  }
+});
+
 // ---------- EO Docs ----------
 const DOC_TITLE = 'Verification document';
 const docRow = () => sql(`SELECT id, status, length(state) AS size FROM shared_docs WHERE title = '${DOC_TITLE}'`)[0] || null;

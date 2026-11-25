@@ -251,6 +251,15 @@ minutos y su enlace se guarda en tu llavero, no en la base de datos.
 Junto al buzón, el calendario también se abre como un panel acoplado a la derecha, la
 **Agenda**; **Abrir calendario completo** pasa a la vista completa.
 
+<!-- claim:feat-calendar-6 -->
+**Importar .ics** en la barra del calendario abre un selector de archivos para un archivo `.ics` y después una vista previa que muestra cada evento como **Se importará**, **Ya está en el calendario** o **No se puede importar**, con el motivo en este último caso (por ejemplo, una regla de repetición que Outlook no puede representar). Elige la cuenta en **Importar en** (Gmail u Outlook) y los eventos van al calendario principal de esa cuenta. Un archivo puede tener hasta 10 MB y 500 eventos, y volver a importar el mismo archivo no duplica eventos. Las cuentas IMAP no se ofrecen, porque sus calendarios son feeds de solo lectura, y no se puede elegir un calendario secundario.
+
+<!-- claim:feat-calendar-7 -->
+Una invitación en un correo muestra una tarjeta con **Sí**, **No** y **Quizás**. Si la invitación aún no está en tu calendario, **Sí** o **Quizás** la añade al calendario de la cuenta que recibió el correo y envía tu respuesta al organizador por correo; la tarjeta indica "Tu respuesta se enviará a" el organizador, con un aviso cuando el organizador no es quien te envió el correo. **No** elimina una copia que añadió EmailOps y envía el rechazo; para una sola fecha de una serie solo envía el rechazo. Si el organizador mueve una reunión que añadió EmailOps, responder a la invitación actualizada mueve la copia a la nueva hora; responder a un correo anterior no la devuelve a la hora antigua, y una serie periódica no se mueve. Si la invitación llegó hace menos de diez minutos, la tarjeta te pide que lo intentes de nuevo en un momento. Las entradas y los webinars sin organizador muestran en su lugar un único botón **Añadir al calendario**.
+
+<!-- claim:feat-calendar-8 -->
+En el detalle de un evento, los iconos de sobre **Escribir al organizador** y **Escribir a todos los participantes** abren un mensaje nuevo desde la cuenta del evento con el título del evento como asunto. Cuando estás invitado, una fila **Tu respuesta** (**Sí**, **No**, **Quizás**) cambia tu respuesta; en un evento recurrente eliges **Solo este evento** o **Todos los eventos**.
+
 <!-- claim:feat-calendar-3 -->
 Las notificaciones del sistema de un recordatorio omiten el título de la reunión salvo que
 actives **Mostrar el título de la reunión en las notificaciones** en **Ajustes → Calendario**:

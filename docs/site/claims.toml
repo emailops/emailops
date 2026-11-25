@@ -609,6 +609,22 @@ checks = [
   { manual = 'The docked Agenda panel is not driven by the docs app check yet; the demo calendar account asks to sign in again.' },
 ]
 
+[feat-calendar-6]
+checks = [
+  { manual = 'The import needs a Gmail or Outlook calendar account and a file picker; the demo calendar asks to sign in again.' },
+]
+
+[feat-calendar-7]
+checks = [
+  { manual = 'Answering an invitation needs a Gmail or Outlook account to write to the calendar and send the reply; the demo has none.' },
+  { tests = ['services::calendar::respond::tests::a_newer_invite_moves_our_copy_then_answers', 'services::calendar::respond::tests::a_newer_invite_moves_our_outlook_copy_too', 'services::calendar::respond::tests::an_invite_no_newer_than_our_copy_leaves_it_in_place', 'services::calendar::respond::tests::a_newer_invite_for_a_series_leaves_our_copy_in_place'], covers = ["If the organizer moves a meeting EmailOps added, answering the updated invitation moves the copy to the new time; answering an older email does not move it back, and a recurring series is not moved."] },
+]
+
+[feat-calendar-8]
+checks = [
+  { manual = 'The event detail needs a synced Gmail or Outlook calendar; the demo calendar asks to sign in again.' },
+]
+
 [feat-calendar-3]
 checks = [
   { app = true },

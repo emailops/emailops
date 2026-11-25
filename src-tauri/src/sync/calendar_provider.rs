@@ -15,6 +15,7 @@
 use async_trait::async_trait;
 
 use crate::models::error::Result;
+use crate::services::calendar::import::ImportableEvent;
 
 /// Which calendar backend serves an account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +184,40 @@ pub trait CalendarProvider: Send + Sync {
     /// invite's .ics). `self_email` is the account's own address — the
     /// attendee whose response changes. The organizer is notified.
     async fn rsvp_by_ical_uid(&self, ical_uid: &str, response: RsvpResponse, self_email: &str) -> Result<()>;
+
+    /// Look an event up by iCalendar UID in the primary calendar.
+    async fn find_event_by_uid(&self, ical_uid: &str) -> Result<Option<FoundEvent>>;
+
+    /// Import a parsed .ics series (with its overrides) into the primary
+    /// calendar and return the provider's id of the master event.
+    async fn import_event(&self, event: &ImportableEvent) -> Result<String>;
+
+    /// Rewrite a single event EmailOps imported (`provider_event_id`, in the
+    /// primary calendar) to `event`'s times, title, place, description and
+    /// SEQUENCE, without notifying anyone. Used when the organizer moved it.
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()>;
+
+    /// Set the account's own response on an existing event. `self_email` is
+    /// the attendee whose response changes. When `notify` is true the
+    /// organizer is told (Google `sendUpdates=all`, Graph `sendResponse`).
+    async fn respond_to_event(
+        &self,
+        calendar_id: &str,
+        provider_event_id: &str,
+        response: RsvpResponse,
+        self_email: &str,
+        notify: bool,
+    ) -> Result<()>;
+}
+
+/// An event found by iCalendar UID in the primary calendar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundEvent {
+    pub provider_event_id: String,
+    /// The copy carries the marker EmailOps stamps on what it imports.
+    pub imported_by_emailops: bool,
+    /// The copy's iCalendar SEQUENCE (0 when the provider has none).
+    pub sequence: u32,
 }
 
 /// The three invite answers. Wire values match the frontend buttons.
@@ -245,6 +280,23 @@ pub struct FakeCalendarProvider {
     pub truncated: std::sync::Mutex<Vec<(String, String, i64, bool)>>,
     /// `(ical_uid, google_status, self_email)` per RSVP call.
     pub rsvps: std::sync::Mutex<Vec<(String, String, String)>>,
+    /// Events `find_event_by_uid` reports, by iCalendar UID.
+    pub found_by_uid: std::collections::HashMap<String, FoundEvent>,
+    /// UID -> message: `import_event` fails with a sync error for that UID.
+    pub import_errors: std::collections::HashMap<String, String>,
+    /// UID -> message: `find_event_by_uid` fails with a sync error for that UID.
+    pub find_errors: std::collections::HashMap<String, String>,
+    pub imported: std::sync::Mutex<Vec<ImportableEvent>>,
+    /// `(calendar_id, provider_event_id, google_status, notify)` per respond call.
+    pub responses: std::sync::Mutex<Vec<(String, String, String, bool)>>,
+    /// Provider event id -> message: `respond_to_event` fails with a sync error.
+    pub respond_errors: std::collections::HashMap<String, String>,
+    /// `(provider_event_id, event)` per `update_imported_event` call.
+    pub updated: std::sync::Mutex<Vec<(String, ImportableEvent)>>,
+    /// Provider event id -> message: `update_imported_event` fails with a sync error.
+    pub update_errors: std::collections::HashMap<String, String>,
+    /// UID -> id of what `import_event` created, found again by later lookups.
+    imported_ids: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -259,6 +311,15 @@ impl FakeCalendarProvider {
             deleted: std::sync::Mutex::new(Vec::new()),
             truncated: std::sync::Mutex::new(Vec::new()),
             rsvps: std::sync::Mutex::new(Vec::new()),
+            found_by_uid: std::collections::HashMap::new(),
+            import_errors: std::collections::HashMap::new(),
+            find_errors: std::collections::HashMap::new(),
+            imported: std::sync::Mutex::new(Vec::new()),
+            responses: std::sync::Mutex::new(Vec::new()),
+            respond_errors: std::collections::HashMap::new(),
+            updated: std::sync::Mutex::new(Vec::new()),
+            update_errors: std::collections::HashMap::new(),
+            imported_ids: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -439,6 +500,94 @@ impl CalendarProvider for FakeCalendarProvider {
             ));
         Ok(())
     }
+
+    async fn find_event_by_uid(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
+        if let Some(error) = &self.error {
+            return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.find_errors.get(ical_uid) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
+        }
+        if let Some(found) = self.found_by_uid.get(ical_uid) {
+            return Ok(Some(found.clone()));
+        }
+        let sequence = self
+            .imported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .rfind(|e| e.uid == ical_uid)
+            .map_or(0, |e| e.sequence);
+        Ok(self
+            .imported_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(ical_uid)
+            .map(|id| FoundEvent {
+                provider_event_id: id.clone(),
+                imported_by_emailops: true,
+                sequence,
+            }))
+    }
+
+    async fn import_event(&self, event: &ImportableEvent) -> Result<String> {
+        if let Some(error) = &self.error {
+            return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.import_errors.get(&event.uid) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
+        }
+        let id = format!("imported-{}", event.uid);
+        self.imported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(event.clone());
+        self.imported_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(event.uid.clone(), id.clone());
+        Ok(id)
+    }
+
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()> {
+        if let Some(error) = &self.error {
+            return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.update_errors.get(provider_event_id) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
+        }
+        self.updated
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((provider_event_id.to_string(), event.clone()));
+        Ok(())
+    }
+
+    async fn respond_to_event(
+        &self,
+        calendar_id: &str,
+        provider_event_id: &str,
+        response: RsvpResponse,
+        _self_email: &str,
+        notify: bool,
+    ) -> Result<()> {
+        if let Some(error) = &self.error {
+            return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.respond_errors.get(provider_event_id) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
+        }
+        self.responses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((
+                calendar_id.to_string(),
+                provider_event_id.to_string(),
+                response.as_google_status().to_string(),
+                notify,
+            ));
+        Ok(())
+    }
 }
 
 /// Map a failed calendar HTTP response to a typed, user-presentable error.
@@ -510,6 +659,68 @@ pub(crate) fn classify_calendar_fetch_error(
 mod tests {
     use super::*;
     use crate::models::error::AppError;
+
+    fn importable(uid: &str) -> ImportableEvent {
+        use crate::services::calendar::import::EventTime;
+        let when = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 5).expect("date"));
+        ImportableEvent {
+            uid: uid.into(),
+            summary: "Planning".into(),
+            description: String::new(),
+            location: String::new(),
+            start: when.clone(),
+            end: when,
+            rrule: None,
+            exdates: Vec::new(),
+            rdates: Vec::new(),
+            recurrence_id: None,
+            overrides: Vec::new(),
+            organizer: None,
+            attendees: Vec::new(),
+            sequence: 0,
+            fallback_tz: "UTC".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fake_import_is_found_afterwards_as_an_emailops_copy() {
+        let fake = FakeCalendarProvider::with_events(Vec::new());
+        assert_eq!(fake.find_event_by_uid("u1@example.com").await.expect("find"), None);
+        let id = fake.import_event(&importable("u1@example.com")).await.expect("import");
+        assert_eq!(id, "imported-u1@example.com");
+        assert_eq!(
+            fake.find_event_by_uid("u1@example.com").await.expect("find"),
+            Some(FoundEvent {
+                provider_event_id: id,
+                imported_by_emailops: true,
+                sequence: 0
+            })
+        );
+        assert_eq!(fake.imported.lock().expect("lock").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_fake_import_fails_only_for_the_configured_uid() {
+        let mut fake = FakeCalendarProvider::with_events(Vec::new());
+        fake.import_errors.insert("bad@example.com".into(), "boom".into());
+        assert!(matches!(
+            fake.import_event(&importable("bad@example.com")).await,
+            Err(AppError::SyncError(m)) if m == "boom"
+        ));
+        assert!(fake.import_event(&importable("ok@example.com")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_fake_response_is_recorded_with_the_google_status() {
+        let fake = FakeCalendarProvider::with_events(Vec::new());
+        fake.respond_to_event("primary", "ev1", RsvpResponse::Tentative, "me@example.com", false)
+            .await
+            .expect("respond");
+        assert_eq!(
+            *fake.responses.lock().expect("lock"),
+            vec![("primary".to_string(), "ev1".to_string(), "tentative".to_string(), false)]
+        );
+    }
 
     #[test]
     fn calendar_kind_is_google_outlook_or_feeds_only_when_imap_has_one() {

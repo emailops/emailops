@@ -11,7 +11,7 @@ import {
   createAccountChoices,
   eventColorFor,
 } from '@/lib/calendarAccounts';
-import { eventsAfterDelete } from '@/lib/calendarEvent';
+import { eventsAfterDelete, eventsAfterResponse } from '@/lib/calendarEvent';
 import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
 import { addDays, startOfDay } from '@/lib/calendarGrid';
 import { errorText } from '@/lib/errors';
@@ -292,6 +292,7 @@ export function CalendarPanel({
 
       {selectedEvent && (
         <EventDetailDialog
+          key={selectedEvent.id}
           event={selectedEvent}
           accountId={selectedEvent.accountId}
           accountEmail={isAllAccounts ? accountById.get(selectedEvent.accountId)?.email : undefined}
@@ -306,6 +307,11 @@ export function CalendarPanel({
           onDeleted={(eventId, scope, recurringEventId, startTime) => {
             data.setEvents((prev) => eventsAfterDelete(prev, { id: eventId, recurringEventId, startTime }, scope));
             setSelectedEvent(null);
+          }}
+          onResponded={(responded, response, scope) => {
+            // Provider round-trip already happened — patch my answer locally.
+            const self = accountById.get(responded.accountId)?.email ?? '';
+            data.setEvents((prev) => eventsAfterResponse(prev, responded, response, scope, self));
           }}
           onAuthError={() => {
             setSelectedEvent(null);

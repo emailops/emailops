@@ -263,6 +263,15 @@ Minuten aktualisiert, und sein Link liegt in Ihrem Schlüsselbund, nicht in der 
 Neben dem Posteingang öffnet sich der Kalender auch als rechts angedocktes Feld, die
 **Agenda**; **Vollständigen Kalender öffnen** wechselt zur vollen Ansicht.
 
+<!-- claim:feat-calendar-6 -->
+**.ics importieren** in der Kalender-Symbolleiste öffnet eine Dateiauswahl für eine `.ics`-Datei und danach eine Vorschau, die jeden Termin als **Wird importiert**, **Bereits im Kalender** oder **Kann nicht importiert werden** auflistet, bei Letzterem mit dem Grund (zum Beispiel eine Wiederholungsregel, die Outlook nicht abbilden kann). Wählen Sie das Konto unter **Importieren in** (Gmail oder Outlook), und die Termine landen im Hauptkalender dieses Kontos. Eine Datei darf bis zu 10 MB und 500 Termine enthalten, und ein erneuter Import derselben Datei erzeugt keine Duplikate. IMAP-Konten werden nicht angeboten, weil ihre Kalender schreibgeschützte Feeds sind, und einen sekundären Kalender können Sie nicht wählen.
+
+<!-- claim:feat-calendar-7 -->
+Eine Einladung in einer E-Mail zeigt eine Karte mit **Ja**, **Nein** und **Vielleicht**. Ist die Einladung noch nicht in Ihrem Kalender, fügt **Ja** oder **Vielleicht** sie dem Kalender des Kontos hinzu, das die E-Mail erhalten hat, und sendet Ihre Antwort per E-Mail an den Organisator; die Karte zeigt „Deine Antwort wird an“ den Organisator „gesendet“, mit einem Hinweis, wenn der Organisator nicht der Absender der E-Mail ist. **Nein** entfernt eine von EmailOps hinzugefügte Kopie und sendet die Absage; für einen einzelnen Termin einer Serie sendet es nur die Absage. Verschiebt der Organisator ein von EmailOps hinzugefügtes Meeting, verschiebt eine Antwort auf die aktualisierte Einladung die Kopie auf die neue Zeit; eine Antwort auf eine ältere E-Mail verschiebt sie nicht zurück, und eine Terminserie wird nicht verschoben. Ist die Einladung vor weniger als zehn Minuten eingetroffen, bittet die Karte, es gleich noch einmal zu versuchen. Tickets und Webinare ohne Organisator zeigen stattdessen eine einzige Schaltfläche **Zum Kalender hinzufügen**.
+
+<!-- claim:feat-calendar-8 -->
+In den Details eines Termins öffnen die Umschlag-Symbole **An den Organisator schreiben** und **An alle Teilnehmer schreiben** eine neue Nachricht vom Konto des Termins, mit dem Termintitel als Betreff. Sind Sie eingeladen, ändert eine Zeile **Deine Antwort** (**Ja**, **Nein**, **Vielleicht**) Ihre Antwort; bei einem Serientermin wählen Sie **Nur dieser Termin** oder **Alle Termine**.
+
 <!-- claim:feat-calendar-3 -->
 Systembenachrichtigungen einer Erinnerung lassen den Meeting-Titel weg, außer Sie aktivieren
 **Meeting-Titel in Benachrichtigungen anzeigen** unter **Einstellungen → Kalender**: Sie

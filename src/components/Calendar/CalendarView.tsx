@@ -11,8 +11,9 @@ import {
   calendarSelectionIds,
   createAccountChoices,
   eventColorFor,
+  importAccountChoices,
 } from '@/lib/calendarAccounts';
-import { eventsAfterDelete } from '@/lib/calendarEvent';
+import { eventsAfterDelete, eventsAfterResponse } from '@/lib/calendarEvent';
 import { isReadOnlyCalendar } from '@/lib/calendarFeeds';
 import { addDays, monthGrid, startOfDay, weekDays } from '@/lib/calendarGrid';
 import { accountColorHex } from '@/lib/colors';
@@ -21,6 +22,7 @@ import { calendarPanelState, useCalendarIntegrationStore } from '@/stores/calend
 import { useLogStore } from '@/stores/logStore';
 import type { Account, Calendar, CalendarEvent } from '@/types';
 import { EventDetailDialog } from './EventDetailDialog';
+import { ImportIcsDialog } from './ImportIcsDialog';
 import { MonthGrid } from './MonthGrid';
 import { NewEventDialog } from './NewEventDialog';
 import { TimeGrid } from './TimeGrid';
@@ -80,6 +82,8 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
     null,
   );
 
+  const [importOpen, setImportOpen] = useState(false);
+
   // Visible range for the current view/anchor, in unix seconds.
   const { rangeStart, rangeEnd } = useMemo(() => {
     if (viewMode === 'month') {
@@ -125,6 +129,8 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
     () => calendarAccounts.filter((a) => shownAccountIds.includes(a.id)),
     [calendarAccounts, shownAccountIds],
   );
+  // "Import .ics" writes to a primary calendar: any Gmail/Outlook account, shown or not.
+  const importChoices = useMemo(() => importAccountChoices(calendarAccounts), [calendarAccounts]);
 
   const enableCalendar = useCallback(() => {
     setError(null);
@@ -370,6 +376,14 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
             </button>
           ))}
         </div>
+        {importChoices.length > 0 && (
+          <button
+            onClick={() => setImportOpen(true)}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            {t('calendar:import.button')}
+          </button>
+        )}
         <button
           onClick={() => void runSync()}
           disabled={isSyncing || shownAccountIds.length === 0}
@@ -451,6 +465,7 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
 
       {selectedEvent && (
         <EventDetailDialog
+          key={selectedEvent.id}
           event={selectedEvent}
           accountId={selectedEvent.accountId}
           accountEmail={isAllAccounts ? accountById.get(selectedEvent.accountId)?.email : undefined}
@@ -468,9 +483,27 @@ export function CalendarView({ accounts, defaultAccountId, onOpenSettings }: Cal
             setEvents((prev) => eventsAfterDelete(prev, { id: eventId, recurringEventId, startTime }, scope));
             setSelectedEvent(null);
           }}
+          onResponded={(responded, response, scope) => {
+            // Provider round-trip already happened — patch my answer locally.
+            const self = accountById.get(responded.accountId)?.email ?? '';
+            setEvents((prev) => eventsAfterResponse(prev, responded, response, scope, self));
+          }}
           onAuthError={() => {
             setSelectedEvent(null);
             markNeedsReauth(selectedEvent.accountId);
+          }}
+        />
+      )}
+
+      {importOpen && importChoices.length > 0 && (
+        <ImportIcsDialog
+          choices={importChoices}
+          initialAccountId={selectedAccountId ?? ''}
+          onClose={() => setImportOpen(false)}
+          onImported={() => void runSync()}
+          onAuthError={(accountId) => {
+            setImportOpen(false);
+            markNeedsReauth(accountId);
           }}
         />
       )}

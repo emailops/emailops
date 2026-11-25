@@ -82,4 +82,30 @@ describe('TimeGrid initial scroll', () => {
     flushAnimationFrames();
     expect(scrollContainer().scrollTop).toBe(7 * 48);
   });
+
+  // Hit-testing can still drift from the painted scroll position later on
+  // (clicks land hours away from the block under the pointer) until the user
+  // scrolls. A programmatic round trip re-commits the position, so it runs
+  // whenever the pointer comes into the grid — before any click on an event.
+  it('re-commits the scroll position when the pointer enters the grid', () => {
+    mount();
+    flushAnimationFrames();
+    const el = scrollContainer();
+    let current = el.scrollTop;
+    const writes: number[] = [];
+    Object.defineProperty(el, 'scrollTop', {
+      configurable: true,
+      get: () => current,
+      set: (value: number) => {
+        writes.push(value);
+        current = value;
+      },
+    });
+
+    act(() => {
+      el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    });
+
+    expect(writes).toEqual([7 * 48 - 1, 7 * 48]);
+  });
 });

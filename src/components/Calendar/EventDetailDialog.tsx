@@ -1,6 +1,7 @@
 import { open as openExternal } from '@tauri-apps/plugin-shell';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
 import { useFormatters } from '@/hooks/useFormatters';
 import * as api from '@/lib/api';
 import {
@@ -11,12 +12,21 @@ import {
   linkifySegments,
   visibleAttendees,
 } from '@/lib/calendarEvent';
+import {
+  canRespond,
+  isMyMeeting,
+  organizerRecipient,
+  participantRecipients,
+  selfResponse,
+} from '@/lib/calendarEventContacts';
 import { eventBounds } from '@/lib/calendarGrid';
 import { getSafeExternalUrl } from '@/lib/emailFormatting';
 import { errorText, isAuthError } from '@/lib/errors';
+import { useAccountStore } from '@/stores/accountStore';
+import { useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useOverlay } from '@/stores/overlayStore';
-import type { CalendarEvent } from '@/types';
+import type { CalendarEvent, RsvpChoice } from '@/types';
 
 /**
  * Provider descriptions (Graph) can contain raw HTML — UNTRUSTED input. We
@@ -48,6 +58,8 @@ interface EventDetailDialogProps {
    *  must go (see `eventsAfterDelete`); `recurringEventId`/`startTime` echo
    *  the deleted event so the parent can filter without re-looking it up. */
   onDeleted: (eventId: string, scope: CalendarDeleteScope, recurringEventId: string | null, startTime: number) => void;
+  /** I answered on the provider — parent patches my answer into its events. */
+  onResponded: (event: CalendarEvent, response: RsvpChoice, scope: 'instance' | 'series') => void;
   /** Auth-class failure — parent closes the dialog and shows its re-auth banner. */
   onAuthError: () => void;
 }
@@ -61,6 +73,7 @@ export function EventDetailDialog({
   readOnly = false,
   onClose,
   onDeleted,
+  onResponded,
   onAuthError,
 }: EventDetailDialogProps) {
   const isTopOverlay = useOverlay();
@@ -96,7 +109,49 @@ export function EventDetailDialog({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const hasOtherAttendees = event.attendees.some((a) => attendeeStatusMeta(a.response) !== 'organizer');
+  // Write-to icons and "Your response": my address is the account's.
+  const selfEmail = useAccountStore((s) => s.accounts.find((a) => a.id === accountId)?.email ?? '');
+  const openComposeTab = useEmailStore((s) => s.openComposeTab);
+  const organizerTo = organizerRecipient(event, selfEmail);
+  const participantsTo = participantRecipients(event, selfEmail);
+  const showResponse = canRespond(event, selfEmail, readOnly);
+  const [answer, setAnswer] = useState<RsvpChoice | null>(() => selfResponse(event, selfEmail));
+  const [responseScope, setResponseScope] = useState<'instance' | 'series'>('instance');
+  const [isResponding, setIsResponding] = useState(false);
+  const [responseError, setResponseError] = useState<string | null>(null);
+
+  const mailTo = (recipients: string[]) => {
+    openComposeTab(accountId, recipients, event.title);
+    onClose();
+  };
+
+  const handleRespond = async (choice: RsvpChoice) => {
+    if (isResponding) return;
+    setIsResponding(true);
+    setResponseError(null);
+    const scope = isRecurringInstance ? responseScope : 'instance';
+    addLog('info', 'sync', 'Responding to calendar event');
+    try {
+      await api.respondToCalendarEvent(accountId, event.calendarId, event.providerEventId, choice, scope);
+      addLog('success', 'sync', 'Calendar event response sent');
+      setAnswer(choice);
+      onResponded(event, choice, scope);
+    } catch (e) {
+      const msg = errorText(e);
+      addLog('error', 'sync', `Failed to respond to calendar event: ${msg}`);
+      if (isAuthError(e, msg)) {
+        onAuthError();
+      } else {
+        setResponseError(msg);
+      }
+    } finally {
+      setIsResponding(false);
+    }
+  };
+
+  // Only the organizer can cancel for everyone; deleting an invitation just takes it off my calendar.
+  const canNotifyAttendees =
+    isMyMeeting(event, selfEmail) && event.attendees.some((a) => attendeeStatusMeta(a.response) !== 'organizer');
 
   const openLink = (url: string) => {
     openExternal(url).catch((err) => {
@@ -109,7 +164,7 @@ export function EventDetailDialog({
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      const notify = hasOtherAttendees && notifyAttendees;
+      const notify = canNotifyAttendees && notifyAttendees;
       const scope = isRecurringInstance ? deleteScope : 'instance';
       await api.deleteCalendarEvent(
         accountId,
@@ -224,11 +279,23 @@ export function EventDetailDialog({
           )}
           {event.organizer && (
             <DetailRow label={t('calendar:detail.organizer')}>
-              <span className="text-gray-800 break-all">{event.organizer}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-800 break-all">{event.organizer}</span>
+                {organizerTo && (
+                  <MailButton label={t('calendar:detail.mailOrganizer')} onClick={() => mailTo([organizerTo])} />
+                )}
+              </div>
             </DetailRow>
           )}
-          {attendeeList.length > 0 && (
-            <DetailRow label={t('calendar:detail.attendees')}>
+          {(attendeeList.length > 0 || participantsTo.length > 0) && (
+            <DetailRow
+              label={t('calendar:detail.attendees')}
+              action={
+                participantsTo.length > 0 && (
+                  <MailButton label={t('calendar:detail.mailParticipants')} onClick={() => mailTo(participantsTo)} />
+                )
+              }
+            >
               <ul className="space-y-1">
                 {attendeeList.map((attendee) => {
                   const status = attendeeStatusMeta(attendee.response);
@@ -250,6 +317,51 @@ export function EventDetailDialog({
                   );
                 })}
               </ul>
+            </DetailRow>
+          )}
+          {showResponse && (
+            <DetailRow label={t('calendar:detail.yourResponse')}>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(['accepted', 'declined', 'tentative'] as const).map((choice) => (
+                    <button
+                      key={choice}
+                      type="button"
+                      data-response={choice}
+                      aria-pressed={answer === choice}
+                      disabled={isResponding}
+                      onClick={() => void handleRespond(choice)}
+                      className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50 ${
+                        answer === choice
+                          ? 'bg-primary-600 text-white hover:bg-primary-700'
+                          : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t(`calendar:detail.response.${choice}` as const)}
+                    </button>
+                  ))}
+                </div>
+                {isRecurringInstance && (
+                  <div className="space-y-1.5" role="radiogroup" aria-label={t('calendar:detail.yourResponse')}>
+                    {(['instance', 'series'] as const).map((scope) => (
+                      <label key={scope} className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="radio"
+                          name="event-response-scope"
+                          value={scope}
+                          checked={responseScope === scope}
+                          onChange={() => setResponseScope(scope)}
+                          className="border-gray-300 text-primary-600 focus:ring-primary-500"
+                        />
+                        {t(`calendar:detail.responseScope.${scope}` as const)}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <InlineError
+                  message={responseError ? t('calendar:detail.responseError', { message: responseError }) : null}
+                />
+              </div>
             </DetailRow>
           )}
           {description && (
@@ -324,7 +436,7 @@ export function EventDetailDialog({
                     ))}
                   </div>
                 )}
-                {hasOtherAttendees && (
+                {canNotifyAttendees && (
                   <>
                     <label className="flex items-center gap-2 text-sm text-gray-700">
                       <input
@@ -440,10 +552,42 @@ function AttendeeStatusIcon({ status, label }: { status: Exclude<AttendeeStatusK
   }
 }
 
-function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+function MailButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="flex-shrink-0 p-1 text-gray-400 hover:text-primary-600 hover:bg-gray-100 rounded transition-colors"
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+        />
+      </svg>
+    </button>
+  );
+}
+
+function DetailRow({
+  label,
+  action,
+  children,
+}: {
+  label: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">{label}</div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+        {action}
+      </div>
       {children}
     </div>
   );

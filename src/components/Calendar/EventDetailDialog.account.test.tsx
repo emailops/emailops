@@ -58,6 +58,7 @@ describe('EventDetailDialog — account', () => {
           provider="gmail"
           onClose={() => {}}
           onDeleted={() => {}}
+          onResponded={() => {}}
           onAuthError={() => {}}
         />,
       ),
