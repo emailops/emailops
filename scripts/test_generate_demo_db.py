@@ -10,6 +10,8 @@ stopped matching, and they did it quietly — the cases still "ran" and reported
 a generic answer failure.
 """
 import ast
+import fnmatch
+import json
 import pathlib
 import sqlite3
 import unittest
@@ -563,3 +565,93 @@ class TheSchemaComesFromThisCheckoutsMigrations(unittest.TestCase):
         run, _ = self._fake_init_db(gen.latest_migration_version() - 1)
         with self.assertRaises(SystemExit):
             gen.migrate_schema(self._demo_db(), run=run)
+
+
+class SentInvoicesShareTheWorkInvoiceTag(unittest.TestCase):
+    """The personal account sends invoices to clients and a rule there saves
+    them under the tag the work account's vendor invoices already carry, so
+    "All accounts" in the Attachments view lists both under one chip. Fixed
+    dates and no random draws: seeded last, they move nothing else."""
+
+    def _db(self):
+        conn = sqlite3.connect(":memory:")
+        conn.executescript(
+            """
+            CREATE TABLE emails (id TEXT PRIMARY KEY, account_id TEXT, thread_id TEXT, message_id TEXT,
+                subject TEXT, sender TEXT, sender_email TEXT, sender_domain TEXT, recipients_json TEXT,
+                cc_json TEXT, snippet TEXT, timestamp INTEGER, is_read INTEGER, is_deleted INTEGER,
+                triage_status TEXT, category TEXT, mailbox TEXT, raw_json TEXT, created_at INTEGER);
+            CREATE TABLE email_bodies (email_id TEXT PRIMARY KEY, body TEXT);
+            CREATE VIRTUAL TABLE emails_fts USING fts5(email_id UNINDEXED, subject, sender, body);
+            CREATE TABLE email_tags (email_id TEXT, tag_type TEXT, tag_value TEXT, confidence REAL,
+                created_at INTEGER, PRIMARY KEY (email_id, tag_type));
+            CREATE TABLE email_attachment_meta (id TEXT PRIMARY KEY, email_id TEXT, account_id TEXT,
+                provider_attachment_id TEXT, filename TEXT, mime_type TEXT, file_size INTEGER,
+                file_path TEXT, inline_data TEXT);
+            CREATE TABLE attachment_rules (id TEXT PRIMARY KEY, account_id TEXT, name TEXT,
+                sender_email_pattern TEXT, subject_pattern TEXT, filename_pattern TEXT, tags_json TEXT,
+                enabled INTEGER, created_at INTEGER, updated_at INTEGER);
+            CREATE TABLE attachments (id TEXT PRIMARY KEY, account_id TEXT, email_id TEXT, rule_id TEXT,
+                gmail_attachment_id TEXT, filename TEXT, mime_type TEXT, file_size INTEGER, file_path TEXT,
+                tags_json TEXT, sender_email TEXT, subject TEXT, email_timestamp INTEGER, created_at INTEGER);
+            """
+        )
+        return conn
+
+    def _seeded(self, locale):
+        import tempfile
+
+        conn = self._db()
+        demo_dir = pathlib.Path(tempfile.mkdtemp())
+        gen.insert_sent_invoices(conn, locale, demo_dir)
+        return conn, demo_dir
+
+    def _work_invoice_tag(self, locale):
+        return locale.attachment_rules[0][4][0]
+
+    def test_the_personal_account_saves_sent_invoices_under_the_work_invoice_tag(self):
+        for locale in (gen.LOCALE_EN, gen.LOCALE_ES):
+            with self.subTest(locale=locale.code):
+                conn, _ = self._seeded(locale)
+                tag = self._work_invoice_tag(locale)
+                rows = conn.execute(
+                    "SELECT a.account_id, a.tags_json, e.mailbox, e.sender_email FROM attachments a "
+                    "JOIN emails e ON e.id = a.email_id"
+                ).fetchall()
+                self.assertEqual(len(rows), 4)
+                for account_id, tags_json, mailbox, sender in rows:
+                    self.assertEqual(account_id, locale.personal.id)
+                    self.assertIn(tag, json.loads(tags_json))
+                    self.assertEqual(mailbox, "sent")
+                    self.assertEqual(sender, locale.personal.email)
+
+    def test_the_rule_matches_what_it_saved(self):
+        for locale in (gen.LOCALE_EN, gen.LOCALE_ES):
+            with self.subTest(locale=locale.code):
+                conn, _ = self._seeded(locale)
+                (account_id, sender_pattern, filename_pattern, tags_json) = conn.execute(
+                    "SELECT account_id, sender_email_pattern, filename_pattern, tags_json FROM attachment_rules"
+                ).fetchone()
+                self.assertEqual(account_id, locale.personal.id)
+                self.assertEqual(sender_pattern, locale.personal.email)
+                self.assertEqual(json.loads(tags_json), [self._work_invoice_tag(locale)])
+                for (filename,) in conn.execute("SELECT filename FROM attachments"):
+                    self.assertTrue(fnmatch.fnmatch(filename.lower(), filename_pattern), filename)
+
+    def test_every_saved_invoice_is_a_pdf_on_disk(self):
+        conn, demo_dir = self._seeded(gen.LOCALE_EN)
+        for (rel_path,) in conn.execute("SELECT file_path FROM attachments"):
+            self.assertTrue((demo_dir / rel_path).read_bytes().startswith(b"%PDF"), rel_path)
+
+    def test_the_invoices_go_to_clients_on_reserved_domains(self):
+        for locale in (gen.LOCALE_EN, gen.LOCALE_ES):
+            with self.subTest(locale=locale.code):
+                conn, _ = self._seeded(locale)
+                for (recipients,) in conn.execute("SELECT recipients_json FROM emails"):
+                    for address in json.loads(recipients):
+                        self.assertTrue(address.endswith(".example"), address)
+
+    def test_seeding_draws_nothing_from_the_shared_random_generator(self):
+        before = gen.RNG.getstate()
+        self._seeded(gen.LOCALE_EN)
+        self.assertEqual(gen.RNG.getstate(), before)

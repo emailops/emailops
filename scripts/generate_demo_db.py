@@ -1682,6 +1682,79 @@ ATTACHMENT_RULES_ES: list[tuple[str, str | None, str | None, str | None, list[st
 ]
 
 
+
+# Invoices the owner sends to clients from the personal account. A rule on that
+# account saves them under the tag the work account's vendor invoices already
+# carry, so the Attachments view's "All accounts" lists both under one chip.
+# Fixed dates and no RNG draws: they are inserted after everything else and move
+# no other demo row.
+@dataclass
+class SentInvoice:
+    client_name: str
+    client_email: str
+    number: str
+    period: str
+    date: tuple[int, int, int]
+    amount: str
+
+
+@dataclass
+class SentInvoices:
+    rule_name: str
+    filename_pattern: str
+    tag: str
+    filename: str
+    subject: str
+    body: str
+    line_item: str
+    invoice_label: str
+    issue_label: str
+    bill_to_label: str
+    total_label: str
+    invoices: list[SentInvoice]
+
+
+SENT_INVOICES: dict[str, SentInvoices] = {
+    "en": SentInvoices(
+        rule_name="Sent invoices",
+        filename_pattern="*invoice*",
+        tag="invoice",
+        filename="invoice-{number}.pdf",
+        subject="Invoice {number} — mentoring, {period}",
+        body="Hello,\n\nAttached is invoice {number} for the mentoring sessions in {period}.\n\nThanks,\n{owner}",
+        line_item="Mentoring sessions, {period}",
+        invoice_label="Invoice #",
+        issue_label="Issue date",
+        bill_to_label="Bill to",
+        total_label="Total",
+        invoices=[
+            SentInvoice("Harbor & Pine Studio", "accounts@harborpine.example", "SI-2026-01", "January", (2026, 1, 30), "€480.00"),
+            SentInvoice("Larch Lane Bakery", "orders@larchlane.example", "SI-2026-02", "February", (2026, 2, 27), "€360.00"),
+            SentInvoice("Harbor & Pine Studio", "accounts@harborpine.example", "SI-2026-03", "March", (2026, 3, 31), "€480.00"),
+            SentInvoice("Larch Lane Bakery", "orders@larchlane.example", "SI-2026-04", "April", (2026, 4, 30), "€240.00"),
+        ],
+    ),
+    "es": SentInvoices(
+        rule_name="Facturas enviadas",
+        filename_pattern="*factura*",
+        tag="factura",
+        filename="factura-{number}.pdf",
+        subject="Factura {number} — mentoría, {period}",
+        body="Hola:\n\nTe adjunto la factura {number} de las sesiones de mentoría de {period}.\n\nGracias,\n{owner}",
+        line_item="Sesiones de mentoría, {period}",
+        invoice_label="Factura nº",
+        issue_label="Fecha de emisión",
+        bill_to_label="Facturar a",
+        total_label="Total",
+        invoices=[
+            SentInvoice("Estudio Alameda", "administracion@estudio-alameda.example", "FE-2026-01", "enero", (2026, 1, 30), "480,00 €"),
+            SentInvoice("Panadería La Encina", "pedidos@laencina.example", "FE-2026-02", "febrero", (2026, 2, 27), "360,00 €"),
+            SentInvoice("Estudio Alameda", "administracion@estudio-alameda.example", "FE-2026-03", "marzo", (2026, 3, 31), "480,00 €"),
+            SentInvoice("Panadería La Encina", "pedidos@laencina.example", "FE-2026-04", "abril", (2026, 4, 30), "240,00 €"),
+        ],
+    ),
+}
+
 LOCALE_EN = Locale(
     code="en",
     work=ACCOUNT_WORK,
@@ -2960,6 +3033,89 @@ def populate_invoice_emails(
     return inserted
 
 
+def insert_sent_invoices(conn: sqlite3.Connection, locale: Locale, demo_dir: Path) -> None:
+    """Insert the personal account's "sent invoices" rule and the four invoices
+    it saved: a sent email per invoice, its paperclip metadata, its
+    Attachments-view row and a mock PDF on disk. See `SENT_INVOICES`."""
+    spec = SENT_INVOICES[locale.code]
+    account = locale.personal
+    now = now_s()
+    tags_json = json.dumps([spec.tag])
+    rule_id = demo_id("rule_", account.id, spec.rule_name, account.email)
+    conn.execute(
+        """INSERT INTO attachment_rules
+           (id, account_id, name, sender_email_pattern, subject_pattern,
+            filename_pattern, tags_json, enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, NULL, ?, ?, 1, ?, ?)""",
+        (rule_id, account.id, spec.rule_name, account.email, spec.filename_pattern, tags_json, now, now),
+    )
+    for invoice in spec.invoices:
+        subject = spec.subject.format(number=invoice.number, period=invoice.period)
+        body = spec.body.format(number=invoice.number, period=invoice.period, owner=account.name)
+        timestamp = epoch_for(*invoice.date)
+        email_id = insert_email(
+            conn,
+            account=account,
+            sender_name=account.name,
+            sender_email=account.email,
+            subject=subject,
+            body=body,
+            timestamp=timestamp,
+            is_read=True,
+            mailbox="sent",
+            category="primary",
+            recipient_email=invoice.client_email,
+        )
+        insert_tags(conn, email_id, subject, body, account.email)
+
+        year, month, day = invoice.date
+        pdf = _build_invoice_pdf(
+            account.name,
+            [
+                f"{spec.invoice_label}: {invoice.number}",
+                f"{spec.issue_label}: {year:04d}-{month:02d}-{day:02d}",
+                f"{spec.bill_to_label}: {invoice.client_name} — {invoice.client_email}",
+            ],
+            [(spec.line_item.format(period=invoice.period), invoice.amount)],
+            spec.total_label,
+            invoice.amount,
+        )
+        rel_path = f"attachments/{account.id}/{demo_id('', account.id, invoice.number, length=32)}.pdf"
+        abs_path = demo_dir / rel_path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_bytes(pdf)
+
+        filename = spec.filename.format(number=invoice.number)
+        conn.execute(
+            """INSERT INTO email_attachment_meta
+               (id, email_id, account_id, provider_attachment_id, filename, mime_type,
+                file_size, file_path, inline_data)
+               VALUES (?, ?, ?, '', ?, 'application/pdf', ?, ?, NULL)""",
+            (demo_id("att_", email_id, filename), email_id, account.id, filename, len(pdf), rel_path),
+        )
+        conn.execute(
+            """INSERT INTO attachments
+               (id, account_id, email_id, rule_id, gmail_attachment_id, filename,
+                mime_type, file_size, file_path, tags_json, sender_email, subject,
+                email_timestamp, created_at)
+               VALUES (?, ?, ?, ?, '', ?, 'application/pdf', ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                demo_id("att_", "view", email_id, filename),
+                account.id,
+                email_id,
+                rule_id,
+                filename,
+                len(pdf),
+                rel_path,
+                tags_json,
+                account.email,
+                subject,
+                timestamp,
+                now,
+            ),
+        )
+
+
 def insert_attachments_meta(conn: sqlite3.Connection, locale: Locale) -> None:
     """Add a couple of attachment-meta rows so emails show paperclips in the UI.
 
@@ -3539,6 +3695,8 @@ def main() -> int:
             insert_memory_facts(conn, locale)
             insert_thread_states(conn, locale)
             insert_calendar_events(conn, locale)
+            # Last, so no row above moves: see SENT_INVOICES.
+            insert_sent_invoices(conn, locale, demo_dir)
         n = conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
         threads = conn.execute("SELECT COUNT(DISTINCT thread_id) FROM emails").fetchone()[0]
         print(f"[demo-db] inserted {n} emails across {threads} threads")
