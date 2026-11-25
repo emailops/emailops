@@ -611,8 +611,9 @@ function AppInner() {
     acceptSuggestion: acceptAttachmentRuleSuggestion,
   } = useAttachments();
 
-  // "All accounts" mixes accounts in the attachments list: each row, the
-  // viewer and the rules modal name the account they belong to.
+  // "All accounts" mixes accounts in the attachments list: each row and the
+  // viewer name the account they belong to. The rules modal always names its
+  // account, since rules belong to one.
   const accountEmailById = useMemo(() => new Map(accounts.map((a) => [a.id, a.email])), [accounts]);
   const getAttachmentAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
@@ -2155,7 +2156,7 @@ function AppInner() {
         <RuleManagementModal
           rules={attachmentRules}
           accountId={attachmentRulesAccountId}
-          accountLabel={isUnified ? accountEmailById.get(attachmentRulesAccountId) : undefined}
+          accountLabel={accountEmailById.get(attachmentRulesAccountId) ?? attachmentRulesAccountId}
           prefill={rulePrefill}
           onClose={() => {
             setIsRuleModalOpen(false);

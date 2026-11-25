@@ -18,8 +18,8 @@ export interface RuleFormPrefill {
 interface RuleManagementModalProps {
   rules: AttachmentRule[];
   accountId: string;
-  /** In "All accounts", the address of `accountId`, named in the header. */
-  accountLabel?: string;
+  /** The address of `accountId`, named in the header: rules belong to one account. */
+  accountLabel: string;
   prefill?: RuleFormPrefill | null;
   onClose: () => void;
   onCreateRule: (
@@ -389,11 +389,9 @@ export function RuleManagementModal({
             <h2 id={ids.title} className="text-lg font-semibold text-gray-900">
               {t('attachments:rules.modalTitle')}
             </h2>
-            {accountLabel && (
-              <p className="text-xs text-gray-500 truncate">
-                {t('attachments:rules.accountHeader', { email: accountLabel })}
-              </p>
-            )}
+            <p className="text-xs text-gray-500 truncate">
+              {t('attachments:rules.accountHeader', { email: accountLabel })}
+            </p>
           </div>
           <button
             onClick={onClose}
