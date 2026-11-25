@@ -669,6 +669,15 @@ checks = [
   { manual = 'The demo mailbox already has a rule for every recurring sender, so no suggestion shows there; the Suggested rules section, the sidebar badge and the prefilled Review form are covered by src/components/Attachments/RuleManagementModal.suggestions.test.tsx and were checked by hand on 2026-09-25.' },
 ]
 
+[feat-attachments-view-10]
+checks = [
+  { tests = ['services::attachments::tests::all_enabled_scope_lists_every_enabled_account_newest_first', 'services::attachments::tests::all_enabled_scope_leaves_out_disabled_accounts'], covers = ["With All accounts selected in the sidebar, the view lists the attachments of every enabled account in one list"] },
+  { tests = ['services::attachments::tests::attachment_ids_cover_the_whole_filter_in_list_order'], covers = ["Select all marks every attachment of the current filter, not only the rows loaded so far."] },
+  { tests = ['services::attachments::tests::bulk_download_copies_two_accounts_with_the_account_prefix', 'services::attachments::tests::bulk_download_of_one_account_has_no_account_prefix'], covers = ["When the files you download come from more than one account, each file name starts with its account's address."] },
+  { tests = ['services::attachments::tests::rules_reach_the_inbox_sent_archive_and_filed_folders_not_spam_or_trash'], covers = ["To collect the invoices you send, create the rule in the sending account with your own address as the sender and a filename pattern such as *invoice*."] },
+  { manual = 'The account on each row, the account Manage Rules works on and the rule created from an email menu are covered by src/components/Attachments/AttachmentList.render.test.tsx, src/hooks/useAttachments.test.tsx and src/components/Inbox/EmailActionsMenu.rulePrefill.test.tsx; the docs app check does not switch the Attachments view to All accounts yet.', covers = ["and each row names its account.", "Rules stay per account: Manage Rules works on the first enabled account, and Create attachment rule in an email's menu creates the rule in that email's account."] },
+]
+
 [feat-eo-docs-1]
 checks = [
   { app = true },

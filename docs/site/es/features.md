@@ -289,6 +289,16 @@ adelante desde otra dirección; **Deshacer**, o **Restaurar** en **Sugerencias d
 recupera. Nunca se sugiere el correo de tu propia dirección ni el de
 compañeros de tu propia empresa.
 
+<!-- claim:feat-attachments-view-10 -->
+Con **Todas las cuentas** seleccionado en la barra lateral, la vista reúne en una sola lista los
+adjuntos de todas las cuentas habilitadas, y cada fila indica su cuenta. **Seleccionar todo** marca
+todos los adjuntos del filtro actual, no solo las filas ya cargadas. Si los archivos que descargas
+son de más de una cuenta, cada nombre de archivo empieza por la dirección de su cuenta. Las reglas
+siguen siendo de cada cuenta: **Gestionar reglas** trabaja sobre la primera cuenta habilitada, y
+**Crear regla de adjunto** en el menú de un correo crea la regla en la cuenta de ese correo. Para
+recoger las facturas que envías, crea la regla en la cuenta que las envía, con tu propia dirección
+como remitente y un patrón de nombre de archivo como `*factura*`.
+
 ## EO Docs {#eo-docs}
 
 <!-- claim:feat-eo-docs-1 -->

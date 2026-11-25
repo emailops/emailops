@@ -273,6 +273,15 @@ good, even when the sender later mails from another address; **Undo**, or **Rest
 **Dismissed suggestions**, brings it back. Mail from your own address, or
 from colleagues at your own company, is never suggested.
 
+<!-- claim:feat-attachments-view-10 -->
+With **All accounts** selected in the sidebar, the view lists the attachments of every enabled
+account in one list, and each row names its account. **Select all** marks every attachment of the
+current filter, not only the rows loaded so far. When the files you download come from more than
+one account, each file name starts with its account's address. Rules stay per account: **Manage
+Rules** works on the first enabled account, and **Create attachment rule** in an email's menu
+creates the rule in that email's account. To collect the invoices you send, create the rule in the
+sending account with your own address as the sender and a filename pattern such as `*invoice*`.
+
 ## EO Docs {#eo-docs}
 
 <!-- claim:feat-eo-docs-1 -->

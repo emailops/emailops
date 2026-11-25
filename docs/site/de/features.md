@@ -299,6 +299,16 @@ Absender später von einer anderen Adresse schreibt; **Rückgängig** oder **Wie
 **Verworfene Vorschläge** holt ihn zurück. E-Mails von Ihrer eigenen Adresse oder von
 Kollegen Ihres eigenen Unternehmens werden nie vorgeschlagen.
 
+<!-- claim:feat-attachments-view-10 -->
+Ist in der Seitenleiste **Alle Konten** ausgewählt, zeigt die Ansicht die Anhänge aller aktivierten
+Konten in einer Liste, und jede Zeile nennt ihr Konto. **Alle auswählen** markiert alle Anhänge des
+aktuellen Filters, nicht nur die bereits geladenen Zeilen. Stammen die heruntergeladenen Dateien aus
+mehreren Konten, beginnt jeder Dateiname mit der Adresse seines Kontos. Regeln gelten weiterhin pro
+Konto: **Regeln verwalten** arbeitet mit dem ersten aktivierten Konto, und **Anhang-Regel
+erstellen** im Menü einer E-Mail legt die Regel im Konto dieser E-Mail an. Um die Rechnungen zu
+sammeln, die Sie verschicken, legen Sie die Regel im sendenden Konto an, mit Ihrer eigenen Adresse
+als Absender und einem Dateinamenmuster wie `*Rechnung*`.
+
 ## EO Docs {#eo-docs}
 
 <!-- claim:feat-eo-docs-1 -->
