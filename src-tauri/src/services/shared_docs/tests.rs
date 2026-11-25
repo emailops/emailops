@@ -103,6 +103,8 @@ fn arrival_of(
         mailbox: if own { "sent" } else { "inbox" }.into(),
         is_sent: own,
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: to.arriving_headers.lock().unwrap().clone(),
     };
     let infos = msg
@@ -304,6 +306,8 @@ fn person_reply(to: &Install, id: &str) -> Email {
         mailbox: "inbox".into(),
         is_sent: false,
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: None,
     }
 }

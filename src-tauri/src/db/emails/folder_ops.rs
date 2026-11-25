@@ -5,7 +5,21 @@
 
 use crate::db::Database;
 use crate::models::error::{AppError, Result};
+use crate::sync::provider::DeleteForeverFolder;
 use rusqlite::params;
+
+/// A stored row that "Delete forever" may act on: where it is filed, whether
+/// EmailOps already deleted it, and the Message-ID IMAP checks UIDs against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteForeverRow {
+    pub id: String,
+    pub mailbox: String,
+    pub is_deleted: bool,
+    pub message_id: Option<String>,
+}
+
+/// Most ids bound in one `IN (...)` list, under SQLite's default limit.
+const IDS_PER_QUERY: usize = 900;
 
 /// `(table, column)` pairs whose declared FOREIGN KEY references `emails`.
 /// Discovered dynamically from the live schema so a future table with an
@@ -294,6 +308,76 @@ impl Database {
         Ok(())
     }
 
+    /// The rows "Delete forever" works on. `ids: None` is the whole folder,
+    /// exactly as its list view shows it (`folder.view()`), so the count the
+    /// user confirmed is the set that goes. `Some(ids)` returns those ids of
+    /// the account wherever they are filed: the caller decides which of them
+    /// are in the folder. Newest first.
+    pub fn delete_forever_rows(
+        &self,
+        account_id: &str,
+        folder: DeleteForeverFolder,
+        ids: Option<&[String]>,
+    ) -> Result<Vec<DeleteForeverRow>> {
+        let conn = self.reader();
+        let to_row = |row: &rusqlite::Row| -> rusqlite::Result<DeleteForeverRow> {
+            Ok(DeleteForeverRow {
+                id: row.get(0)?,
+                mailbox: row.get(1)?,
+                is_deleted: row.get::<_, i64>(2)? != 0,
+                message_id: row.get(3)?,
+            })
+        };
+        let mut rows = Vec::new();
+        match ids {
+            None => {
+                // `deleted` and `spam` bind no folder value.
+                let scope = super::crud::mailbox_scope_sql(folder.view(), "", "?2", false);
+                let sql = format!(
+                    "SELECT id, mailbox, is_deleted, message_id FROM emails
+                     WHERE account_id = ?1 AND {}
+                     ORDER BY timestamp DESC, id",
+                    scope.conditions.join(" AND ")
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                for row in stmt.query_map(params![account_id], to_row)? {
+                    rows.push(row?);
+                }
+            }
+            Some(ids) => {
+                for chunk in ids.chunks(IDS_PER_QUERY) {
+                    let placeholders: Vec<String> = (2..chunk.len() + 2).map(|i| format!("?{i}")).collect();
+                    let sql = format!(
+                        "SELECT id, mailbox, is_deleted, message_id FROM emails
+                         WHERE account_id = ?1 AND id IN ({})
+                         ORDER BY timestamp DESC, id",
+                        placeholders.join(", ")
+                    );
+                    let mut stmt = conn.prepare(&sql)?;
+                    let mut bound: Vec<&dyn rusqlite::ToSql> = vec![&account_id];
+                    bound.extend(chunk.iter().map(|id| id as &dyn rusqlite::ToSql));
+                    for row in stmt.query_map(bound.as_slice(), to_row)? {
+                        rows.push(row?);
+                    }
+                }
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Hard-delete `email_ids` and their dependent rows in one transaction,
+    /// as [`Self::hard_delete_email`] does for one. For messages the provider
+    /// has deleted forever: nothing is left upstream to re-download.
+    pub fn hard_delete_emails(&self, email_ids: &[String]) -> Result<()> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        for email_id in email_ids {
+            hard_delete_email_in_tx(&tx, email_id)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Hard-delete every email in one mailbox of an account, including the
     /// rows FK cascades cannot reach (vec0 embeddings, loose bookkeeping
     /// tables) and nulling draft references. Returns the number of deleted
@@ -360,6 +444,8 @@ mod tests {
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
@@ -683,6 +769,131 @@ mod tests {
         assert_eq!(tag_count_for(&db, "acc-1::9"), 0);
         // Idempotent on a missing id.
         db.hard_delete_email("acc-1::9").unwrap();
+    }
+
+    fn row_ids(rows: Vec<crate::db::emails::folder_ops::DeleteForeverRow>) -> Vec<String> {
+        let mut ids: Vec<String> = rows.into_iter().map(|r| r.id).collect();
+        ids.sort();
+        ids
+    }
+
+    // The rows "Empty Trash" acts on are exactly the ones the Trash view
+    // lists: provider Trash plus what EmailOps deleted. Never another
+    // account's.
+    #[test]
+    fn delete_forever_rows_of_trash_are_the_trash_view() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.seed_test_account("acc-2");
+        db.insert_emails_batch(&[
+            email("t-1", "acc-1", "trash"),
+            email("gone-1", "acc-1", "inbox"),
+            email("in-1", "acc-1", "inbox"),
+            email("s-1", "acc-1", "spam"),
+            email("t-2", "acc-2", "trash"),
+        ])
+        .unwrap();
+        db.delete_email("gone-1").unwrap();
+
+        let rows = db
+            .delete_forever_rows("acc-1", crate::sync::provider::DeleteForeverFolder::Trash, None)
+            .unwrap();
+
+        assert_eq!(row_ids(rows), vec!["gone-1".to_string(), "t-1".to_string()]);
+    }
+
+    #[test]
+    fn delete_forever_rows_of_spam_are_the_live_spam_rows() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[
+            email("s-1", "acc-1", "spam"),
+            email("s-hidden", "acc-1", "spam"),
+            email("t-1", "acc-1", "trash"),
+        ])
+        .unwrap();
+        db.delete_email("s-hidden").unwrap();
+
+        let rows = db
+            .delete_forever_rows("acc-1", crate::sync::provider::DeleteForeverFolder::Spam, None)
+            .unwrap();
+
+        assert_eq!(row_ids(rows), vec!["s-1".to_string()]);
+    }
+
+    // Selected ids come back whatever their folder (the planner decides what
+    // may go), but only from the account named.
+    #[test]
+    fn delete_forever_rows_by_id_stay_in_the_account() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.seed_test_account("acc-2");
+        db.insert_emails_batch(&[
+            email("t-1", "acc-1", "trash"),
+            email("in-1", "acc-1", "inbox"),
+            email("t-2", "acc-2", "trash"),
+        ])
+        .unwrap();
+        let wanted = [
+            "t-1".to_string(),
+            "in-1".to_string(),
+            "t-2".to_string(),
+            "nope".to_string(),
+        ];
+
+        let rows = db
+            .delete_forever_rows(
+                "acc-1",
+                crate::sync::provider::DeleteForeverFolder::Trash,
+                Some(&wanted),
+            )
+            .unwrap();
+
+        assert_eq!(row_ids(rows), vec!["in-1".to_string(), "t-1".to_string()]);
+    }
+
+    #[test]
+    fn delete_forever_row_carries_mailbox_deleted_flag_and_message_id() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[email("gone-1", "acc-1", "sent")]).unwrap();
+        db.delete_email("gone-1").unwrap();
+
+        let rows = db
+            .delete_forever_rows("acc-1", crate::sync::provider::DeleteForeverFolder::Trash, None)
+            .unwrap();
+
+        assert_eq!(
+            rows,
+            vec![crate::db::emails::folder_ops::DeleteForeverRow {
+                id: "gone-1".to_string(),
+                mailbox: "sent".to_string(),
+                is_deleted: true,
+                message_id: Some("<gone-1@example.com>".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn hard_delete_emails_removes_the_rows_and_their_dependents_only() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        db.insert_emails_batch(&[
+            email("t-1", "acc-1", "trash"),
+            email("t-2", "acc-1", "trash"),
+            email("t-3", "acc-1", "trash"),
+        ])
+        .unwrap();
+        insert_tag(&db, "t-1");
+        insert_tag(&db, "t-3");
+
+        db.hard_delete_emails(&["t-1".to_string(), "t-2".to_string()]).unwrap();
+
+        assert!(db.get_email("t-1").unwrap().is_none());
+        assert!(db.get_email("t-2").unwrap().is_none());
+        assert_eq!(tag_count_for(&db, "t-1"), 0);
+        assert!(db.get_email("t-3").unwrap().is_some());
+        assert_eq!(tag_count_for(&db, "t-3"), 1);
     }
 
     #[test]

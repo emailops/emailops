@@ -122,6 +122,38 @@ export function eventsAfterDelete<T extends DeletedEventRef>(
   });
 }
 
+interface RespondedEventRef {
+  id: string;
+  providerEventId: string;
+  recurringEventId: string | null;
+  attendees: { email: string; response: string }[];
+}
+
+/**
+ * Events in local state after I answered `responded` with `scope`: my
+ * attendee entry takes `response` (appended when absent). `instance` touches
+ * only the answered event; `series` every event of its series (same
+ * `recurringEventId`, or the master itself by provider id). Non-recurring
+ * events always behave like `instance`. Pure — never mutates `events`.
+ */
+export function eventsAfterResponse<T extends RespondedEventRef>(
+  events: readonly T[],
+  responded: RespondedEventRef,
+  response: string,
+  scope: 'instance' | 'series',
+  selfEmail: string,
+): T[] {
+  const self = selfEmail.toLowerCase();
+  const seriesId = scope === 'series' ? responded.recurringEventId : null;
+  const affected = (e: RespondedEventRef): boolean =>
+    e.id === responded.id || (seriesId !== null && (e.recurringEventId === seriesId || e.providerEventId === seriesId));
+  const answer = (attendees: T['attendees']): T['attendees'] =>
+    attendees.some((a) => a.email.toLowerCase() === self)
+      ? attendees.map((a) => (a.email.toLowerCase() === self ? { ...a, response } : a))
+      : [...attendees, { email: selfEmail, response }];
+  return events.map((e) => (affected(e) ? { ...e, attendees: answer(e.attendees) } : e));
+}
+
 /** Weekday codes an RRULE uses for "every weekday". */
 const WEEKDAY_BYDAY = ['MO', 'TU', 'WE', 'TH', 'FR'];
 

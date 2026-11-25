@@ -7,6 +7,7 @@ import {
   calendarSelectionIds,
   createAccountChoices,
   eventColorFor,
+  importAccountChoices,
 } from './calendarAccounts';
 import { accountColorHex } from './colors';
 
@@ -122,6 +123,20 @@ describe('createAccountChoices', () => {
       slot,
     );
     expect(choices.map((c) => c.account.id)).toEqual(['a']);
+  });
+});
+
+describe('importAccountChoices', () => {
+  it('offers every calendar-enabled Gmail and Outlook account, never a feed account', () => {
+    const accounts = [
+      account('feeds', { provider: 'imap' }),
+      account('work'),
+      account('home', { provider: 'outlook' }),
+    ];
+    expect(importAccountChoices(accounts)).toEqual([
+      { account: accounts[1], plan: { kind: 'dialog' } },
+      { account: accounts[2], plan: { kind: 'dialog' } },
+    ]);
   });
 });
 

@@ -24,6 +24,19 @@
     "unread": "Non lus",
     "empty": "Aucun e-mail non lu"
   },
+  "listColumns": {
+    "sender": "Expéditeur",
+    "recipients": "À",
+    "subject": "Objet",
+    "size": "Taille",
+    "attachment": "Avec pièce jointe",
+    "date": "Date",
+    "sortBy": "Trier par {{column}}",
+    "sortedAscending": "{{column}}, tri croissant",
+    "sortedDescending": "{{column}}, tri décroissant",
+    "columns": "Colonnes",
+    "sizeUnknown": "Taille inconnue"
+  },
   "emptyState": {
     "syncing": "Synchronisation des courriels...",
     "noSearchResults": "Aucun courriel ne correspond à votre recherche",
@@ -142,6 +155,9 @@
     "noPreview": "(Aucun aperçu)",
     "toLine": "À : {{recipients}}",
     "ccLine": "Cc : {{recipients}}",
+    "ownFirstLatest": "Votre dernier message",
+    "ownFirstRest": "Le reste de la conversation, du plus ancien au plus récent",
+    "ownFirstNoOwn": "Vous n’avez pas écrit dans cette conversation. Tous les messages sont affichés, du plus ancien au plus récent.",
     "backLabel": "Retour",
     "messageCount_one": "{{count}} message",
     "messageCount_other": "{{count}} messages",
@@ -358,5 +374,51 @@
     "unblockFailed": "Impossible de débloquer l’expéditeur",
     "blockedBanner": "Vous avez bloqué cet expéditeur. Ses nouveaux e-mails vont dans les spams.",
     "unblockAction": "Débloquer"
+  },
+  "deleteForever": {
+    "action": "Supprimer définitivement",
+    "empty": {
+      "trash": "Vider la corbeille",
+      "spam": "Vider les indésirables"
+    },
+    "barText": {
+      "trash": "Supprimez définitivement tous les messages de la corbeille, ici et dans votre compte.",
+      "spam": "Supprimez définitivement tous les messages des indésirables, ici et dans votre compte."
+    },
+    "gmailNote": {
+      "trash": "Gmail supprime les messages restés 30 jours dans la corbeille. Pour les supprimer plus tôt, utilisez Gmail : il faut un accès complet à votre compte Gmail, qu’EmailOps ne demande pas.",
+      "spam": "Gmail supprime les messages restés 30 jours dans les indésirables. Pour les supprimer plus tôt, utilisez Gmail : il faut un accès complet à votre compte Gmail, qu’EmailOps ne demande pas."
+    },
+    "titleSelected": "Supprimer définitivement",
+    "counting": "Décompte des messages…",
+    "alreadyEmpty": {
+      "trash": "La corbeille est déjà vide.",
+      "spam": "Le dossier Indésirables est déjà vide."
+    },
+    "confirmTrash_one": "{{count}} message de la corbeille sera supprimé définitivement, ici et dans votre compte. Cette action est irréversible.",
+    "confirmTrash_other": "{{count}} messages de la corbeille seront supprimés définitivement, ici et dans votre compte. Cette action est irréversible.",
+    "confirmTrash_many": "{{count}} messages de la corbeille seront supprimés définitivement, ici et dans votre compte. Cette action est irréversible.",
+    "confirmSpam_one": "{{count}} message des indésirables sera supprimé définitivement, ici et dans votre compte. Cette action est irréversible.",
+    "confirmSpam_other": "{{count}} messages des indésirables seront supprimés définitivement, ici et dans votre compte. Cette action est irréversible.",
+    "confirmSpam_many": "{{count}} messages des indésirables seront supprimés définitivement, ici et dans votre compte. Cette action est irréversible.",
+    "confirmButton": "Supprimer définitivement",
+    "progress": "Suppression définitive : {{processed}} sur {{total}}",
+    "cancelling": "Arrêt après le lot en cours…",
+    "removed_one": "{{count}} message supprimé définitivement.",
+    "removed_other": "{{count}} messages supprimés définitivement.",
+    "removed_many": "{{count}} messages supprimés définitivement.",
+    "failed_one": "{{count}} message n’a pas pu être supprimé et est toujours là :",
+    "failed_other": "{{count}} messages n’ont pas pu être supprimés et sont toujours là :",
+    "failed_many": "{{count}} messages n’ont pas pu être supprimés et sont toujours là :",
+    "cancelled_one": "Annulé : {{count}} message est resté tel quel.",
+    "cancelled_other": "Annulé : {{count}} messages sont restés tels quels.",
+    "cancelled_many": "Annulé : {{count}} messages sont restés tels quels.",
+    "stopped_one": "Interrompu : {{count}} message est resté tel quel.",
+    "stopped_other": "Interrompu : {{count}} messages sont restés tels quels.",
+    "stopped_many": "Interrompu : {{count}} messages sont restés tels quels.",
+    "reasonCount": "{{reason}} ({{count}})",
+    "startFailed": "Impossible de lancer la suppression définitive : {{detail}}",
+    "countFailed": "Impossible de compter les messages : {{detail}}",
+    "cancelFailed": "Impossible d’annuler : {{detail}}"
   }
 }

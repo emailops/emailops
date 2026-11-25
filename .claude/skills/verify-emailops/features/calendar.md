@@ -15,6 +15,8 @@ the chat can list events.
 - `calendar.feeds` Settings → Calendar → Calendar feeds: an IMAP account subscribes to an ICS URL (kept in the keychain, never shown back); the feed becomes a read-only calendar with its recurrences expanded locally. An IMAP account without a feed gets a setup prompt in the panel. On a Proton feed, double-clicking an empty slot opens Proton Calendar's create-event page for that day in the browser.
 - `calendar.invite` an email with a calendar part shows the invite card; detection is structural (the `.ics` part), not the presence of a meeting link.
 - `calendar.rsvp` accept / decline / tentative notifies the organizer.
+- `calendar.import` toolbar **Import .ics** (only when a Gmail/Outlook account with a calendar is shown) opens a dialog: choose a file, preview which events will be imported / are already present / unsupported, import into the primary calendar.
+- `calendar.respond` the invite card's **Add to calendar** and reply line, and the event dialog's "Your response" row (shown only to invited attendees) plus mail-organizer / mail-participants icons; the response sends an iTIP reply.
 - `calendar.chat` "what do I have tomorrow?" is answered from the stored events.
 
 ## How to get to it (user POV)
@@ -34,6 +36,8 @@ Preconditions: baseline; the credential-less Gmail account `ulises.emailopslabs@
 
 ## Gotchas
 
+- Import .ics: the file picker is the native dialog, not drivable. The sweep step (`Calendario/importar .ics: botón y diálogo vacío`) asserts the button on the demo Gmail account, the empty dialog and Cancel. Preview, import, Add to calendar, the response row and iTIP replies need a real file / provider credentials: covered by `services::calendar::{import,respond,itip}`, the provider clients, and vitest (`ImportIcsDialog`, `CalendarInviteCard`, `EventDetailDialog.respond`); the demo has no invite email whose account can answer, so those are a recorded coverage gap on the e2e layer.
+
 - Creating, deleting and answering events need provider credentials: not drivable on the demo instance.
 - Subscribing a feed needs network (the backend fetches the URL once): not drivable on the demo instance either — assert the setup prompt and the Settings form, and test a real feed manually.
 - Demo events are re-anchored to "now" on every run (`ensure_demo_db.sh` → `--refresh-calendar`); assert on titles, never on dates.
@@ -50,5 +54,8 @@ Preconditions: baseline; the credential-less Gmail account `ulises.emailopslabs@
 | calendar command arguments, `Calendar` / `CalendarFeed` / `CalendarInvite` shapes | contract (`src/lib/apiContract/calendario.api.test.ts`, `db::calendar*` round trips) |
 | right dock mode, rail order, agenda panel states, feeds settings form, read-only dialog, Proton create link | vitest (`src/lib/rightDockLayout`, `src/components/RightDock`, `Calendar/CalendarPanel`, `Settings/CalendarSettings.feeds`, `Calendar/EventDetailDialog.readOnly`, `src/lib/calendarFeeds`) |
 | the panel and the view | e2e (`Vistas/Calendar`) |
+| Import .ics button and empty dialog on the demo Gmail account | e2e (`Calendario/importar .ics: botón y diálogo vacío`) |
+| import planner/executor, invite response orchestration, iTIP reply, Windows zones, raw MIME send | unit (`services::calendar::{import,respond,itip,windows_zones}`, `sync::mime_builder`) |
+| import dialog, invite card outcomes, response row, contact icons | vitest (`Calendar/ImportIcsDialog`, `EmailView/CalendarInviteCard`, `Calendar/EventDetailDialog.respond`, `calendarEventContacts`) |
 | an all-day event sits on its own date in several zones; Escape closes its detail | vitest (`calendarGrid.allDay`, `EventDetailDialog.escape`) + e2e in the real grid (`Calendario/evento de día completo en su fecha`) |
 | chat answers about events | eval (`calendar_*` in `src-tauri/evals/chat/cases/calendar_routing.yaml`) |

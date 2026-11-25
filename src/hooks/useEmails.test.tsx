@@ -6,6 +6,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_LIST_SORT } from '@/lib/listColumns';
 import { useAccountStore } from '@/stores/accountStore';
 import { useEmailStore } from '@/stores/emailStore';
 import type { Email } from '@/types';
@@ -79,7 +80,26 @@ describe('useEmails', () => {
       useEmailStore.getState().setUnreadOnly(true);
     });
 
-    expect(getEmails).toHaveBeenCalledWith('acc-1', 50, 0, 'inbox', true);
+    expect(getEmails).toHaveBeenCalledWith('acc-1', 50, 0, 'inbox', true, DEFAULT_LIST_SORT);
     useEmailStore.getState().setUnreadOnly(false);
+  });
+
+  it('reloads the list in the order a column header picks', async () => {
+    const { getEmails } = await import('@/lib/api');
+    useAccountStore.setState({
+      accounts: [{ id: 'acc-1', provider: 'gmail', email: 'work@example.com', enabled: true } as never],
+      activeAccountId: 'acc-1',
+    });
+    await act(async () => {
+      root.render(<Harness />);
+    });
+    vi.mocked(getEmails).mockClear();
+
+    await act(async () => {
+      useEmailStore.getState().setListSort({ key: 'sender', dir: 'asc' });
+    });
+
+    expect(getEmails).toHaveBeenCalledWith('acc-1', 50, 0, 'inbox', false, { key: 'sender', dir: 'asc' });
+    useEmailStore.getState().setListSort(DEFAULT_LIST_SORT);
   });
 });

@@ -9,10 +9,15 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::models::error::{AppError, Result};
-use crate::sync::calendar_provider::{CalendarProvider, ProviderCalendar, ProviderCalendarEvent};
+use crate::services::calendar::import::{EventTime, ImportableEvent};
+use crate::sync::calendar_provider::{
+    CalendarProvider, FoundEvent, ProviderCalendar, ProviderCalendarEvent, RsvpResponse,
+};
 use crate::sync::http_retry::{classify_attempt, Attempt, RetryDecision, RetryPolicy};
 
 const CALENDAR_API_BASE: &str = "https://www.googleapis.com/calendar/v3";
+/// Private extended property stamped on every event EmailOps imports.
+pub(crate) const EMAILOPS_IMPORT_MARKER: &str = "emailopsImported";
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 1_000;
 
@@ -405,6 +410,221 @@ impl CalendarProvider for GoogleCalendarClient {
         }
         Ok(())
     }
+
+    async fn find_event_by_uid(&self, ical_uid: &str) -> Result<Option<FoundEvent>> {
+        let url = format!(
+            "{}/calendars/primary/events?iCalUID={}&maxResults=1",
+            self.base_url,
+            urlencoding::encode(ical_uid)
+        );
+        let response = self.send_get_with_retry(&url, "find event by uid").await?;
+        if !response.status().is_success() {
+            return Err(self.http_error(response).await);
+        }
+        let page: serde_json::Value = response.json().await?;
+        let Some(event) = page.get("items").and_then(|v| v.as_array()).and_then(|a| a.first()) else {
+            return Ok(None);
+        };
+        let provider_event_id = event
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::SyncError("found event has no id".to_string()))?
+            .to_string();
+        let imported_by_emailops = event
+            .pointer(&format!("/extendedProperties/private/{EMAILOPS_IMPORT_MARKER}"))
+            .and_then(|v| v.as_str())
+            == Some("1");
+        let sequence = event
+            .get("sequence")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0);
+        Ok(Some(FoundEvent {
+            provider_event_id,
+            imported_by_emailops,
+            sequence,
+        }))
+    }
+
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()> {
+        let url = format!(
+            "{}/calendars/primary/events/{}?sendUpdates=none",
+            self.base_url,
+            urlencoding::encode(provider_event_id)
+        );
+        let body = build_google_update_body(event);
+        let patched = self
+            .send_request_with_retry("update imported event", |client, token| {
+                client.patch(&url).bearer_auth(token).json(&body)
+            })
+            .await?;
+        if !patched.status().is_success() {
+            return Err(self.http_error(patched).await);
+        }
+        Ok(())
+    }
+
+    async fn import_event(&self, event: &ImportableEvent) -> Result<String> {
+        let url = format!("{}/calendars/primary/events/import", self.base_url);
+        let master_id = self.post_import(&url, &build_google_import_body(event)).await?;
+        for over in &event.overrides {
+            let body = build_google_override_body(over, &master_id);
+            if let Err(error) = self.post_import(&url, &body).await {
+                // All or nothing: drop the half-imported series. The rollback
+                // is best effort; the import error is what the caller needs.
+                if let Err(rollback) = self.delete_event("primary", &master_id, false, "").await {
+                    // Code only: the error text can embed a provider response body.
+                    crate::services::logger::log(
+                        "error",
+                        "sync",
+                        format!(
+                            "Google Calendar import rollback failed ({}); an orphan event may remain",
+                            rollback.code()
+                        ),
+                    );
+                }
+                return Err(error);
+            }
+        }
+        Ok(master_id)
+    }
+
+    async fn respond_to_event(
+        &self,
+        calendar_id: &str,
+        provider_event_id: &str,
+        response: RsvpResponse,
+        self_email: &str,
+        notify: bool,
+    ) -> Result<()> {
+        let event_url = format!(
+            "{}/calendars/{}/events/{}",
+            self.base_url,
+            urlencoding::encode(calendar_id),
+            urlencoding::encode(provider_event_id)
+        );
+        let fetched = self.send_get_with_retry(&event_url, "read event").await?;
+        if !fetched.status().is_success() {
+            return Err(self.http_error(fetched).await);
+        }
+        let event: serde_json::Value = fetched.json().await?;
+        // Google's PATCH replaces the whole attendees array.
+        let attendees = attendees_with_self_response(event.get("attendees"), self_email, response.as_google_status());
+        let patch_url = format!("{event_url}?sendUpdates={}", if notify { "all" } else { "none" });
+        let body = serde_json::json!({ "attendees": attendees });
+        let patched = self
+            .send_request_with_retry("respond to event", |client, token| {
+                client.patch(&patch_url).bearer_auth(token).json(&body)
+            })
+            .await?;
+        if !patched.status().is_success() {
+            return Err(self.http_error(patched).await);
+        }
+        Ok(())
+    }
+}
+
+impl GoogleCalendarClient {
+    /// The typed error for a failed calendar response.
+    async fn http_error(&self, response: Response) -> AppError {
+        let status = response.status().as_u16();
+        let error_text = response.text().await.unwrap_or_default();
+        crate::sync::calendar_provider::classify_calendar_fetch_error(
+            "Google",
+            status,
+            &error_text,
+            self.account_id.as_deref(),
+        )
+    }
+
+    /// POST one event to `events.import` (never re-sent after a 5xx) and
+    /// return its id.
+    async fn post_import(&self, url: &str, body: &serde_json::Value) -> Result<String> {
+        let response = self.send_post_json_no_resend(url, body, "import event").await?;
+        if !response.status().is_success() {
+            return Err(self.http_error(response).await);
+        }
+        let raw: serde_json::Value = response.json().await?;
+        raw.get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| AppError::SyncError("Google Calendar returned an imported event without an id".to_string()))
+    }
+}
+
+/// Google start/end/originalStartTime shape: `{"date"}` or `{"dateTime","timeZone"}`.
+fn google_time(time: &EventTime) -> serde_json::Value {
+    match time {
+        EventTime::AllDay(date) => serde_json::json!({ "date": date.format("%Y-%m-%d").to_string() }),
+        EventTime::Timed { local, tz } => serde_json::json!({
+            "dateTime": local.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "timeZone": tz,
+        }),
+    }
+}
+
+fn google_exdate_line(time: &EventTime) -> String {
+    match time {
+        EventTime::AllDay(date) => format!("EXDATE;VALUE=DATE:{}", date.format("%Y%m%d")),
+        EventTime::Timed { local, tz } if tz == "UTC" => format!("EXDATE:{}Z", local.format("%Y%m%dT%H%M%S")),
+        EventTime::Timed { local, tz } => format!("EXDATE;TZID={tz}:{}", local.format("%Y%m%dT%H%M%S")),
+    }
+}
+
+/// The `events.import` body for one VEVENT. Pure.
+pub(crate) fn build_google_import_body(event: &ImportableEvent) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "iCalUID": event.uid,
+        "summary": event.summary,
+        "description": event.description,
+        "location": event.location,
+        "start": google_time(&event.start),
+        "end": google_time(&event.end),
+        "sequence": event.sequence,
+        "extendedProperties": { "private": { EMAILOPS_IMPORT_MARKER: "1" } },
+    });
+    let mut recurrence: Vec<String> = Vec::new();
+    if let Some(rrule) = &event.rrule {
+        recurrence.push(format!("RRULE:{rrule}"));
+    }
+    recurrence.extend(event.exdates.iter().map(google_exdate_line));
+    recurrence.extend(event.rdates.iter().cloned());
+    if !recurrence.is_empty() {
+        body["recurrence"] = serde_json::json!(recurrence);
+    }
+    if let Some(organizer) = &event.organizer {
+        body["organizer"] = serde_json::json!({ "email": organizer });
+    }
+    if !event.attendees.is_empty() {
+        body["attendees"] = event
+            .attendees
+            .iter()
+            .map(|a| serde_json::json!({ "email": a.email, "responseStatus": a.response }))
+            .collect();
+    }
+    body
+}
+
+/// The PATCH body moving an imported single event to `event`. Pure.
+pub(crate) fn build_google_update_body(event: &ImportableEvent) -> serde_json::Value {
+    serde_json::json!({
+        "summary": event.summary,
+        "description": event.description,
+        "location": event.location,
+        "start": google_time(&event.start),
+        "end": google_time(&event.end),
+        "sequence": event.sequence,
+    })
+}
+
+/// The body for an override: the import body pointed at its master instance.
+pub(crate) fn build_google_override_body(over: &ImportableEvent, master_id: &str) -> serde_json::Value {
+    let mut body = build_google_import_body(over);
+    body["recurringEventId"] = serde_json::json!(master_id);
+    if let Some(original) = &over.recurrence_id {
+        body["originalStartTime"] = google_time(original);
+    }
+    body
 }
 
 /// Google `accessRole` values we store. Anything unrecognised degrades to the
@@ -1089,5 +1309,422 @@ mod tests {
         assert!(event.attendees.is_empty());
         assert_eq!(event.status, "confirmed");
         assert_eq!(event.html_link, None);
+    }
+
+    // ── import / find / respond ────────────────────────────────────────────
+
+    use crate::models::CalendarAttendee;
+    use crate::services::calendar::import::{EventTime, ImportableEvent};
+    use serde_json::json;
+
+    fn timed(day: u32, hour: u32, tz: &str) -> EventTime {
+        EventTime::Timed {
+            local: chrono::NaiveDate::from_ymd_opt(2026, 12, day)
+                .and_then(|d| d.and_hms_opt(hour, 0, 0))
+                .expect("datetime"),
+            tz: tz.to_string(),
+        }
+    }
+
+    fn importable() -> ImportableEvent {
+        ImportableEvent {
+            uid: "uid-1@example.com".into(),
+            summary: "Planning".into(),
+            description: "Agenda".into(),
+            location: "Room 1".into(),
+            start: timed(1, 10, "Europe/Madrid"),
+            end: timed(1, 11, "Europe/Madrid"),
+            rrule: Some("FREQ=WEEKLY;BYDAY=TU".into()),
+            exdates: vec![timed(8, 10, "Europe/Madrid")],
+            rdates: Vec::new(),
+            recurrence_id: None,
+            overrides: Vec::new(),
+            organizer: Some("boss@example.com".into()),
+            attendees: vec![CalendarAttendee {
+                email: "me@example.com".into(),
+                response: "needsAction".into(),
+            }],
+            sequence: 2,
+            fallback_tz: "Europe/Madrid".into(),
+        }
+    }
+
+    #[test]
+    fn google_import_body_keeps_uid_rules_and_zone() {
+        let body = build_google_import_body(&importable());
+        assert_eq!(body["iCalUID"], "uid-1@example.com");
+        assert_eq!(body["summary"], "Planning");
+        assert_eq!(body["sequence"], 2);
+        assert_eq!(
+            body["start"],
+            json!({"dateTime": "2026-12-01T10:00:00", "timeZone": "Europe/Madrid"})
+        );
+        assert_eq!(
+            body["recurrence"],
+            json!([
+                "RRULE:FREQ=WEEKLY;BYDAY=TU",
+                "EXDATE;TZID=Europe/Madrid:20261208T100000"
+            ])
+        );
+        assert_eq!(body["extendedProperties"]["private"]["emailopsImported"], "1");
+        assert_eq!(body["organizer"]["email"], "boss@example.com");
+        assert_eq!(body["attendees"][0]["email"], "me@example.com");
+        assert_eq!(body["attendees"][0]["responseStatus"], "needsAction");
+    }
+
+    #[test]
+    fn google_import_body_omits_empty_optional_fields() {
+        let mut event = importable();
+        event.rrule = None;
+        event.exdates.clear();
+        event.organizer = None;
+        event.attendees.clear();
+        let body = build_google_import_body(&event);
+        assert!(body.get("recurrence").is_none());
+        assert!(body.get("organizer").is_none());
+        assert!(body.get("attendees").is_none());
+    }
+
+    #[test]
+    fn google_recurrence_covers_utc_all_day_exdates_and_verbatim_rdates() {
+        let mut event = importable();
+        event.exdates = vec![
+            timed(8, 10, "UTC"),
+            EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 15).expect("date")),
+        ];
+        event.rdates = vec!["RDATE;TZID=Europe/Madrid:20261220T100000".into()];
+        let body = build_google_import_body(&event);
+        assert_eq!(
+            body["recurrence"],
+            json!([
+                "RRULE:FREQ=WEEKLY;BYDAY=TU",
+                "EXDATE:20261208T100000Z",
+                "EXDATE;VALUE=DATE:20261215",
+                "RDATE;TZID=Europe/Madrid:20261220T100000"
+            ])
+        );
+    }
+
+    #[test]
+    fn google_utc_times_carry_no_z_and_name_the_zone() {
+        let mut event = importable();
+        event.start = timed(1, 10, "UTC");
+        let body = build_google_import_body(&event);
+        assert_eq!(
+            body["start"],
+            json!({"dateTime": "2026-12-01T10:00:00", "timeZone": "UTC"})
+        );
+    }
+
+    #[test]
+    fn google_all_day_uses_date_fields() {
+        let mut event = importable();
+        event.start = EventTime::AllDay(chrono::NaiveDate::from_ymd_opt(2026, 12, 5).expect("date"));
+        let body = build_google_import_body(&event);
+        assert_eq!(body["start"], json!({"date": "2026-12-05"}));
+    }
+
+    #[test]
+    fn google_override_body_targets_the_master() {
+        let mut over = importable();
+        over.rrule = None;
+        over.exdates.clear();
+        over.recurrence_id = Some(timed(8, 10, "Europe/Madrid"));
+        let body = build_google_override_body(&over, "master-1");
+        assert_eq!(body["recurringEventId"], "master-1");
+        assert_eq!(
+            body["originalStartTime"],
+            json!({"dateTime": "2026-12-08T10:00:00", "timeZone": "Europe/Madrid"})
+        );
+    }
+
+    fn event_with_override() -> ImportableEvent {
+        let mut event = importable();
+        let mut over = importable();
+        over.rrule = None;
+        over.exdates.clear();
+        over.recurrence_id = Some(timed(15, 10, "Europe/Madrid"));
+        over.start = timed(15, 12, "Europe/Madrid");
+        over.end = timed(15, 13, "Europe/Madrid");
+        event.overrides = vec![over];
+        event
+    }
+
+    #[tokio::test]
+    async fn google_import_posts_to_the_import_endpoint() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "master-1"})))
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let id = client.import_event(&event_with_override()).await.expect("import");
+
+        assert_eq!(id, "master-1");
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2, "master plus one override");
+        let second: serde_json::Value = serde_json::from_slice(&requests[1].body).expect("json");
+        assert_eq!(second["recurringEventId"], "master-1");
+    }
+
+    #[tokio::test]
+    async fn google_import_rolls_back_when_an_override_fails() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .and(body_partial_json(json!({"recurringEventId": "master-1"})))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "master-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/calendars/primary/events/master-1"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let result = client.import_event(&event_with_override()).await;
+
+        assert!(result.is_err(), "a failed override fails the import");
+        let requests = server.received_requests().await.expect("requests");
+        let deletes: Vec<_> = requests.iter().filter(|r| r.method.as_str() == "DELETE").collect();
+        assert_eq!(deletes.len(), 1);
+        assert_eq!(
+            deletes[0].url.query(),
+            Some("sendUpdates=none"),
+            "the rollback must not notify anyone"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // the guard serializes the global logger across the await
+    async fn a_failed_rollback_is_logged_without_event_content() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _guard = crate::services::events::seam_test_lock();
+        let logger = crate::services::logger::install_for_testing();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .and(body_partial_json(json!({"recurringEventId": "master-1"})))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/calendars/primary/events/import"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "master-1"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/calendars/primary/events/master-1"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Planning leaked body"))
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let result = client.import_event(&event_with_override()).await;
+
+        let imports = server
+            .received_requests()
+            .await
+            .expect("requests")
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count();
+        assert_eq!(imports, 2, "the override error, not the rollback, is returned");
+        assert!(result.is_err());
+        let entries = logger.events();
+        let errors: Vec<_> = entries
+            .iter()
+            .filter(|e| {
+                e.level == "error" && e.source == "sync" && e.message.contains("Google Calendar import rollback")
+            })
+            .collect();
+        // Other tests log to the global logger too, so look only at ours.
+        assert_eq!(errors.len(), 1, "got: {entries:?}");
+        assert!(!errors[0].message.contains("Planning"), "no event or body content");
+        crate::services::logger::install(std::sync::Arc::new(crate::services::logger::NoopLogger));
+    }
+
+    #[tokio::test]
+    async fn google_update_rewrites_our_copy_without_notifying() {
+        use wiremock::matchers::{body_json, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/calendars/primary/events/e1"))
+            .and(query_param("sendUpdates", "none"))
+            .and(body_json(json!({
+                "summary": "Planning",
+                "description": "Agenda",
+                "location": "Room 1",
+                "start": {"dateTime": "2026-12-01T10:00:00", "timeZone": "Europe/Madrid"},
+                "end": {"dateTime": "2026-12-01T11:00:00", "timeZone": "Europe/Madrid"},
+                "sequence": 2,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "e1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut event = importable();
+        event.rrule = None;
+        event.exdates = Vec::new();
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client.update_imported_event("e1", &event).await.expect("update");
+    }
+
+    #[tokio::test]
+    async fn google_update_surfaces_a_refusal() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": {"code": 403}})))
+            .mount(&server)
+            .await;
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .update_imported_event("e1", &importable())
+            .await
+            .expect_err("refused");
+    }
+
+    #[tokio::test]
+    async fn google_find_flags_emailops_copies() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let lookup = |uid: &'static str, body: serde_json::Value| {
+            Mock::given(method("GET"))
+                .and(path("/calendars/primary/events"))
+                .and(query_param("iCalUID", uid))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        };
+        lookup(
+            "ours@example.com",
+            json!({"items": [{"id": "e1", "sequence": 3, "extendedProperties": {"private": {"emailopsImported": "1"}}}]}),
+        )
+        .mount(&server)
+        .await;
+        lookup("theirs@example.com", json!({"items": [{"id": "e2"}]}))
+            .mount(&server)
+            .await;
+        lookup("none@example.com", json!({"items": []})).mount(&server).await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let ours = client.find_event_by_uid("ours@example.com").await.expect("find");
+        assert_eq!(
+            ours,
+            Some(FoundEvent {
+                provider_event_id: "e1".into(),
+                imported_by_emailops: true,
+                sequence: 3
+            })
+        );
+        let theirs = client.find_event_by_uid("theirs@example.com").await.expect("find");
+        assert_eq!(
+            theirs,
+            Some(FoundEvent {
+                provider_event_id: "e2".into(),
+                imported_by_emailops: false,
+                sequence: 0
+            })
+        );
+        assert_eq!(client.find_event_by_uid("none@example.com").await.expect("find"), None);
+    }
+
+    #[tokio::test]
+    async fn google_respond_patches_my_status_with_updates() {
+        use wiremock::matchers::{body_json, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/calendars/primary/events/ev1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "ev1",
+                "attendees": [
+                    {"email": "me@example.com", "responseStatus": "needsAction"},
+                    {"email": "boss@example.com", "responseStatus": "accepted"}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/calendars/primary/events/ev1"))
+            .and(query_param("sendUpdates", "all"))
+            .and(body_json(json!({"attendees": [
+                {"email": "me@example.com", "responseStatus": "tentative"},
+                {"email": "boss@example.com", "responseStatus": "accepted"}
+            ]})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "ev1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .respond_to_event(
+                "primary",
+                "ev1",
+                crate::sync::calendar_provider::RsvpResponse::Tentative,
+                "me@example.com",
+                true,
+            )
+            .await
+            .expect("respond");
+    }
+
+    #[tokio::test]
+    async fn google_respond_without_notify_sends_no_updates() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/calendars/primary/events/ev1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "ev1",
+                "attendees": [{"email": "me@example.com", "responseStatus": "accepted"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/calendars/primary/events/ev1"))
+            .and(query_param("sendUpdates", "none"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "ev1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .respond_to_event(
+                "primary",
+                "ev1",
+                crate::sync::calendar_provider::RsvpResponse::Tentative,
+                "me@example.com",
+                false,
+            )
+            .await
+            .expect("respond");
     }
 }

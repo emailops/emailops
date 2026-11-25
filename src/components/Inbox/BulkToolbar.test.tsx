@@ -4,7 +4,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Email } from '@/types';
+import type { Account, Email } from '@/types';
 
 vi.mock('@/lib/api', () => ({
   applyThreadAction: vi.fn(async () => ({ failed: [] })),
@@ -207,5 +207,38 @@ describe('BulkToolbar shortcut tooltips', () => {
     act(() => useShortcutStore.setState({ enabled: false }));
     expect(title('bulk-archive')).toBe('Archive');
     expect(title('bulk-snooze')).toBe('Snooze');
+  });
+});
+
+describe('BulkToolbar delete forever', () => {
+  const imap = { id: 'acc', provider: 'imap' } as Account;
+
+  it('opens the delete-forever dialog for the selected Trash messages and clears the selection', async () => {
+    const { useDeleteForeverStore } = await import('@/stores/deleteForeverStore');
+    useAccountStore.setState({ accounts: [imap] });
+    useEmailStore.setState({ listScope: 'deleted' });
+    useSelectionStore.getState().selectAll(['a', 'c']);
+    render([row('a', { mailbox: 'trash' }), row('b', { mailbox: 'trash' }), row('c', { mailbox: 'trash' })]);
+
+    await click('bulk-delete-forever');
+
+    expect(useDeleteForeverStore.getState().request).toEqual({
+      accountId: 'acc',
+      folder: 'trash',
+      emailIds: ['a', 'c'],
+    });
+    expect(useSelectionStore.getState().ids.size).toBe(0);
+  });
+
+  it('is not offered outside Trash and Spam, nor on Gmail', () => {
+    useAccountStore.setState({ accounts: [imap] });
+    useSelectionStore.getState().toggle('a');
+    render([row('a')]);
+    expect(q('bulk-delete-forever')).toBeNull();
+
+    useAccountStore.setState({ accounts: [{ id: 'acc', provider: 'gmail' } as Account] });
+    useEmailStore.setState({ listScope: 'spam' });
+    render([row('a', { mailbox: 'spam' })]);
+    expect(q('bulk-delete-forever')).toBeNull();
   });
 });

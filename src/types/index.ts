@@ -84,6 +84,13 @@ export interface Email {
   /** Starred (Gmail STARRED, Outlook flag, IMAP \Flagged). Per message; in
    *  the thread-deduped inbox list it means "any message of the thread". */
   isStarred: boolean;
+  /** The whole message in bytes, attachments included, as the provider
+   *  reported it at sync. `null` when unknown: Outlook reports none, and mail
+   *  synced before sizes were stored keeps none. */
+  sizeBytes?: number | null;
+  /** List rows only: the message has attachments (the `has:attachment`
+   *  definition). Absent outside the list. */
+  hasAttachments?: boolean;
   /** Search and smart-filter rows: when the row's thread last had activity.
    *  The row is the thread's newest MATCHING email, but the list sorts and
    *  dates threads by their newest email of any kind. */
@@ -199,6 +206,59 @@ export interface CalendarInvite {
   recurrence: string | null;
   /** iCalendar METHOD — "REQUEST" | "CANCEL" | … */
   method: string;
+  /** A broadcast (`METHOD:PUBLISH`) or an event without ORGANIZER: nobody to answer. */
+  isPublish: boolean;
+  /** Where an answer goes: the organizer, unless this is a publish or I am the organizer. */
+  replyTo: string | null;
+  /** The organizer sent this very email. */
+  organizerIsSender: boolean;
+}
+
+/** An answer to a calendar invite. */
+export type RsvpChoice = 'accepted' | 'declined' | 'tentative';
+
+/** What `rsvp_calendar_invite` / `add_invite_to_calendar` did. */
+export type InviteResponseOutcome =
+  | { kind: 'responded'; replySentTo: string | null }
+  | { kind: 'imported'; replySentTo: string | null; replyError: string | null }
+  | { kind: 'removed'; replySentTo: string | null; replyError: string | null }
+  | { kind: 'alreadyInCalendar' }
+  | { kind: 'notYetInCalendar' }
+  | { kind: 'cannotImport'; reason: string; reasonDetail: string | null };
+
+export type IcsImportItemStatus = 'importable' | 'alreadyInCalendar' | 'unsupported';
+
+export interface IcsImportPreviewItem {
+  uid: string;
+  title: string;
+  /** UTC epoch seconds. */
+  startTime: number;
+  endTime: number;
+  isAllDay: boolean;
+  /** Raw RRULE value; null when one-off. */
+  recurrence: string | null;
+  status: IcsImportItemStatus;
+  /** Code of why the item is unsupported (`calendar:import.reason.*`). */
+  reason: string | null;
+  reasonDetail: string | null;
+}
+
+/** What importing an .ics file would do, without doing it. */
+export interface IcsImportPreview {
+  fileName: string;
+  items: IcsImportPreviewItem[];
+}
+
+export interface IcsImportFailure {
+  title: string;
+  reason: string;
+}
+
+export interface IcsImportSummary {
+  imported: number;
+  alreadyPresent: number;
+  unsupported: number;
+  failed: IcsImportFailure[];
 }
 export type EmailCategory = 'primary' | 'social' | 'updates' | 'forums' | 'promotions';
 

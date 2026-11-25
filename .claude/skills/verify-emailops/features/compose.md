@@ -18,6 +18,7 @@ provider.
 - `compose.conflict` a draft edited locally is never dropped by a sync: the dirty marker (V028) makes the local version win and be pushed.
 - `compose.imap-drafts` on an IMAP account, drafts another client saved in the server's Drafts folder (`\Drafts`, else a folder named like Drafts) appear in Views → Drafts with recipients, subject, text or HTML, attachments and the answered message, and follow saves and deletions made there. Read-only: nothing is written to the server; an edit made here stays local, and a draft deleted or sent here stays hidden while its server copy remains.
 - `compose.sender` a new blank message starts from Settings → Appearance → **Send new messages from** (default: the selected view's account); replies, forwards and drafts keep their own account; every From list puts the account with the most stored sent mail (`is_sent`) first.
+- `compose.ai-instructions` above the body of a new message, a compose tab and a Reply / Reply All, an **Instructions for AI** box (never sent nor saved) with **Generate with AI** and **Polish**; Polish is disabled until the body has text; while the AI works the body and Send are locked, and a failure or the two-minute timeout frees them with the text kept.
 - `compose.send` Send queues the message in the local outbox for the undo window (see [Undo send and scheduled send](./outbox-undo-schedule.md)); on the demo account it then fails with "A message could not be sent: … Authentication required" (no credentials) and the outbox row is `failed`; nothing leaves the machine.
 
 ## How to get to it (user POV)
@@ -57,7 +58,7 @@ Preconditions: baseline; account `demo-acct-work` selected. Entry confirmed pres
 | draft conflicts, offline saves, replies and sends against the fake provider | integration (`*draft*`, `*reply*`, `send_*`) |
 | IMAP Drafts folder: `\Drafts` discovery, read-only listing (EXAMINE, PEEK), Message-ID identity and UIDVALIDITY change, draft parsing, pull/prune/tombstones without writes | unit (`sync::draft_plan`, `sync::folder_plan`, `sync::imap` against a scripted server) + integration (`services::emails::compose` `*imap_draft*`, `draft_files` `an_imap_draft_*`) |
 | draft command arguments, `Draft` / `SaveDraftRequest` shapes | contract (`src/lib/apiContract/compose.api.test.ts`) |
-| modal, tab, recipients, AI draft | vitest (`ComposeModal.*`, `ComposeTabView.*`, `draftRequest`, `sendWarnings`) |
+| modal, tab, recipients, AI draft; Instructions for AI kept out of saved and sent mail, Polish, locks and timeout while the AI works | vitest (`ComposeModal.*`, `ComposeTabView.*`, `ReplyCompose.aiInstructions`, `EmailView.aiDraft`, `AiInstructionBar`, `draftRequest`, `composeDraft`, `sendWarnings`) + unit (`services::emails::drafts` `polish_*`) + eval (`draft_case_eval` `polish_*`, `new_body_is_background_en`) |
 | default sender for new messages, From order by stored sent mail | unit (`db::accounts::sent_count_tests`) + vitest (`composeSender`, `useSenderOptions`, `DefaultSenderSetting`, `ComposeModal.senders`) |
 | open, fill, send without credentials, draft, discard, table draft | e2e (`Compose/*`, `Vistas/Drafts`) |
 | pasted text colours below 3:1 on their background are dropped; the text colour picker; Clear formatting | vitest (`pastedColors`, `composeEditorExtensions`, `RichTextEditor.font`) |

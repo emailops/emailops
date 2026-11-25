@@ -120,6 +120,15 @@ o 30 segundos, 6 por defecto. Desactivado, archivar y eliminar llegan a tu prove
 momento, sin Deshacer. El Deshacer que aparece tras posponer dura lo mismo. **Deshacer envío** es
 un ajuste aparte.
 
+<!-- claim:feat-organize-delete-forever -->
+En **Papelera** y **Spam**, **Eliminar definitivamente** en la barra de la selección borra los
+mensajes seleccionados, y **Vaciar la papelera** o **Vaciar spam** encima de la lista los borra
+todos. Primero ves cuántos mensajes se irán y lo confirmas; una barra muestra el avance,
+**Cancelar** se detiene tras el lote en curso, y al final se indica cuántos se borraron y por qué
+no se pudo con alguno. Solo se toca esa carpeta. Funciona en cuentas IMAP y Outlook. Gmail borra
+por su cuenta lo que lleva 30 días en la papelera o el spam; borrarlo antes desde EmailOps
+requeriría acceso completo a la cuenta de Gmail, que EmailOps no pide.
+
 <!-- claim:feat-organize-5 -->
 Cuando la conversación que estás leyendo sale de la lista — archivada, eliminada, pospuesta o
 movida a Spam —, se abre la siguiente. **Ajustes → Apariencia → Después de archivar o eliminar**
@@ -241,6 +250,15 @@ minutos y su enlace se guarda en tu llavero, no en la base de datos.
 <!-- claim:feat-calendar-5 -->
 Junto al buzón, el calendario también se abre como un panel acoplado a la derecha, la
 **Agenda**; **Abrir calendario completo** pasa a la vista completa.
+
+<!-- claim:feat-calendar-6 -->
+**Importar .ics** en la barra del calendario abre un selector de archivos para un archivo `.ics` y después una vista previa que muestra cada evento como **Se importará**, **Ya está en el calendario** o **No se puede importar**, con el motivo en este último caso (por ejemplo, una regla de repetición que Outlook no puede representar). Elige la cuenta en **Importar en** (Gmail u Outlook) y los eventos van al calendario principal de esa cuenta. Un archivo puede tener hasta 10 MB y 500 eventos, y volver a importar el mismo archivo no duplica eventos. Las cuentas IMAP no se ofrecen, porque sus calendarios son feeds de solo lectura, y no se puede elegir un calendario secundario.
+
+<!-- claim:feat-calendar-7 -->
+Una invitación en un correo muestra una tarjeta con **Sí**, **No** y **Quizás**. Si la invitación aún no está en tu calendario, **Sí** o **Quizás** la añade al calendario de la cuenta que recibió el correo y envía tu respuesta al organizador por correo; la tarjeta indica "Tu respuesta se enviará a" el organizador, con un aviso cuando el organizador no es quien te envió el correo. **No** elimina una copia que añadió EmailOps y envía el rechazo; para una sola fecha de una serie solo envía el rechazo. Si el organizador mueve una reunión que añadió EmailOps, responder a la invitación actualizada mueve la copia a la nueva hora; responder a un correo anterior no la devuelve a la hora antigua, y una serie periódica no se mueve. Si la invitación llegó hace menos de diez minutos, la tarjeta te pide que lo intentes de nuevo en un momento. Las entradas y los webinars sin organizador muestran en su lugar un único botón **Añadir al calendario**.
+
+<!-- claim:feat-calendar-8 -->
+En el detalle de un evento, los iconos de sobre **Escribir al organizador** y **Escribir a todos los participantes** abren un mensaje nuevo desde la cuenta del evento con el título del evento como asunto. Cuando estás invitado, una fila **Tu respuesta** (**Sí**, **No**, **Quizás**) cambia tu respuesta; en un evento recurrente eliges **Solo este evento** o **Todos los eventos**.
 
 <!-- claim:feat-calendar-3 -->
 Las notificaciones del sistema de un recordatorio omiten el título de la reunión salvo que
@@ -495,6 +513,31 @@ predeterminado. Una columna deja de crecer antes de que el panel de lectura qued
 320 px, y los anchos se conservan entre reinicios. Si se abre el panel de la derecha (chat o
 calendario) o la ventana se estrecha, una columna ensanchada devuelve ese ancho, primero la lista,
 hasta su ancho predeterminado, y lo recupera cuando vuelve a haber sitio.
+
+<!-- claim:feat-interface-7 -->
+En la vista a ancho completo, la lista de correos tiene encabezados de columna. Haz clic en
+**Remitente**, **Asunto**, **Fecha** o **Tamaño** para ordenar toda la lista por esa columna, con
+todas sus páginas, y vuelve a hacer clic para invertir el orden. La lista empieza por lo más reciente
+y vuelve a ese orden en la vista dividida; una búsqueda, un filtro inteligente y **Pospuestos**
+mantienen su propio orden, y en **Enviados** la primera columna muestra los destinatarios y no
+ordena. El botón **Columnas**, al final del encabezado, muestra u oculta **Tamaño** y **Con
+adjunto**, y la elección se conserva entre reinicios. El tamaño es el del mensaje completo, con sus
+adjuntos, tal como lo indica Gmail o el servidor IMAP al sincronizar el mensaje. Outlook no lo
+indica, y el correo sincronizado antes de que existiera la columna tampoco lo tiene: ambos muestran
+un guion.
+
+<!-- claim:feat-interface-8 -->
+**Ajustes → Apariencia → Vista de conversación** elige cómo se muestra una conversación abierta.
+**Abrir el último mensaje y desplegar los demás uno a uno**, la predeterminada, abre el mensaje más
+reciente y muestra cerrados los anteriores, que se abren con un clic. **Tu último mensaje primero,
+todos los mensajes abiertos** pone arriba el último mensaje que enviaste desde esa cuenta y debajo el
+resto de la conversación, del más antiguo al más reciente, con todos los mensajes abiertos y cada uno
+una sola vez; una conversación en la que no has escrito lo indica y muestra todos los mensajes del más
+antiguo al más reciente. Al abrir otra conversación se empieza desde arriba,
+salvo si se abrió en un mensaje concreto desde un enlace, que se muestra como en la vista
+predeterminada. La vista solo cambia lo
+que se ve: **Responder**, **Responder a todos** y **Reenviar** contestan, citan y adjuntan los mismos
+mensajes en las dos, y la elección se conserva entre reinicios.
 
 ## Atajos de teclado {#keyboard-shortcuts}
 

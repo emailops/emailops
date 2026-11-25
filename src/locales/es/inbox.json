@@ -24,6 +24,19 @@
     "unread": "No leídos",
     "empty": "No hay correos sin leer"
   },
+  "listColumns": {
+    "sender": "Remitente",
+    "recipients": "Para",
+    "subject": "Asunto",
+    "size": "Tamaño",
+    "attachment": "Con adjunto",
+    "date": "Fecha",
+    "sortBy": "Ordenar por {{column}}",
+    "sortedAscending": "{{column}}, orden ascendente",
+    "sortedDescending": "{{column}}, orden descendente",
+    "columns": "Columnas",
+    "sizeUnknown": "Tamaño desconocido"
+  },
   "emptyState": {
     "syncing": "Sincronizando correos...",
     "noSearchResults": "Ningún correo coincide con tu búsqueda",
@@ -142,6 +155,9 @@
     "noPreview": "(Sin vista previa)",
     "toLine": "Para: {{recipients}}",
     "ccLine": "Cc: {{recipients}}",
+    "ownFirstLatest": "Tu último mensaje",
+    "ownFirstRest": "El resto de la conversación, del más antiguo al más reciente",
+    "ownFirstNoOwn": "No has escrito en esta conversación. Se muestran todos los mensajes, del más antiguo al más reciente.",
     "backLabel": "Atrás",
     "messageCount_one": "{{count}} mensaje",
     "messageCount_other": "{{count}} mensajes",
@@ -358,5 +374,51 @@
     "unblockFailed": "No se pudo desbloquear al remitente",
     "blockedBanner": "Bloqueaste a este remitente. Sus correos nuevos van a Spam.",
     "unblockAction": "Desbloquear"
+  },
+  "deleteForever": {
+    "action": "Eliminar definitivamente",
+    "empty": {
+      "trash": "Vaciar la papelera",
+      "spam": "Vaciar spam"
+    },
+    "barText": {
+      "trash": "Elimina definitivamente todos los mensajes de la papelera, aquí y en tu cuenta.",
+      "spam": "Elimina definitivamente todos los mensajes de spam, aquí y en tu cuenta."
+    },
+    "gmailNote": {
+      "trash": "Gmail elimina los mensajes que llevan 30 días en la papelera. Para eliminarlos antes, usa Gmail: hace falta acceso completo a tu cuenta de Gmail, que EmailOps no pide.",
+      "spam": "Gmail elimina los mensajes que llevan 30 días en spam. Para eliminarlos antes, usa Gmail: hace falta acceso completo a tu cuenta de Gmail, que EmailOps no pide."
+    },
+    "titleSelected": "Eliminar definitivamente",
+    "counting": "Contando los mensajes…",
+    "alreadyEmpty": {
+      "trash": "La papelera ya está vacía.",
+      "spam": "Spam ya está vacío."
+    },
+    "confirmTrash_one": "Se eliminará definitivamente {{count}} mensaje de la papelera, aquí y en tu cuenta. No se puede deshacer.",
+    "confirmTrash_other": "Se eliminarán definitivamente {{count}} mensajes de la papelera, aquí y en tu cuenta. No se puede deshacer.",
+    "confirmTrash_many": "Se eliminarán definitivamente {{count}} mensajes de la papelera, aquí y en tu cuenta. No se puede deshacer.",
+    "confirmSpam_one": "Se eliminará definitivamente {{count}} mensaje de spam, aquí y en tu cuenta. No se puede deshacer.",
+    "confirmSpam_other": "Se eliminarán definitivamente {{count}} mensajes de spam, aquí y en tu cuenta. No se puede deshacer.",
+    "confirmSpam_many": "Se eliminarán definitivamente {{count}} mensajes de spam, aquí y en tu cuenta. No se puede deshacer.",
+    "confirmButton": "Eliminar definitivamente",
+    "progress": "Eliminando definitivamente: {{processed}} de {{total}}",
+    "cancelling": "Se detendrá tras el lote en curso…",
+    "removed_one": "{{count}} mensaje eliminado definitivamente.",
+    "removed_other": "{{count}} mensajes eliminados definitivamente.",
+    "removed_many": "{{count}} mensajes eliminados definitivamente.",
+    "failed_one": "{{count}} mensaje no se pudo eliminar y sigue ahí:",
+    "failed_other": "{{count}} mensajes no se pudieron eliminar y siguen ahí:",
+    "failed_many": "{{count}} mensajes no se pudieron eliminar y siguen ahí:",
+    "cancelled_one": "Cancelado: {{count}} mensaje se ha quedado como estaba.",
+    "cancelled_other": "Cancelado: {{count}} mensajes se han quedado como estaban.",
+    "cancelled_many": "Cancelado: {{count}} mensajes se han quedado como estaban.",
+    "stopped_one": "Detenido: {{count}} mensaje se ha quedado como estaba.",
+    "stopped_other": "Detenido: {{count}} mensajes se han quedado como estaban.",
+    "stopped_many": "Detenido: {{count}} mensajes se han quedado como estaban.",
+    "reasonCount": "{{reason}} ({{count}})",
+    "startFailed": "No se pudo empezar a eliminar definitivamente: {{detail}}",
+    "countFailed": "No se pudieron contar los mensajes: {{detail}}",
+    "cancelFailed": "No se pudo cancelar: {{detail}}"
   }
 }

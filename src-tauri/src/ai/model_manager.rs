@@ -510,7 +510,14 @@ where
         error: None,
     });
 
-    let hash = hash_file_sha256(source, cancel.as_ref())?;
+    // Seconds of disk reads for a multi-GB file: off the async executor, as
+    // `download_model` does.
+    let hash = {
+        let source = source.to_path_buf();
+        tokio::task::spawn_blocking(move || hash_file_sha256(&source, cancel.as_ref()))
+            .await
+            .map_err(|e| AppError::IoError(format!("Model verification task failed: {e}")))??
+    };
     if hash != entry.sha256 {
         let detail = match find_catalog_id_by_hash(&hash) {
             Some(other) => format!(
@@ -771,6 +778,24 @@ mod tests {
         if produced_a_symlink(&dest) {
             assert_eq!(std::fs::read_link(&dest).unwrap(), source);
         }
+    }
+
+    /// Hashing a multi-GB GGUF takes seconds; on the async executor it would
+    /// stall every other task on that thread meanwhile.
+    #[tokio::test(flavor = "current_thread")]
+    async fn hashing_a_linked_model_lets_other_tasks_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("downloads");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let source = write_fixture_gguf(&src_dir, "my-model.gguf", b"some weights");
+        let entry = fixture_entry("fixture-chat", Box::leak("0".repeat(64).into_boxed_str()));
+        let other_task_ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&other_task_ran);
+        tokio::spawn(async move { flag.store(true, std::sync::atomic::Ordering::SeqCst) });
+
+        let _ = link_local_model(&tmp.path().join("data"), &entry, &source, None, |_| {}).await;
+
+        assert!(other_task_ran.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[tokio::test]

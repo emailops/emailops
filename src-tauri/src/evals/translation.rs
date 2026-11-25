@@ -101,6 +101,8 @@ fn seed_email(db: &Database, id: &str, body: &str) -> EvalResult<()> {
         is_read: true,
         is_sent: false,
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: None,
         triage_status: None,
         category: "primary".to_string(),

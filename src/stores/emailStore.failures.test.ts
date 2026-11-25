@@ -15,6 +15,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { DEFAULT_LIST_SORT } from '@/lib/listColumns';
 import { useEmailStore } from './emailStore';
 import { useJunkStore } from './junkStore';
 import { useLogStore } from './logStore';
@@ -130,7 +131,7 @@ describe('list failures', () => {
     await useEmailStore.getState().retryList('acc', 'inbox');
 
     expect(useEmailStore.getState().emails.map((e) => e.id)).toEqual(['a', 'b']);
-    expect(api.getEmails).toHaveBeenCalledWith('acc', 50, 1, 'inbox', false);
+    expect(api.getEmails).toHaveBeenCalledWith('acc', 50, 1, 'inbox', false, DEFAULT_LIST_SORT);
   });
 });
 

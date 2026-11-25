@@ -73,6 +73,19 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
     };
   }, [dayCount]);
 
+  // Hit-testing can still drift from the painted scroll position later (seen
+  // after an event reload: the block shows at 14:30, clicks land ~3h lower)
+  // and stays off until the user scrolls. A 1px programmatic round trip makes
+  // WebKit re-commit the position, so do it whenever the pointer comes into
+  // the grid — before any click. Invisible when nothing drifted.
+  const recommitScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = el.scrollTop;
+    el.scrollTop = top > 0 ? top - 1 : top + 1;
+    el.scrollTop = top;
+  };
+
   const hourLabels = useMemo(() => {
     const fmt = new Intl.DateTimeFormat(i18n.language || 'en', { hour: 'numeric' });
     const base = new Date(2026, 0, 1);
@@ -198,7 +211,7 @@ export function TimeGrid({ days, events, colorFor, onSelectEvent, onCreateSlot }
       </div>
 
       {/* Scrollable time grid */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" onMouseEnter={recommitScroll}>
         <div className="flex" style={{ height: 24 * HOUR_PX }}>
           {/* Hour gutter */}
           <div className="w-14 flex-shrink-0 border-r border-gray-100 relative">

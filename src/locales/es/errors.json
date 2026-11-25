@@ -76,6 +76,7 @@
     "no_archive_folder": "Esta cuenta no tiene carpeta de archivo. Crea una carpeta llamada «Archive» para archivar correo.",
     "outbox_not_pending": "Este mensaje ya se está enviando y no se puede cambiar.",
     "no_spam_folder": "Esta cuenta no tiene carpeta de correo no deseado donde archivar el spam.",
+    "expunge_not_safe": "Este servidor de correo solo puede eliminar definitivamente a la vez todos los mensajes marcados para borrar en la carpeta, y hay otros marcados. No se ha eliminado nada.",
     "file_not_downloaded": "«{{filename}}» sigue en iCloud (u otra carpeta en la nube) y no se descargó a tiempo. Descárgalo desde el Finder y vuelve a intentarlo.",
     "data_move_env_override": "La carpeta de datos la fija EMAILOPS_DATA_DIR. Quita esa variable para elegir una carpeta desde la app.",
     "data_move_same_folder": "EmailOps ya guarda sus datos ahí.",

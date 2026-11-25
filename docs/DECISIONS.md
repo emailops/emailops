@@ -4910,6 +4910,87 @@ reported failures (old lock versions wiped, update not finding the lock, Windows
 issues). A git submodule — the skill lives in a subdirectory of the upstream repo, so
 it would need a symlink into `.claude/skills/`, which is fragile on Windows.
 
+## 2026-11-20 — .ics files import into the provider's primary calendar
+
+**Decision:** An imported `.ics` always lands in the real Google or Outlook primary calendar,
+never in a local-only calendar. From an email it is the account that received it; from a file,
+an account selector. Google uses `events.import` (rules carried verbatim, iCalUID kept, events
+marked with a private extended property). Outlook uses `POST /me/events` with the RRULE
+translated to `patternedRecurrence`; anything Outlook cannot express exactly is rejected in the
+preview with its reason, never approximated. Outlook imports never carry attendees (creating them
+would send invitations). A series is imported all-or-nothing (rolled back on partial failure).
+Limits: 10 MB and 500 series per file.
+**Context:** Imported events must show on the phone, survive the sync sweep and have one source
+of truth. This narrows the 2026-07-23 "never free-form RRULEs" stance: that rule is about what
+the user types in the create dialog; rules that come from an imported file are carried as-is
+where the provider can represent them. IMAP accounts wait for CalDAV (separate follow-up).
+**Rejected:**
+- *A local "Imported" calendar*: the events would exist only in EmailOps.
+- *Expanding occurrences into single events*: a series becomes dozens of loose events and an
+  open-ended one cannot be expanded.
+- *One-off events only*: fails on the weekly invitation that is missing from the calendar.
+
+## 2026-11-20 — Answering an invitation that is not in the calendar imports it and replies to the organizer by iTIP
+
+**Decision:** The invite card first tries the provider RSVP. When the event is missing it waits
+10 minutes after the email arrived (the provider may still be delivering it; importing earlier
+would duplicate it). After that, "Yes/Maybe" imports the event and then sends an RFC 5546 REPLY
+(`text/calendar; method=REPLY` inside a `multipart/alternative` body, sent as raw MIME so the
+organizer's calendar processes it) only to the ORGANIZER and only after a successful import.
+"No" removes the copy EmailOps imported (no notifications) and sends the decline. No reply goes
+to myself or to an invalid organizer address. PUBLISH invites (no organizer or METHOD:PUBLISH)
+get only "Add to calendar". A reply that fails after the calendar changed is reported to the user.
+**Context:** The old flow ended in "this invitation hasn't reached your calendar yet" for any
+invite the provider had not delivered; saying "yes" to someone without the event in the calendar
+would be wrong.
+**Rejected:**
+- *Attachment-only reply*: organizers' calendars do not process it.
+- *Importing immediately*: duplicates the event when the original invitation arrives later.
+- *Replying when the import failed*: it would accept an event that is not in the calendar.
+
+## 2026-11-20 — Outlook UID lookups match Exchange's GlobalObjectId encoding
+
+**Decision:** RSVP and duplicate checks on Outlook match `iCalUId` both as the plain UID and as
+the GlobalObjectId hex wrapping `vCal-Uid` (invites from non-Exchange organizers), plus the
+EmailOps extended property in a separate query. Graph `timeZone` uses Windows zone names from
+the full CLDR windowsZones mapping (plus modern IANA aliases) because Graph does not accept every
+IANA name.
+**Context:** For organizers outside Exchange, Graph exposes `iCalUId` as the hex GlobalObjectId,
+so the plain-UID lookup missed events that were in the calendar.
+**Rejected:** A single OR filter mixing `iCalUId` and the extended property: Graph support is
+unverified and it would put a path that works today at risk.
+
+## 2026-11-20 — The event detail lets me mail the organizer/participants and change my response
+
+**Decision:** The event detail has two compose icons (organizer; organizer + attendees minus me),
+shown on read-only calendars too. The "Your response" row appears only when I am an invited
+attendee, not the organizer, on a writable calendar; recurring events ask "only this event / all
+events" (default this event).
+**Context:** Users asked to write to the people of an event and to change their answer without
+going back to the email. Composing a message does not touch the calendar, so it is safe on feeds.
+CalDAV for IMAP accounts is a separate follow-up; the IMAP "CalDAV is out of scope" comment still
+holds for this change.
+**Rejected:** None recorded.
+
+## 2026-11-20 — Invite answers keep an imported copy in step without notifying anyone
+
+**Decision:** When the invitation is already in the calendar as an EmailOps copy, "Yes"/"Maybe"
+on a Google account first sets my status on the copy with `sendUpdates=none`, then sends the
+iTIP REPLY; when that status update fails, nothing is sent. Outlook copies have no attendees, so
+only the REPLY goes. An answer to a single occurrence (the invitation's VEVENT has
+`RECURRENCE-ID`) never changes the imported series: "No" deletes nothing and my status is left as
+it is; only the REPLY, carrying the `RECURRENCE-ID`, is sent. `respond_to_event` takes a `notify`
+flag like `delete_event`; the event detail still notifies the organizer.
+**Context:** The copy is found by UID, which an occurrence shares with its series, so deleting or
+re-answering the copy would change every occurrence while the REPLY speaks for one. A declined
+occurrence that stays visible can be deleted from the event detail ("only this event"); deleting
+the whole series is data loss. Changing my answer on the card must not email the copy's other
+attendees.
+**Rejected:**
+- *Deleting the series on a "No" to one occurrence*: loses every other occurrence.
+- *The notifying status update (`sendUpdates=all`) on the copy*: it could email every attendee.
+- *Deleting only the matching instance*: not taken for now; the event detail covers it.
+
 ## 2026-11-20 — The update check reads a manifest on the project site, and its request count is the adoption signal
 
 **Decision:** The app's daily update check fetches `https://getemailops.com/update/latest.json`
@@ -4935,6 +5016,68 @@ the GitHub API* — no release step to forget, but the hop would exist only to b
 *Generating the file in the site build from the newest tag* — a tag exists hours before
 its release is published, so any site build in that window would announce a release with
 no installers.
+
+## 2026-11-24 — Delete forever is explicit, folder-bound, and not offered on Gmail
+
+**Decision:** Messages are erased for good only through **Delete forever** (selected
+messages in Trash or Spam) and **Empty Trash** / **Empty Spam**, each after a confirmation
+that states the count (issue #304). Only the folder being emptied is touched: the provider
+is asked only about rows filed in that folder, IMAP refuses an id whose UID lives in
+another folder, and Graph ids change whenever a message changes folder. IMAP flags
+`\Deleted` and expunges with `UID EXPUNGE`; without UIDPLUS a plain `EXPUNGE` runs only
+when no other message of the folder is flagged, otherwise nothing is deleted
+(`ExpungeNotSafe`). A local row is removed only after the provider confirms its message is
+gone. Trash rows that are in the Trash view only because EmailOps deleted them while they
+stay filed elsewhere are removed locally and never sent to the provider. Gmail accounts get
+no Delete forever: they show why instead. Every other delete still goes to Trash; this
+narrows "EmailOps never permanently erases a message" in the privacy page and leaves the
+2026-08-15 entry's Gmail behaviour as it was.
+**Context:** Users asked for predictable cleanup of large Spam and Trash folders. Gmail's
+`messages.delete` and `batchDelete` require the full `https://mail.google.com/` scope;
+the app holds `gmail.modify`, which can only trash.
+**Rejected:** *Requesting `https://mail.google.com/`* — every Gmail user would have to
+sign in again and the app would reopen Google's restricted-scope verification for one
+cleanup action that Gmail already does on its own after 30 days. *Hiding Gmail's Trash and
+Spam rows locally* — the messages would stay in the account while EmailOps said they were
+gone. *Emptying the whole server folder, including mail EmailOps never synced* — the count
+the user confirms would not be the set that goes. *A plain `EXPUNGE` whenever UIDPLUS is
+missing* — it removes every `\Deleted` message of the folder, including ones the user
+never selected.
+
+## 2026-11-25 — An updated invitation moves the copy EmailOps imported; look-alike events are not merged
+
+**Decision:** "Yes"/"Maybe" on an invitation whose event is a copy EmailOps imported first rewrites
+that copy (times, title, place, description, SEQUENCE) without notifying anyone, then answers as
+before, but only when the invitation's SEQUENCE is higher than the copy's. Google keeps SEQUENCE on
+the event (PATCH with `sendUpdates=none`); Outlook keeps it in an EmailOps extended property next
+to the UID one, and copies imported before it count as 0. Only single events move: a series, an
+answer to one occurrence (`RECURRENCE-ID`) and an invitation the import planner refuses leave the
+copy where it is. A failed move sends no reply. Two events with different UIDs stay two events,
+however alike they look.
+**Context:** A reported duplicate was two separate bookings from a scheduling tool (different UIDs,
+no CANCEL for the first), so both were real. The actual gap was a same-UID update leaving the copy
+at the old time. Ordering by SEQUENCE (RFC 5546 §2.1.4) keeps an older email from moving the copy
+back.
+**Rejected:**
+- *Hiding events with the same title and organizer on the same day*: it hides genuine double
+  bookings.
+- *Re-importing the updated event*: Google does not document what `events.import` does with an
+  existing iCalUID.
+- *Moving series*: their exceptions and exclusions would need rewriting too; left for a follow-up.
+
+## 2026-11-25 — Polish is not offered on a draft with links or images
+
+**Decision:** The composer's **Polish** action is disabled while the text the user wrote
+(signature left out) holds a link or an image, and its tooltip says why. Bold, italics and
+lists are still flattened to plain text by Polish; that loss is accepted.
+**Context:** Polish (#275) sends the model the draft as plain text and puts the model's
+plain-text answer in its place, so a link or an image in the draft would be dropped without
+the user choosing it. Generate already returned plain text, but Polish works on what the user
+wrote.
+**Rejected:** Leaving Polish on and documenting that it drops formatting — content the user
+added would disappear on one click. Making Polish keep the HTML — the most complete answer but
+much more work (markup through a small local model, sanitizing what comes back); it can be
+its own issue later.
 
 ## 2026-11-25 — Attachments "All accounts" reads through AccountScope, not a frontend fan-out
 
@@ -4983,9 +5126,8 @@ to existing mail, which also clears copies held from before the option existed. 
 file" means the same file name; the content is not compared.
 **Context:** Invoices and proposals go back and forth in long threads; every reply that
 carries the document again added one more row to the Attachments view, and a sent message
-also filed under a label folder was collected twice. V044 is `email_size` on
-`feature/list-size-attachment-columns`, already applied to the developer's production DB,
-so this migration is V045 and must merge after that branch, or be renumbered.
+also filed under a label folder was collected twice. The migration is V045, after
+`email_size` (V044).
 **Rejected:** *Comparing file content (a hash)* — a revised document keeps its name but
 not its bytes, which is the case the option is for. *A view-level filter that hides older
 copies* — counts, "select all" and the bulk download would still see them. *Off by

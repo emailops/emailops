@@ -148,6 +148,16 @@ pub struct Email {
     /// widened to "any message of the thread is starred".
     #[serde(default)]
     pub is_starred: bool,
+    /// The whole message in bytes, attachments included, as the provider
+    /// reported it at sync (Gmail `sizeEstimate`, the IMAP download's length).
+    /// `None` when unknown: Outlook reports none, and mail synced before the
+    /// column existed is never downloaded again to measure it.
+    #[serde(default)]
+    pub size_bytes: Option<i64>,
+    /// The message has stored attachment metadata (the `has:attachment`
+    /// definition). Looked up for list rows only; `None` everywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_attachments: Option<bool>,
     /// Captured RFC 5322 headers, when the provider supplied them.
     ///
     /// Transport only: carried from the provider parse to `insert_emails_batch`,

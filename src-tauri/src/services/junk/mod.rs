@@ -602,6 +602,8 @@ mod feedback_tests {
             timestamp: now_secs() - 60,
             is_read: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             triage_status: None,
             category: "primary".to_string(),
             mailbox: if is_sent { "sent" } else { "inbox" }.to_string(),

@@ -1,9 +1,33 @@
 import type { DraftFailedEvent, DraftGeneratedEvent } from '@/lib/api';
+import { withoutSignature } from '@/lib/signature';
 
-/** A `draft-generated` or `draft-failed` event, tagged by kind. */
+/** A `draft-generated` or `draft-failed` event, tagged by kind, or the end
+ *  of the wait for one (`timedOut`). */
 export type DraftOutcome =
   | { kind: 'generated'; event: DraftGeneratedEvent }
-  | { kind: 'failed'; event: DraftFailedEvent };
+  | { kind: 'failed'; event: DraftFailedEvent }
+  | { kind: 'timedOut' };
+
+/**
+ * How long a composer waits for an AI draft or polish before it gives up,
+ * frees its controls and keeps the user's text. Above the backend's own
+ * per-call limits (Ollama gives a generation 60 s) and a draft's two or three
+ * model calls, with room for a request queued behind another AI task.
+ */
+export const AI_DRAFT_TIMEOUT_MS = 120_000;
+
+/**
+ * Whether the text the user wrote (the composer's HTML, signature left out)
+ * holds a link or an image. Polish sends the model plain text and puts its
+ * answer in place of that text, so it would drop them: it is not offered then.
+ */
+export function draftHasLinksOrImages(bodyHtml: string): boolean {
+  const typed = new DOMParser().parseFromString(`<body>${withoutSignature(bodyHtml)}</body>`, 'text/html').body;
+  return typed.querySelector('a[href], img') !== null;
+}
+
+/** An outcome the backend sends: a `draft-generated` or `draft-failed` event. */
+export type EventOutcome = Extract<DraftOutcome, { event: unknown }>;
 
 /**
  * Matches `draft-generated` / `draft-failed` events to the AI-draft request a
@@ -17,22 +41,28 @@ export type DraftOutcome =
  * one carrying the new id.
  */
 export interface DraftRequestTracker {
-  /** A request was sent; its id is not known yet. */
-  begin: () => void;
+  /** A request was sent; its id is not known yet. Returns the request's
+   *  token, for `expire`. */
+  begin: () => number;
   /** The command returned `requestId`. Returns an outcome that already
    *  arrived for it — apply it now — or null to keep waiting. */
   resolve: (requestId: string) => DraftOutcome | null;
   /** An event arrived. Returns it when it settles the current request (apply
    *  it), null otherwise. */
-  accept: (outcome: DraftOutcome) => DraftOutcome | null;
+  accept: (outcome: EventOutcome) => DraftOutcome | null;
   /** Stop waiting: nothing arriving later is applied. */
   cancel: () => void;
+  /** The deadline of the request `token` passed. Returns a `timedOut`
+   *  outcome to apply when that request is still waiting (it stops waiting),
+   *  null when it already settled or another request replaced it. */
+  expire: (token: number) => DraftOutcome | null;
 }
 
 export function createDraftRequestTracker(): DraftRequestTracker {
   let pending = false;
+  let token = 0;
   let currentId: string | null = null;
-  let early = new Map<string, DraftOutcome>();
+  let early = new Map<string, EventOutcome>();
 
   const cancel = () => {
     pending = false;
@@ -44,6 +74,8 @@ export function createDraftRequestTracker(): DraftRequestTracker {
     begin: () => {
       cancel();
       pending = true;
+      token += 1;
+      return token;
     },
     resolve: (requestId) => {
       if (!pending || currentId !== null) return null;
@@ -67,5 +99,10 @@ export function createDraftRequestTracker(): DraftRequestTracker {
       return outcome;
     },
     cancel,
+    expire: (expired) => {
+      if (!pending || expired !== token) return null;
+      cancel();
+      return { kind: 'timedOut' };
+    },
   };
 }

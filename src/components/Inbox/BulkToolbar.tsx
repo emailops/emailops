@@ -5,8 +5,10 @@ import { SnoozeMenuButton } from '@/components/Inbox/SnoozePicker';
 import { useShortcutHint } from '@/hooks/useShortcutHint';
 import type { MailboxView } from '@/lib/api';
 import { bulkAvailability, bulkMoveTargets } from '@/lib/bulkActions';
+import { bulkDeleteForever } from '@/lib/deleteForever';
 import { folderLabel } from '@/lib/folderDisplay';
 import { useAccountStore } from '@/stores/accountStore';
+import { useDeleteForeverStore } from '@/stores/deleteForeverStore';
 import { isSnoozed, snoozeLeavesList, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useFolderStore } from '@/stores/folderStore';
 import { selectedThreads, useSelectionStore } from '@/stores/selectionStore';
@@ -43,6 +45,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
   const accounts = useAccountStore((s) => s.accounts);
   const folders = useFolderStore((s) => s.folders);
   const foldersAccountId = useFolderStore((s) => s.accountId);
+  const openDeleteForever = useDeleteForeverStore((s) => s.open);
 
   const rows = useMemo(() => emails.filter((e) => ids.has(e.id)), [emails, ids]);
   // The `b` shortcut asks for the snooze picker; the toolbar may only now be
@@ -59,6 +62,7 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
   const threads = selectedThreads({ ids, anchor: null }, emails);
   const can = bulkAvailability(rows);
   const move = bulkMoveTargets(rows, accounts, folders, foldersAccountId);
+  const forever = bulkDeleteForever(rows, accounts, listScope);
   const allSelected = rows.length === emails.length;
   const snoozedThreads = rows.filter((e) => isSnoozed(snoozes, e)).map(threadRefOf);
 
@@ -130,6 +134,19 @@ export function BulkToolbar({ emails }: BulkToolbarProps) {
       >
         <TrashIcon />
       </ToolbarButton>
+      {forever && (
+        <button
+          type="button"
+          data-testid="bulk-delete-forever"
+          onClick={() => {
+            clear();
+            openDeleteForever({ ...forever, emailIds: rows.map((e) => e.id) });
+          }}
+          className="px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors whitespace-nowrap"
+        >
+          {t('inbox:deleteForever.action')}
+        </button>
+      )}
       {can.canMarkRead && (
         <ToolbarButton
           testId="bulk-mark-read"

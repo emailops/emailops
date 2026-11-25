@@ -180,6 +180,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use super::super::list_sort::{ListSort, ListSortKey};
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
     use crate::models::ThreadSnooze;
@@ -263,6 +264,66 @@ mod tests {
         assert_eq!(listed_threads(&db, None), vec!["t-b".to_string()]);
         assert_eq!(db.count_emails(AccountScope::Account("acc1"), None, false).unwrap(), 1);
         assert_eq!(db.count_emails(AccountScope::AllEnabled, None, false).unwrap(), 1);
+    }
+
+    fn threads_sorted_by_size(db: &Database, view: Option<&str>, ascending: bool) -> Vec<String> {
+        let sort = ListSort {
+            key: ListSortKey::Size,
+            ascending,
+        };
+        db.get_emails_sorted(AccountScope::Account("acc1"), 50, 0, view, None, false, sort)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.thread_id)
+            .collect()
+    }
+
+    fn set_size(db: &Database, id: &str, size: i64) {
+        db.connection()
+            .execute(
+                "UPDATE emails SET size_bytes = ?2 WHERE id = ?1",
+                rusqlite::params![id, size],
+            )
+            .unwrap();
+    }
+
+    /// The wake time only stands in for the date: sorted by another column, a
+    /// woken conversation takes its place like any other.
+    #[test]
+    fn a_woken_thread_sorts_by_the_chosen_column_like_any_other() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "woken", "acc1", "t-woken", NOW - 30 * 86_400);
+        insert_email(&db, "big", "acc1", "t-big", NOW - 60);
+        insert_email(&db, "small", "acc1", "t-small", NOW - 86_400);
+        set_size(&db, "woken", 500);
+        set_size(&db, "big", 9_000);
+        set_size(&db, "small", 10);
+        snooze(&db, "t-woken", NOW - 1);
+        db.mark_snoozes_woken(&[("acc1", "t-woken")], NOW).unwrap();
+
+        assert_eq!(
+            threads_sorted_by_size(&db, None, false),
+            ["t-big", "t-woken", "t-small"]
+        );
+        assert_eq!(threads_sorted_by_size(&db, None, true), ["t-small", "t-woken", "t-big"]);
+    }
+
+    /// The Snoozed view is ordered by when each conversation comes back; it
+    /// has no column headers to sort by.
+    #[test]
+    fn the_snoozed_view_keeps_its_wake_order_whatever_the_sort() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "soon", "acc1", "t-soon", NOW - 20);
+        insert_email(&db, "later", "acc1", "t-later", NOW - 10);
+        set_size(&db, "soon", 10);
+        set_size(&db, "later", 9_000);
+        snooze(&db, "t-soon", NOW + 3600);
+        snooze(&db, "t-later", NOW + 7200);
+
+        assert_eq!(
+            threads_sorted_by_size(&db, Some("snoozed"), false),
+            ["t-soon", "t-later"]
+        );
     }
 
     #[test]

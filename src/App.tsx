@@ -98,6 +98,7 @@ import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useConnectivityStore } from '@/stores/connectivityStore';
+import { useConversationViewStore } from '@/stores/conversationViewStore';
 import { useDefaultSenderStore } from '@/stores/defaultSenderStore';
 import { pendingThreadActions, useEmailStore } from '@/stores/emailStore';
 import {
@@ -876,6 +877,7 @@ function AppInner() {
   useEffect(() => {
     void useShortcutStore.getState().loadEnabled();
     void useAutoAdvanceStore.getState().loadMode();
+    void useConversationViewStore.getState().load();
     void useUndoWindowStore.getState().load();
     void useDefaultSenderStore.getState().load();
   }, []);
@@ -1001,6 +1003,14 @@ function AppInner() {
         } else {
           console.error('Ignoring malformed snoozes-woken payload', event.payload);
         }
+      }),
+    );
+
+    // A "Delete forever" / "Empty" run ended: what it removed leaves the list.
+    // Its dialog shows the outcome.
+    unlisteners.push(
+      listen('delete-forever-finished', () => {
+        silentRefetchEmailsRef.current();
       }),
     );
 

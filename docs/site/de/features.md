@@ -125,6 +125,16 @@ Archivieren und Löschen Ihren E-Mail-Anbieter sofort, ohne Rückgängig. Das R�
 Zurückstellen bleibt genauso lange verfügbar. **Senden rückgängig machen** ist eine eigene
 Einstellung.
 
+<!-- claim:feat-organize-delete-forever -->
+In **Papierkorb** und **Spam** löscht **Endgültig löschen** in der Auswahlleiste die ausgewählten
+Nachrichten, und **Papierkorb leeren** oder **Spam leeren** über der Liste löscht alle. Sie sehen
+zuerst, wie viele Nachrichten gehen, und bestätigen; ein Balken zeigt den Fortschritt,
+**Abbrechen** hält nach dem laufenden Stapel an, und am Ende steht, wie viele gelöscht wurden und
+warum einzelne nicht gelöscht werden konnten. Nur dieser Ordner wird angefasst. Das funktioniert
+bei IMAP- und Outlook-Konten. Gmail löscht selbst, was seit 30 Tagen im Papierkorb oder Spam
+liegt; früher aus EmailOps zu löschen, bräuchte vollen Zugriff auf das Gmail-Konto, den EmailOps
+nicht anfordert.
+
 <!-- claim:feat-organize-5 -->
 Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,
 zurückgestellt oder in den Spam verschoben —, öffnet sich die nächste. **Einstellungen →
@@ -252,6 +262,15 @@ Minuten aktualisiert, und sein Link liegt in Ihrem Schlüsselbund, nicht in der 
 <!-- claim:feat-calendar-5 -->
 Neben dem Posteingang öffnet sich der Kalender auch als rechts angedocktes Feld, die
 **Agenda**; **Vollständigen Kalender öffnen** wechselt zur vollen Ansicht.
+
+<!-- claim:feat-calendar-6 -->
+**.ics importieren** in der Kalender-Symbolleiste öffnet eine Dateiauswahl für eine `.ics`-Datei und danach eine Vorschau, die jeden Termin als **Wird importiert**, **Bereits im Kalender** oder **Kann nicht importiert werden** auflistet, bei Letzterem mit dem Grund (zum Beispiel eine Wiederholungsregel, die Outlook nicht abbilden kann). Wählen Sie das Konto unter **Importieren in** (Gmail oder Outlook), und die Termine landen im Hauptkalender dieses Kontos. Eine Datei darf bis zu 10 MB und 500 Termine enthalten, und ein erneuter Import derselben Datei erzeugt keine Duplikate. IMAP-Konten werden nicht angeboten, weil ihre Kalender schreibgeschützte Feeds sind, und einen sekundären Kalender können Sie nicht wählen.
+
+<!-- claim:feat-calendar-7 -->
+Eine Einladung in einer E-Mail zeigt eine Karte mit **Ja**, **Nein** und **Vielleicht**. Ist die Einladung noch nicht in Ihrem Kalender, fügt **Ja** oder **Vielleicht** sie dem Kalender des Kontos hinzu, das die E-Mail erhalten hat, und sendet Ihre Antwort per E-Mail an den Organisator; die Karte zeigt „Deine Antwort wird an“ den Organisator „gesendet“, mit einem Hinweis, wenn der Organisator nicht der Absender der E-Mail ist. **Nein** entfernt eine von EmailOps hinzugefügte Kopie und sendet die Absage; für einen einzelnen Termin einer Serie sendet es nur die Absage. Verschiebt der Organisator ein von EmailOps hinzugefügtes Meeting, verschiebt eine Antwort auf die aktualisierte Einladung die Kopie auf die neue Zeit; eine Antwort auf eine ältere E-Mail verschiebt sie nicht zurück, und eine Terminserie wird nicht verschoben. Ist die Einladung vor weniger als zehn Minuten eingetroffen, bittet die Karte, es gleich noch einmal zu versuchen. Tickets und Webinare ohne Organisator zeigen stattdessen eine einzige Schaltfläche **Zum Kalender hinzufügen**.
+
+<!-- claim:feat-calendar-8 -->
+In den Details eines Termins öffnen die Umschlag-Symbole **An den Organisator schreiben** und **An alle Teilnehmer schreiben** eine neue Nachricht vom Konto des Termins, mit dem Termintitel als Betreff. Sind Sie eingeladen, ändert eine Zeile **Deine Antwort** (**Ja**, **Nein**, **Vielleicht**) Ihre Antwort; bei einem Serientermin wählen Sie **Nur dieser Termin** oder **Alle Termine**.
 
 <!-- claim:feat-calendar-3 -->
 Systembenachrichtigungen einer Erinnerung lassen den Meeting-Titel weg, außer Sie aktivieren
@@ -510,6 +529,31 @@ mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten
 Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verbreiterte Spalte
 diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
 Platz frei wird.
+
+<!-- claim:feat-interface-7 -->
+In der Ansicht mit voller Breite hat die E-Mail-Liste Spaltenköpfe. Klicken Sie auf **Absender**,
+**Betreff**, **Datum** oder **Größe**, um die ganze Liste nach dieser Spalte zu sortieren, mit allen
+ihren Seiten, und klicken Sie erneut, um die Reihenfolge umzukehren. Die Liste beginnt mit den
+neuesten E-Mails und kehrt in der geteilten Ansicht zu dieser Reihenfolge zurück; eine Suche, ein
+intelligenter Filter und **Zurückgestellt** behalten ihre eigene Reihenfolge, und in **Gesendet**
+zeigt die erste Spalte die Empfänger und sortiert nicht. Die Schaltfläche **Spalten** am Ende der
+Kopfzeile blendet **Größe** und **Mit Anhang** ein oder aus, und die Auswahl bleibt über Neustarts
+erhalten. Die Größe ist die der ganzen Nachricht, Anhänge eingeschlossen, so wie Gmail oder der
+IMAP-Server sie beim Synchronisieren der Nachricht angibt. Outlook gibt keine an, und E-Mails, die
+vor dieser Spalte synchronisiert wurden, haben auch keine: Beide zeigen einen Strich.
+
+<!-- claim:feat-interface-8 -->
+**Einstellungen → Erscheinungsbild → Konversationsansicht** legt fest, wie eine geöffnete
+Konversation angezeigt wird. **Neueste Nachricht öffnen, die anderen einzeln aufklappen**, die
+Voreinstellung, öffnet die neueste Nachricht und zeigt die früheren geschlossen, zum Öffnen per Klick.
+**Ihre letzte Nachricht zuerst, alle Nachrichten geöffnet** zeigt oben die letzte Nachricht, die Sie
+von diesem Konto gesendet haben, und darunter den Rest der Konversation, die älteste zuerst, mit allen
+Nachrichten geöffnet und jeder nur einmal; eine Konversation, in der Sie nichts geschrieben haben,
+weist darauf hin und zeigt alle Nachrichten, die älteste zuerst. Eine andere Konversation beginnt
+beim Öffnen oben, außer sie wurde über einen Link bei einer bestimmten Nachricht geöffnet, die wie in
+der Standardansicht angezeigt wird. Die Ansicht ändert nur, was zu sehen ist: **Antworten**, **Allen antworten** und
+**Weiterleiten** beantworten, zitieren und hängen in beiden dieselben Nachrichten an, und die Wahl
+bleibt über Neustarts erhalten.
 
 ## Tastenkombinationen {#keyboard-shortcuts}
 

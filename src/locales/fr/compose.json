@@ -76,7 +76,7 @@
     "generate": "Générer avec l'IA",
     "generating": "Génération…",
     "generatingLong": "Génération du brouillon… récupération de fils similaires",
-    "newTitle": "Rédiger cet e-mail avec l'IA à partir des destinataires, de l'objet et des notes saisies",
+    "newTitle": "Rédiger cet e-mail avec l'IA à partir des destinataires, de l'objet, de vos instructions et de ce que vous avez déjà écrit. Il faut un destinataire et un objet.",
     "rewrite": "Réécrire",
     "shorten": "Plus court",
     "expand": "Plus long",
@@ -84,8 +84,15 @@
     "toneFormal": "Formel",
     "toneCasual": "Décontracté",
     "toneFriendly": "Cordial",
-    "instructionPlaceholder": "Dites à l'IA quoi répondre (facultatif), p. ex. accepter mais proposer jeudi",
-    "regenerate": "Régénérer"
+    "instructionPlaceholder": "Instructions pour l'IA, jamais envoyées (facultatif), p. ex. accepter mais proposer jeudi",
+    "regenerate": "Régénérer",
+    "polish": "Peaufiner",
+    "polishing": "Peaufinage…",
+    "polishTitle": "Retravaille votre brouillon selon les instructions, en gardant ses faits et son sens",
+    "polishNeedsDraft": "Écrivez d'abord quelque chose, puis peaufinez-le",
+    "polishDropsLinks": "Peaufiner travaille sur du texte brut et ferait perdre les liens et les images de ce brouillon",
+    "failed": "L'IA n'a pas pu terminer : {{error}}. Votre texte n'a pas changé.",
+    "timedOut": "L'IA a mis trop de temps à répondre. Votre texte n'a pas changé ; réessayez."
   },
   "feedback": {
     "general": {

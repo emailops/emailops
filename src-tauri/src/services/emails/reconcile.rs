@@ -251,6 +251,8 @@ mod tests {
             mailbox: "sent".to_string(),
             is_sent: true,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }

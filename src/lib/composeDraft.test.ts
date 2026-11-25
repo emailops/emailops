@@ -86,6 +86,38 @@ describe('buildSaveDraftRequest', () => {
   });
 });
 
+describe('the saved draft and the Instructions for AI', () => {
+  it('writes only the message, never instructions a composer holds beside it', () => {
+    // A composer's state may grow; the save request names its fields one by
+    // one, so the instructions (kept apart from the body) never reach it.
+    const composer = {
+      ...base,
+      toAddresses: ['a@example.com'],
+      subject: 'Plan',
+      plainBody: 'Body',
+      bodyHtml: '<p>Body</p>',
+      attachments: [],
+      aiInstructions: 'SECRET-STEER make it short',
+    } as ComposeDraftState;
+    const req = buildSaveDraftRequest(composer);
+    expect(Object.keys(req).sort()).toEqual(
+      [
+        'id',
+        'accountId',
+        'toAddresses',
+        'ccAddresses',
+        'bccAddresses',
+        'subject',
+        'body',
+        'bodyHtml',
+        'attachments',
+      ].sort(),
+    );
+    expect(JSON.stringify(req)).not.toContain('SECRET-STEER');
+    expect(savedDraftContent(composer)).not.toContain('SECRET-STEER');
+  });
+});
+
 describe('createDraftAutosaver', () => {
   const withBody = (plainBody: string): ComposeDraftState => ({ ...base, subject: 'Hi', plainBody });
 

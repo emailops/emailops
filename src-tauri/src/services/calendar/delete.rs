@@ -29,6 +29,14 @@ impl DeleteScope {
     }
 }
 
+/// Only the organizer can cancel a meeting for everyone (Graph refuses
+/// `/cancel` from an invitee). Deleting a meeting I was invited to only takes
+/// it off my calendar. An event with no organizer is mine.
+fn notify_on_delete(requested: bool, organizer: &str, me: &str) -> bool {
+    let organizer = organizer.trim();
+    requested && (organizer.is_empty() || organizer.eq_ignore_ascii_case(me.trim()))
+}
+
 #[allow(clippy::too_many_arguments)] // one argument per provider call parameter
 pub async fn delete_calendar_event(
     db: &Database,
@@ -43,6 +51,9 @@ pub async fn delete_calendar_event(
     let event = db
         .get_calendar_event_by_provider_id(account_id, calendar_id, provider_event_id)?
         .ok_or_else(|| AppError::NotFound(format!("calendar event '{provider_event_id}' not found")))?;
+    let me = db.get_account(account_id)?.map(|a| a.email).unwrap_or_default();
+    let notify_attendees = notify_on_delete(notify_attendees, &event.organizer, &me);
+    let cancellation_message = if notify_attendees { cancellation_message } else { "" };
 
     match (scope, event.recurring_event_id.as_deref()) {
         // Non-recurring events: every scope collapses to a plain delete.
@@ -150,6 +161,53 @@ mod tests {
             )]
         );
         assert!(db.list_calendar_events("acc1", 0, 10_000).expect("list").is_empty());
+    }
+
+    #[test]
+    fn only_my_meetings_notify_on_delete() {
+        let me = "me@example.com";
+        let cases = [
+            (true, "", true),
+            (true, "Me@Example.com", true),
+            (true, "lead@example.com", false),
+            (false, "me@example.com", false),
+        ];
+        for (requested, organizer, expected) in cases {
+            assert_eq!(
+                notify_on_delete(requested, organizer, me),
+                expected,
+                "requested={requested} organizer={organizer:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_a_meeting_i_was_invited_to_never_notifies() {
+        let db = Database::new_for_testing().expect("test db");
+        db.seed_test_account("acc1");
+        let mut invite = base_event("ev1", 1_000);
+        invite.organizer = "lead@example.com".to_string();
+        db.upsert_calendar_events(&[invite]).expect("seed event");
+        let provider = FakeCalendarProvider::with_events(vec![]);
+
+        delete_calendar_event(
+            &db,
+            "acc1",
+            &provider,
+            "primary",
+            "ev1",
+            DeleteScope::Instance,
+            true,
+            "See you",
+        )
+        .await
+        .expect("delete");
+
+        let deleted = provider.deleted.lock().expect("lock");
+        assert_eq!(
+            *deleted,
+            vec![("primary".to_string(), "ev1".to_string(), false, String::new())]
+        );
     }
 
     #[tokio::test]

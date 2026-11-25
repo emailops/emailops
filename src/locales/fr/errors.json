@@ -76,6 +76,7 @@
     "no_archive_folder": "Ce compte n’a pas de dossier d’archives. Créez un dossier nommé « Archive » pour archiver vos e-mails.",
     "outbox_not_pending": "Ce message est déjà en cours d’envoi et ne peut plus être modifié.",
     "no_spam_folder": "Ce compte n’a pas de dossier de courrier indésirable où classer les spams.",
+    "expunge_not_safe": "Ce serveur de messagerie ne peut supprimer définitivement que tous les messages marqués pour suppression dans le dossier à la fois, et d’autres y sont marqués. Rien n’a été supprimé.",
     "file_not_downloaded": "« {{filename}} » est encore dans iCloud (ou un autre dossier cloud) et ne s’est pas téléchargé à temps. Téléchargez-le dans le Finder et réessayez.",
     "data_move_env_override": "Le dossier de données est fixé par EMAILOPS_DATA_DIR. Supprimez cette variable pour choisir un dossier dans l’application.",
     "data_move_same_folder": "EmailOps conserve déjà ses données à cet endroit.",
