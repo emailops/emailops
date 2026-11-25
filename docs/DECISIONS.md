@@ -4962,3 +4962,17 @@ gone. *Emptying the whole server folder, including mail EmailOps never synced* �
 the user confirms would not be the set that goes. *A plain `EXPUNGE` whenever UIDPLUS is
 missing* — it removes every `\Deleted` message of the folder, including ones the user
 never selected.
+
+## 2026-11-25 — Polish is not offered on a draft with links or images
+
+**Decision:** The composer's **Polish** action is disabled while the text the user wrote
+(signature left out) holds a link or an image, and its tooltip says why. Bold, italics and
+lists are still flattened to plain text by Polish; that loss is accepted.
+**Context:** Polish (#275) sends the model the draft as plain text and puts the model's
+plain-text answer in its place, so a link or an image in the draft would be dropped without
+the user choosing it. Generate already returned plain text, but Polish works on what the user
+wrote.
+**Rejected:** Leaving Polish on and documenting that it drops formatting — content the user
+added would disappear on one click. Making Polish keep the HTML — the most complete answer but
+much more work (markup through a small local model, sanitizing what comes back); it can be
+its own issue later.

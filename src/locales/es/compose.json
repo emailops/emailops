@@ -90,6 +90,7 @@
     "polishing": "Puliendo…",
     "polishTitle": "Edita tu borrador como dicen las instrucciones, manteniendo sus datos y su sentido",
     "polishNeedsDraft": "Escribe algo primero y luego púlelo",
+    "polishDropsLinks": "Pulir trabaja con texto plano y perdería los enlaces y las imágenes de este borrador",
     "failed": "La IA no pudo terminar: {{error}}. Tu texto no ha cambiado.",
     "timedOut": "La IA ha tardado demasiado en responder. Tu texto no ha cambiado; vuelve a intentarlo."
   },

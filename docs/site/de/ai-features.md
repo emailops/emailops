@@ -278,7 +278,8 @@ schreibt ihn erneut.
 und nie mit dem Entwurf gespeichert. **Mit KI erzeugen** schreibt die E-Mail nach diesen
 Anweisungen; in einer neuen E-Mail dient der bereits geschriebene Text als Hintergrund.
 **Überarbeiten** bearbeitet Ihren Text nach den Anweisungen und behält seine Fakten und seinen
-Sinn. Während die KI arbeitet, sind der Text und **Senden** gesperrt; schlägt sie fehl oder
+Sinn. Es arbeitet mit reinem Text und wird daher nicht angeboten, solange der Text einen Link
+oder ein Bild enthält. Während die KI arbeitet, sind der Text und **Senden** gesperrt; schlägt sie fehl oder
 braucht sie länger als zwei Minuten, bleibt Ihr Text, wie er war. Zu lange Anweisungen oder
 Texte werden mit der Angabe abgelehnt, um wie viel sie zu kürzen sind, nie abgeschnitten.
 

@@ -106,6 +106,14 @@ describe('AiInstructionBar', () => {
     expect(onPolish).not.toHaveBeenCalled();
   });
 
+  it('does not polish a draft with links or images, which plain text would drop, and says so', () => {
+    const { onPolish, polish } = render({ hasDraft: true, draftHasLinksOrImages: true });
+    expect(polish.disabled).toBe(true);
+    expect(polish.title).toBe('compose:aiDraft.polishDropsLinks');
+    act(() => polish.click());
+    expect(onPolish).not.toHaveBeenCalled();
+  });
+
   it('does not generate when the composer lacks what a draft needs, and says what', () => {
     const { onGenerate, input, button } = render({ canGenerate: false, generateTitle: 'needs a subject' });
     expect(button.disabled).toBe(true);

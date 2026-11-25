@@ -30,7 +30,12 @@ import {
 } from '@/lib/composeDraft';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
-import { AI_DRAFT_TIMEOUT_MS, createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
+import {
+  AI_DRAFT_TIMEOUT_MS,
+  createDraftRequestTracker,
+  type DraftOutcome,
+  draftHasLinksOrImages,
+} from '@/lib/draftRequest';
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
@@ -676,6 +681,7 @@ export function ComposeTabView({ tab, accounts, onClose, ref, isActive = true }:
             onPolish={handlePolishWithAI}
             isGenerating={isGeneratingDraft}
             hasDraft={typedBody.length > 0}
+            draftHasLinksOrImages={draftHasLinksOrImages(bodyHtml)}
             canGenerate={canDraftWithAi && !isSending && !sent}
             generateTitle={t('compose:aiDraft.newTitle')}
             error={aiError}

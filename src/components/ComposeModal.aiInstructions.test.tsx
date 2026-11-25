@@ -148,6 +148,12 @@ describe('ComposeModal Instructions for AI', () => {
     expect(body().value).not.toContain('Hi Bob, the numbers are ready.');
   });
 
+  it('does not offer Polish on a body with a link, which it would drop', async () => {
+    await composed();
+    await type(body(), '<p>See <a href="https://example.com/report">the report</a></p>');
+    expect(polish().disabled).toBe(true);
+  });
+
   it('never saves the instructions with the draft nor sends them', async () => {
     await composed();
     await act(async () => {

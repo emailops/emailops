@@ -90,6 +90,7 @@
     "polishing": "Peaufinage…",
     "polishTitle": "Retravaille votre brouillon selon les instructions, en gardant ses faits et son sens",
     "polishNeedsDraft": "Écrivez d'abord quelque chose, puis peaufinez-le",
+    "polishDropsLinks": "Peaufiner travaille sur du texte brut et ferait perdre les liens et les images de ce brouillon",
     "failed": "L'IA n'a pas pu terminer : {{error}}. Votre texte n'a pas changé.",
     "timedOut": "L'IA a mis trop de temps à répondre. Votre texte n'a pas changé ; réessayez."
   },

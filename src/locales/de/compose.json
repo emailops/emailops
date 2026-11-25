@@ -90,6 +90,7 @@
     "polishing": "Wird überarbeitet…",
     "polishTitle": "Überarbeitet deinen Entwurf nach den Anweisungen und behält seine Fakten und seinen Sinn",
     "polishNeedsDraft": "Schreib zuerst etwas und überarbeite es dann",
+    "polishDropsLinks": "Überarbeiten arbeitet mit reinem Text und würde die Links und Bilder dieses Entwurfs verlieren",
     "failed": "Die KI konnte nicht fertig werden: {{error}}. Dein Text ist unverändert.",
     "timedOut": "Die KI hat zu lange gebraucht. Dein Text ist unverändert; versuch es noch einmal."
   },

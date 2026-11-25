@@ -15,6 +15,9 @@ interface AiInstructionBarProps {
   /** The composer holds what a draft needs (a new email: recipients and a
    *  subject). Default true. */
   canGenerate?: boolean;
+  /** The draft holds links or images, which Polish (plain text in, plain
+   *  text out) would drop: Polish is not offered. Default false. */
+  draftHasLinksOrImages?: boolean;
   /** Tooltip of the Generate button: what it uses, and needs. */
   generateTitle?: string;
   /** Why the last request failed, shown under the bar. */
@@ -33,6 +36,7 @@ export function AiInstructionBar({
   isGenerating,
   hasDraft,
   canGenerate = true,
+  draftHasLinksOrImages = false,
   generateTitle,
   error,
 }: AiInstructionBarProps) {
@@ -46,8 +50,9 @@ export function AiInstructionBar({
     setRunning('generate');
     onGenerate(instruction.trim());
   };
+  const canPolish = hasDraft && !draftHasLinksOrImages;
   const polish = () => {
-    if (isGenerating || !hasDraft) return;
+    if (isGenerating || !canPolish) return;
     setRunning('polish');
     onPolish(instruction.trim());
   };
@@ -91,8 +96,14 @@ export function AiInstructionBar({
         <button
           type="button"
           onClick={polish}
-          disabled={isGenerating || !hasDraft}
-          title={hasDraft ? t('compose:aiDraft.polishTitle') : t('compose:aiDraft.polishNeedsDraft')}
+          disabled={isGenerating || !canPolish}
+          title={
+            !hasDraft
+              ? t('compose:aiDraft.polishNeedsDraft')
+              : draftHasLinksOrImages
+                ? t('compose:aiDraft.polishDropsLinks')
+                : t('compose:aiDraft.polishTitle')
+          }
           data-testid="ai-polish"
           className={`${buttonClass} border border-purple-300 bg-white text-purple-700 hover:bg-purple-50`}
         >

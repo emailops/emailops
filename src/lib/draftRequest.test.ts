@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DraftFailedEvent, DraftGeneratedEvent } from '@/lib/api';
-import { createDraftRequestTracker, type EventOutcome } from './draftRequest';
+import { createDraftRequestTracker, draftHasLinksOrImages, type EventOutcome } from './draftRequest';
+import { SIGNATURE_ATTR } from './signature';
 
 function generated(requestId: string): EventOutcome {
   return { kind: 'generated', event: { requestId, emailId: '', body: 'hi', sources: [] } as DraftGeneratedEvent };
@@ -95,5 +96,23 @@ describe('createDraftRequestTracker', () => {
     expect(tracker.expire(first)).toBeNull();
     const outcome = generated('r2');
     expect(tracker.accept(outcome)).toBe(outcome);
+  });
+});
+
+describe('draftHasLinksOrImages', () => {
+  it.each([
+    ['a link', '<p>See <a href="https://example.com/report">the report</a></p>'],
+    ['an image', '<p>Chart:</p><p><img src="data:image/png;base64,AAAA" alt=""></p>'],
+  ])('finds %s in the text the user wrote', (_, html) => {
+    expect(draftHasLinksOrImages(html)).toBe(true);
+  });
+
+  it('passes plain or styled text', () => {
+    expect(draftHasLinksOrImages('<p>Thanks, <strong>Thursday</strong> works.</p><ul><li>one</li></ul>')).toBe(false);
+  });
+
+  it('ignores the signature, which Polish leaves out', () => {
+    const signature = `<div ${SIGNATURE_ATTR}=""><p><a href="https://example.com">example.com</a> <img src="data:image/png;base64,AAAA"></p></div>`;
+    expect(draftHasLinksOrImages(`<p>Thanks, Thursday works.</p>${signature}`)).toBe(false);
   });
 });

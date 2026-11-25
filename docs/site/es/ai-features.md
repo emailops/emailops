@@ -272,7 +272,8 @@ Encima del texto de un correo nuevo, una respuesta o una respuesta a todos, la c
 **Instrucciones para la IA** le dice a la IA lo que quieres: lo que escribes ahí nunca se envía
 ni se guarda con el borrador. **Generar con IA** escribe el correo a partir de ellas; en un
 correo nuevo, el texto que ya hayas escrito le sirve de contexto. **Pulir** edita tu texto como
-dicen las instrucciones y mantiene sus datos y su sentido. Mientras la IA trabaja, el texto y
+dicen las instrucciones y mantiene sus datos y su sentido. Trabaja con texto plano, así que no se
+ofrece mientras el texto tenga un enlace o una imagen. Mientras la IA trabaja, el texto y
 **Enviar** quedan bloqueados; si falla o tarda más de dos minutos, tu texto queda como estaba.
 Unas instrucciones o un texto demasiado largos para la IA se rechazan indicando cuánto
 acortarlos, nunca se recortan.

@@ -100,6 +100,15 @@ describe('ReplyCompose Instructions for AI', () => {
     expect(onPolishDraft).toHaveBeenCalledWith(STEER, 'Hi Alice, thursday works.');
   });
 
+  it('does not offer Polish on a reply with a link, which it would drop', async () => {
+    await written();
+    await setValue(
+      q<HTMLTextAreaElement>('[data-testid="body"]'),
+      '<p>See <a href="https://example.com/report">the report</a></p>',
+    );
+    expect(q<HTMLButtonElement>('[data-testid="ai-polish"]').disabled).toBe(true);
+  });
+
   it('shows why the last AI request failed', async () => {
     await written({ draftError: 'The AI took too long' });
     expect(container.textContent).toContain('The AI took too long');

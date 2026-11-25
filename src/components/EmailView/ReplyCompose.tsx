@@ -26,6 +26,7 @@ import {
 } from '@/lib/composeDraft';
 import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
+import { draftHasLinksOrImages } from '@/lib/draftRequest';
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
@@ -829,6 +830,7 @@ export function ReplyCompose({
           onPolish={(instructions) => onPolishDraft?.(instructions, typedText(bodyHtml))}
           isGenerating={isLoadingDraft}
           hasDraft={typedText(bodyHtml).length > 0}
+          draftHasLinksOrImages={draftHasLinksOrImages(bodyHtml)}
           error={draftError}
         />
       )}

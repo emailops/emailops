@@ -122,6 +122,11 @@ describe('ComposeTabView Instructions for AI', () => {
     expect(api.polishDraft).toHaveBeenCalledWith('a1', 'reply', 'Hi Bob, the numbers are ready.', STEER);
   });
 
+  it('does not offer Polish on a body with a link, which it would drop', async () => {
+    await mountWithInstructions({ ...tab, bodyHtml: '<p>See <a href="https://example.com/report">the report</a></p>' });
+    expect(q<HTMLButtonElement>('[data-testid="ai-polish"]').disabled).toBe(true);
+  });
+
   it('never saves the instructions with the draft nor sends them', async () => {
     await mountWithInstructions();
     // An edit, so the tab saves.
