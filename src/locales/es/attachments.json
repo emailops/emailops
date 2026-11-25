@@ -104,7 +104,9 @@
     "applyDoneNew_one": "{{count}} nuevo",
     "applyDoneNew_other": "{{count}} nuevos",
     "applyDoneNew_many": "{{count}} nuevos",
-    "accountHeader": "Cuenta: {{email}}"
+    "accountHeader": "Cuenta: {{email}}",
+    "allAccountsHeader": "Todas las cuentas",
+    "account": "Cuenta"
   },
   "suggestions": {
     "title": "Reglas sugeridas",

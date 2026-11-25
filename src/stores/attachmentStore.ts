@@ -3,6 +3,7 @@ import * as api from '@/lib/api';
 import { sameTag } from '@/lib/attachmentTags';
 import { errorText } from '@/lib/errors';
 import type { Attachment, AttachmentRule, AttachmentRuleSuggestion } from '@/types';
+import { toQueryAccountId } from './accountStore';
 
 const PAGE_SIZE = 50;
 
@@ -28,13 +29,14 @@ export interface RuleApplyProgress {
 }
 
 interface AttachmentStore {
-  // Rules of the account in `rulesAccountId` (the rules modal works on one account).
+  // Rules of the account in `rulesAccountId`, or of every enabled account when
+  // it is ALL_ACCOUNTS_ID ("All accounts"). Each rule carries its account.
   rules: AttachmentRule[];
   rulesAccountId: string | null;
   isLoadingRules: boolean;
 
   // Candidate rules mined from recurring document attachments, for the
-  // account in `suggestionsAccountId`.
+  // account in `suggestionsAccountId` (ALL_ACCOUNTS_ID: every enabled one).
   suggestions: AttachmentRuleSuggestion[];
   suggestionsAccountId: string | null;
   /** A re-mine is running (the modal says it is looking). */
@@ -74,6 +76,8 @@ interface AttachmentStore {
   currentFetchId: number;
 
   // Rule actions
+  // Rule and suggestion loads take an account id or ALL_ACCOUNTS_ID; the
+  // actions on one rule or suggestion take its own account.
   fetchRules: (accountId: string) => Promise<void>;
   createRule: (
     accountId: string,
@@ -161,7 +165,7 @@ async function loadSuggestions(
   set: (partial: Partial<AttachmentStore>) => void,
   get: () => AttachmentStore,
   accountId: string,
-  load: (accountId: string) => Promise<AttachmentRuleSuggestion[]>,
+  load: (accountId: string | null) => Promise<AttachmentRuleSuggestion[]>,
 ) {
   const loadId = ++suggestionsLoadId;
   // Another account's suggestions must not linger (badge, Review) while
@@ -171,7 +175,7 @@ async function loadSuggestions(
   }
   set({ suggestionsLoading: true });
   try {
-    const suggestions = await load(accountId);
+    const suggestions = await load(toQueryAccountId(accountId));
     if (loadId === suggestionsLoadId) {
       set({
         suggestions: suggestions.filter((s) => !resolvedSuggestionIds.has(s.id)),
@@ -247,7 +251,7 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
     if (get().rulesAccountId !== accountId) set({ rules: [], rulesAccountId: accountId });
     set({ isLoadingRules: true });
     try {
-      const rules = await api.listAttachmentRules(accountId);
+      const rules = await api.listAttachmentRules(toQueryAccountId(accountId));
       if (loadId === rulesLoadId) set({ rules });
     } catch (error) {
       if (loadId === rulesLoadId) set({ error: errorText(error) });
@@ -312,7 +316,7 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
 
   fetchDismissedSuggestions: async (accountId) => {
     try {
-      const dismissed = await api.listDismissedAttachmentRuleSuggestions(accountId);
+      const dismissed = await api.listDismissedAttachmentRuleSuggestions(toQueryAccountId(accountId));
       if (get().suggestionsAccountId === accountId || get().suggestionsAccountId === null) {
         set({ dismissedSuggestions: dismissed });
       }
@@ -331,11 +335,15 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       throw error;
     }
     resolvedSuggestionIds.delete(suggestionId);
-    // The restore re-mined: this list is newer than any load in flight.
+    // The restore re-mined `accountId`: its list is newer than any load in
+    // flight. In "All accounts" the other accounts' suggestions stay.
     suggestionsLoadId++;
     set((state) => ({
-      suggestions: pending.filter((s) => !resolvedSuggestionIds.has(s.id)),
-      suggestionsAccountId: accountId,
+      suggestions: [
+        ...state.suggestions.filter((s) => s.accountId !== accountId),
+        ...pending.filter((s) => !resolvedSuggestionIds.has(s.id)),
+      ],
+      suggestionsAccountId: state.suggestionsAccountId ?? accountId,
       suggestionsLoading: false,
       dismissedSuggestions: withoutSuggestion(state.dismissedSuggestions, suggestionId),
     }));

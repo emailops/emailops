@@ -998,28 +998,34 @@ export async function deleteAttachmentRule(ruleId: string, accountId: string): P
   return invoke('delete_attachment_rule', { ruleId, accountId });
 }
 
-export async function listAttachmentRules(accountId: string): Promise<AttachmentRule[]> {
-  return invoke('list_attachment_rules', { accountId });
+/** `accountId` null = every enabled account ("All accounts"). */
+export async function listAttachmentRules(accountId: string | null): Promise<AttachmentRule[]> {
+  return invoke('list_attachment_rules', { accountId: accountId ?? undefined });
 }
 
 export async function countAttachmentsForRule(accountId: string, ruleId: string): Promise<number> {
   return invoke('count_attachments_for_rule', { accountId, ruleId });
 }
 
-export async function listAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
-  return invoke('list_attachment_rule_suggestions', { accountId });
+/** `accountId` null = every enabled account ("All accounts"). */
+export async function listAttachmentRuleSuggestions(accountId: string | null): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('list_attachment_rule_suggestions', { accountId: accountId ?? undefined });
 }
 
-export async function refreshAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
-  return invoke('refresh_attachment_rule_suggestions', { accountId });
+/** `accountId` null = every enabled account ("All accounts"). */
+export async function refreshAttachmentRuleSuggestions(accountId: string | null): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('refresh_attachment_rule_suggestions', { accountId: accountId ?? undefined });
 }
 
 export async function dismissAttachmentRuleSuggestion(accountId: string, suggestionId: string): Promise<void> {
   return invoke('dismiss_attachment_rule_suggestion', { accountId, suggestionId });
 }
 
-export async function listDismissedAttachmentRuleSuggestions(accountId: string): Promise<AttachmentRuleSuggestion[]> {
-  return invoke('list_dismissed_attachment_rule_suggestions', { accountId });
+/** `accountId` null = every enabled account ("All accounts"). */
+export async function listDismissedAttachmentRuleSuggestions(
+  accountId: string | null,
+): Promise<AttachmentRuleSuggestion[]> {
+  return invoke('list_dismissed_attachment_rule_suggestions', { accountId: accountId ?? undefined });
 }
 
 /** Undo a dismissal; resolves to the pending suggestions after re-mining. */

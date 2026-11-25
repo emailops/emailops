@@ -277,10 +277,12 @@ from colleagues at your own company, is never suggested.
 With **All accounts** selected in the sidebar, the view lists the attachments of every enabled
 account in one list, and each row names its account. **Select all** marks every attachment of the
 current filter, not only the rows loaded so far. When the files you download come from more than
-one account, each file name starts with its account's address. Rules stay per account: **Manage
-Rules** works on the first enabled account, and **Create attachment rule** in an email's menu
-creates the rule in that email's account. Tags are shared by all accounts: a rule's tag field
-offers the tags of every account. To collect the invoices you send, create the rule in the sending
+one account, each file name starts with its account's address. Each rule belongs to one account
+and collects that account's mail. With **All accounts** selected, **Manage Rules** lists the rules
+and suggestions of every enabled account, each with its account, and a new rule goes to the
+account you pick: the email's account when you open it from **Create attachment rule** in an
+email's menu, otherwise the first enabled account. Tags are shared by all accounts: a rule's tag
+field offers the tags of every account. To collect the invoices you send, create the rule in the sending
 account with your own address as the sender and a filename pattern such as `*invoice*`.
 
 ## EO Docs {#eo-docs}

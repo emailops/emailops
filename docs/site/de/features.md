@@ -303,10 +303,12 @@ Kollegen Ihres eigenen Unternehmens werden nie vorgeschlagen.
 Ist in der Seitenleiste **Alle Konten** ausgewählt, zeigt die Ansicht die Anhänge aller aktivierten
 Konten in einer Liste, und jede Zeile nennt ihr Konto. **Alle auswählen** markiert alle Anhänge des
 aktuellen Filters, nicht nur die bereits geladenen Zeilen. Stammen die heruntergeladenen Dateien aus
-mehreren Konten, beginnt jeder Dateiname mit der Adresse seines Kontos. Regeln gelten weiterhin pro
-Konto: **Regeln verwalten** arbeitet mit dem ersten aktivierten Konto, und **Anhang-Regel
-erstellen** im Menü einer E-Mail legt die Regel im Konto dieser E-Mail an. Tags gelten für alle
-Konten: Das Tag-Feld einer Regel bietet die Tags aller Konten an. Um die Rechnungen zu sammeln, die
+mehreren Konten, beginnt jeder Dateiname mit der Adresse seines Kontos. Jede Regel gehört zu einem
+Konto und sammelt dessen E-Mails. Ist **Alle Konten** ausgewählt, zeigt **Regeln verwalten** die
+Regeln und Vorschläge aller aktivierten Konten, jeweils mit ihrem Konto, und eine neue Regel kommt
+in das Konto, das Sie wählen: das Konto der E-Mail, wenn Sie sie über **Anhang-Regel erstellen** im
+Menü einer E-Mail öffnen, sonst das erste aktivierte Konto. Tags gelten für alle Konten: Das
+Tag-Feld einer Regel bietet die Tags aller Konten an. Um die Rechnungen zu sammeln, die
 Sie verschicken, legen Sie die Regel im sendenden Konto an, mit Ihrer eigenen Adresse als Absender
 und einem Dateinamenmuster wie `*Rechnung*`.
 

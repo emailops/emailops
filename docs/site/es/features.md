@@ -293,11 +293,12 @@ compañeros de tu propia empresa.
 Con **Todas las cuentas** seleccionado en la barra lateral, la vista reúne en una sola lista los
 adjuntos de todas las cuentas habilitadas, y cada fila indica su cuenta. **Seleccionar todo** marca
 todos los adjuntos del filtro actual, no solo las filas ya cargadas. Si los archivos que descargas
-son de más de una cuenta, cada nombre de archivo empieza por la dirección de su cuenta. Las reglas
-siguen siendo de cada cuenta: **Gestionar reglas** trabaja sobre la primera cuenta habilitada, y
-**Crear regla de adjunto** en el menú de un correo crea la regla en la cuenta de ese correo. Las
-etiquetas son comunes a todas las cuentas: el campo de etiquetas de una regla ofrece las de todas
-las cuentas. Para recoger las facturas que envías, crea la regla en la cuenta que las envía, con tu
+son de más de una cuenta, cada nombre de archivo empieza por la dirección de su cuenta. Cada regla
+es de una cuenta y recoge el correo de esa cuenta. Con **Todas las cuentas** seleccionado,
+**Gestionar reglas** muestra las reglas y sugerencias de todas las cuentas habilitadas, cada una con
+su cuenta, y una regla nueva va a la cuenta que elijas: la del correo si la abres desde **Crear
+regla de adjunto** en el menú de un correo, y si no la primera cuenta habilitada. Las etiquetas son
+comunes a todas las cuentas: el campo de etiquetas de una regla ofrece las de todas las cuentas. Para recoger las facturas que envías, crea la regla en la cuenta que las envía, con tu
 propia dirección como remitente y un patrón de nombre de archivo como `*factura*`.
 
 ## EO Docs {#eo-docs}

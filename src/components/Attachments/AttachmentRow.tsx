@@ -1,5 +1,6 @@
 import { useFormatters } from '@/hooks/useFormatters';
 import type { Attachment } from '@/types';
+import { AccountChip } from './AccountChip';
 
 /** Account of the row in "All accounts": its colour dot and address. */
 export interface AttachmentAccountBadge {
@@ -95,17 +96,11 @@ export function AttachmentRow({
         {/* Line 2: account (All accounts only)  file size  tags */}
         <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
           {accountBadge && (
-            <span
-              data-testid="attachment-account-chip"
-              className="inline-flex items-center gap-1 flex-shrink min-w-0 max-w-[50%] rounded-full px-1.5 text-[10px] bg-gray-100 text-gray-700"
-              title={accountBadge.label}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountBadge.colorClass}`}
-                aria-hidden="true"
-              />
-              <span className="truncate">{accountBadge.label}</span>
-            </span>
+            <AccountChip
+              label={accountBadge.label}
+              colorClass={accountBadge.colorClass}
+              testId="attachment-account-chip"
+            />
           )}
           <span className="text-[11px] text-gray-400">{formatFileSize(attachment.fileSize)}</span>
           {attachment.tags.map((tag) => (

@@ -13,6 +13,21 @@ const ATTACHMENT_EVENTS_SETTLE_MS = 500;
 const NO_RULES: AttachmentRule[] = [];
 const NO_SUGGESTIONS: AttachmentRuleSuggestion[] = [];
 
+// Each rule and suggestion is changed in its own account, read from the store
+// when the action runs.
+function accountOfRule(ruleId: string): string {
+  const rule = useAttachmentStore.getState().rules.find((r) => r.id === ruleId);
+  if (!rule) throw new Error(`Unknown attachment rule ${ruleId}`);
+  return rule.accountId;
+}
+
+function accountOfSuggestion(suggestionId: string): string {
+  const { suggestions, dismissedSuggestions } = useAttachmentStore.getState();
+  const suggestion = [...suggestions, ...dismissedSuggestions].find((s) => s.id === suggestionId);
+  if (!suggestion) throw new Error(`Unknown suggested attachment rule ${suggestionId}`);
+  return suggestion.accountId;
+}
+
 export function useAttachments() {
   // The list reads one account, or every enabled account in unified ("All
   // accounts") mode, where `toQueryAccountId` sends null. Nothing is read
@@ -32,11 +47,14 @@ export function useAttachments() {
         ? `all:${enabledIds.join(',')}`
         : `account:${activeAccountId}`;
 
-  // Rules and suggestions stay per account. The rules modal works on the
-  // account of the email it was opened from, else on the effective account
-  // (the first enabled one in unified mode), whose suggestions the badge counts.
+  // Rules and their suggestions belong to one account. In unified mode the
+  // rules modal lists those of every enabled account (ALL_ACCOUNTS_ID) and the
+  // badge counts all their suggestions; with one account selected, that
+  // account's, or those of the account of the email the modal was opened
+  // from. A new rule goes to that email's account, else to the effective one.
   const [ruleAccountFromEmail, setRuleAccountFromEmail] = useState<string | null>(null);
-  const rulesAccountId = ruleAccountFromEmail ?? effectiveAccountId;
+  const rulesAccountId = isUnified ? activeAccountId : (ruleAccountFromEmail ?? effectiveAccountId);
+  const newRuleAccountId = ruleAccountFromEmail ?? effectiveAccountId;
   const addLog = useLogStore((s) => s.addLog);
 
   const {
@@ -128,14 +146,16 @@ export function useAttachments() {
   // mail; reload them so the badge reflects the new candidates.
   useEffect(() => {
     if (!rulesAccountId) return;
+    // The payload is the re-mined account.
+    const covers = (accountId: string) => (isUnified ? enabledIds.includes(accountId) : accountId === rulesAccountId);
     const unlisten = listen<string>('attachment-rule-suggestions-updated', (event) => {
-      if (event.payload && event.payload !== rulesAccountId) return;
+      if (event.payload && !covers(event.payload)) return;
       loadSuggestionsLogged(rulesAccountId, fetchSuggestions);
     });
     return () => {
       void unlisten.then((u) => u());
     };
-  }, [rulesAccountId, fetchSuggestions, loadSuggestionsLogged]);
+  }, [rulesAccountId, isUnified, enabledIds, fetchSuggestions, loadSuggestionsLogged]);
 
   // Load the tag chips when the scope changes.
   useEffect(() => {
@@ -169,6 +189,7 @@ export function useAttachments() {
 
   const handleCreateRule = useCallback(
     async (
+      accountId: string,
       name: string,
       senderEmailPattern: string | null,
       subjectPattern: string | null,
@@ -176,7 +197,7 @@ export function useAttachments() {
       tags: string[],
     ): Promise<AttachmentRule> => {
       if (!rulesAccountId) throw new Error('No active account');
-      const rule = await createRule(rulesAccountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags);
+      const rule = await createRule(accountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags);
       addLog('success', 'attachments', `Created rule: ${name}`);
       // A suggestion the new rule covers must leave the list.
       loadSuggestionsLogged(rulesAccountId, refreshSuggestions);
@@ -197,7 +218,7 @@ export function useAttachments() {
     ): Promise<AttachmentRule> => {
       if (!rulesAccountId) throw new Error('No account is selected');
       const rule = await updateRule(
-        rulesAccountId,
+        accountOfRule(ruleId),
         ruleId,
         name,
         senderEmailPattern,
@@ -220,7 +241,7 @@ export function useAttachments() {
   const handleDeleteRule = useCallback(
     async (ruleId: string) => {
       if (!rulesAccountId) return;
-      await deleteRule(ruleId, rulesAccountId);
+      await deleteRule(ruleId, accountOfRule(ruleId));
       addLog('success', 'attachments', 'Rule deleted');
       // Refresh attachments and tags since deletions may have occurred, and
       // suggestions since the deleted rule's documents may be candidates again.
@@ -262,7 +283,7 @@ export function useAttachments() {
     async (suggestionId: string) => {
       if (!rulesAccountId) return;
       try {
-        await restoreSuggestion(rulesAccountId, suggestionId);
+        await restoreSuggestion(accountOfSuggestion(suggestionId), suggestionId);
       } catch (err) {
         addLog('error', 'attachments', `Failed to restore suggested attachment rule: ${errorText(err)}`);
         throw err;
@@ -277,7 +298,7 @@ export function useAttachments() {
     async (suggestionId: string) => {
       if (!rulesAccountId) return;
       try {
-        await dismissSuggestion(rulesAccountId, suggestionId);
+        await dismissSuggestion(accountOfSuggestion(suggestionId), suggestionId);
       } catch (err) {
         addLog('error', 'attachments', `Failed to dismiss suggested attachment rule: ${errorText(err)}`);
         throw err;
@@ -291,7 +312,7 @@ export function useAttachments() {
     async (suggestionId: string) => {
       if (!rulesAccountId) return;
       try {
-        await acceptSuggestion(rulesAccountId, suggestionId);
+        await acceptSuggestion(accountOfSuggestion(suggestionId), suggestionId);
       } catch (err) {
         addLog('error', 'attachments', `Failed to mark suggested attachment rule as accepted: ${errorText(err)}`);
         throw err;
@@ -310,6 +331,7 @@ export function useAttachments() {
 
   return {
     rulesAccountId,
+    newRuleAccountId,
     setRuleAccountFromEmail,
     rules: rulesReady ? rules : NO_RULES,
     isLoadingRules: isLoadingRules || !rulesReady,

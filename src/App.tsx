@@ -580,6 +580,7 @@ function AppInner() {
   const {
     rules: attachmentRules,
     rulesAccountId: attachmentRulesAccountId,
+    newRuleAccountId: attachmentNewRuleAccountId,
     setRuleAccountFromEmail: setAttachmentRuleAccountFromEmail,
     attachments,
     selectedAttachment,
@@ -612,9 +613,16 @@ function AppInner() {
   } = useAttachments();
 
   // "All accounts" mixes accounts in the attachments list: each row and the
-  // viewer name the account they belong to. The rules modal always names its
-  // account, since rules belong to one.
+  // viewer name the account they belong to. The rules modal lists the rules of
+  // every enabled account there, else those of one account.
   const accountEmailById = useMemo(() => new Map(accounts.map((a) => [a.id, a.email])), [accounts]);
+  const attachmentRuleAccounts = useMemo(
+    () =>
+      accounts
+        .filter((a) => (isUnified ? a.enabled : a.id === attachmentRulesAccountId))
+        .map((a) => ({ id: a.id, email: a.email, colorClass: accountColorClass(accounts, a.id) })),
+    [accounts, isUnified, attachmentRulesAccountId],
+  );
   const getAttachmentAccountBadge = useMemo(() => {
     if (!isUnified) return undefined;
     return (attachment: Attachment) => ({
@@ -2152,11 +2160,11 @@ function AppInner() {
         <AddImapAccountModal onSuccess={handleImapAccountAdded} onCancel={() => setIsAddImapAccountOpen(false)} />
       )}
 
-      {isRuleModalOpen && attachmentRulesAccountId && (
+      {isRuleModalOpen && attachmentRulesAccountId && attachmentNewRuleAccountId && (
         <RuleManagementModal
           rules={attachmentRules}
-          accountId={attachmentRulesAccountId}
-          accountLabel={accountEmailById.get(attachmentRulesAccountId) ?? attachmentRulesAccountId}
+          accounts={attachmentRuleAccounts}
+          defaultAccountId={attachmentNewRuleAccountId}
           prefill={rulePrefill}
           onClose={() => {
             setIsRuleModalOpen(false);

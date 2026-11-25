@@ -1039,6 +1039,21 @@ pub fn list_rules(db: &Arc<Database>, account_id: &str) -> Result<Vec<Attachment
     db.get_all_attachment_rules(account_id)
 }
 
+/// `read` run for each account of `scope`, concatenated in account order.
+/// Rules and their suggestions belong to one account; in "All accounts" the
+/// rules modal lists those of every enabled account.
+pub fn for_each_account<T>(
+    db: &Database,
+    scope: AccountScope<'_>,
+    mut read: impl FnMut(&str) -> Result<Vec<T>>,
+) -> Result<Vec<T>> {
+    let mut all = Vec::new();
+    for account_id in scope.account_ids(db)? {
+        all.extend(read(&account_id)?);
+    }
+    Ok(all)
+}
+
 pub fn get_attachments(
     db: &Arc<Database>,
     scope: AccountScope<'_>,
@@ -3802,6 +3817,36 @@ pub(crate) mod tests {
             ..make_rule(None, None)
         })
         .expect("insert rule");
+    }
+
+    #[test]
+    fn a_scope_covers_its_one_account_or_every_enabled_account() {
+        let db = two_accounts();
+        make_account(&db, "acc-c", "imap", "c@example.com");
+        disable_account(&db, "acc-c");
+
+        assert_eq!(AccountScope::Account("acc-b").account_ids(&db).expect("ids"), ["acc-b"]);
+        let mut all = AccountScope::AllEnabled.account_ids(&db).expect("ids");
+        all.sort();
+        assert_eq!(all, ["acc-a", "acc-b"]);
+    }
+
+    #[test]
+    fn the_rules_of_every_enabled_account_are_listed_together() {
+        let db = two_accounts();
+        make_account(&db, "acc-c", "imap", "c@example.com");
+        insert_rule_with_tags(&db, "rule-a", "acc-a", &[]);
+        insert_rule_with_tags(&db, "rule-b", "acc-b", &[]);
+        insert_rule_with_tags(&db, "rule-c", "acc-c", &[]);
+        disable_account(&db, "acc-c");
+
+        let mut ids: Vec<String> = for_each_account(&db, AccountScope::AllEnabled, |id| list_rules(&db, id))
+            .expect("rules")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["rule-a", "rule-b"]);
     }
 
     #[test]

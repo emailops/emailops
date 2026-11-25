@@ -7,6 +7,8 @@ import { type RuleApplyState, useAttachmentStore } from '@/stores/attachmentStor
 import { useLogStore } from '@/stores/logStore';
 import { useOverlay } from '@/stores/overlayStore';
 import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
+import { Select } from '../shared/Select';
+import { AccountChip } from './AccountChip';
 import { RuleSuggestionList } from './RuleSuggestionList';
 import { TagPicker } from './TagPicker';
 
@@ -16,14 +18,24 @@ export interface RuleFormPrefill {
   subjectPattern: string;
 }
 
+/** An account whose rules the modal lists. */
+export interface RuleAccount {
+  id: string;
+  email: string;
+  /** Its colour dot, as in the sidebar. */
+  colorClass: string;
+}
+
 interface RuleManagementModalProps {
   rules: AttachmentRule[];
-  accountId: string;
-  /** The address of `accountId`, named in the header: rules belong to one account. */
-  accountLabel: string;
+  /** The accounts whose rules and suggestions are listed: one, or every enabled one in "All accounts". */
+  accounts: RuleAccount[];
+  /** Where a new rule goes unless the user picks another of `accounts`. */
+  defaultAccountId: string;
   prefill?: RuleFormPrefill | null;
   onClose: () => void;
   onCreateRule: (
+    accountId: string,
     name: string,
     senderEmailPattern: string | null,
     subjectPattern: string | null,
@@ -54,6 +66,8 @@ interface RuleManagementModalProps {
 }
 
 interface RuleFormState {
+  /** The account the rule belongs to; fixed once the rule exists. */
+  accountId: string;
   name: string;
   senderEmailPattern: string;
   subjectPattern: string;
@@ -62,19 +76,20 @@ interface RuleFormState {
   applyToExisting: boolean;
 }
 
-const EMPTY_FORM: RuleFormState = {
+const emptyForm = (accountId: string): RuleFormState => ({
+  accountId,
   name: '',
   senderEmailPattern: '',
   subjectPattern: '',
   filenamePattern: '',
   tags: [],
   applyToExisting: true,
-};
+});
 
 export function RuleManagementModal({
   rules,
-  accountId,
-  accountLabel,
+  accounts,
+  defaultAccountId,
   prefill,
   onClose,
   onCreateRule,
@@ -97,6 +112,16 @@ export function RuleManagementModal({
     subject: useId(),
     filename: useId(),
     tags: useId(),
+  };
+  // "All accounts" lists several accounts: each rule and suggestion names its
+  // own, and a new rule picks one.
+  const manyAccounts = accounts.length > 1;
+  const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const accountChip = (accountId: string) => {
+    const account = accountById.get(accountId);
+    return account ? (
+      <AccountChip label={account.email} colorClass={account.colorClass} testId="rule-account-chip" />
+    ) : null;
   };
 
   // Dialog behaviour: focus moves in on open and back to where it was on
@@ -122,6 +147,7 @@ export function RuleManagementModal({
   const [form, setForm] = useState<RuleFormState>(
     prefill
       ? {
+          accountId: defaultAccountId,
           name: prefill.name,
           senderEmailPattern: prefill.senderEmailPattern,
           subjectPattern: prefill.subjectPattern,
@@ -129,7 +155,7 @@ export function RuleManagementModal({
           tags: [],
           applyToExisting: true,
         }
-      : EMPTY_FORM,
+      : emptyForm(defaultAccountId),
   );
   // Set while the form holds a suggestion under review: saving the form
   // accepts it, cancelling leaves it pending.
@@ -186,7 +212,7 @@ export function RuleManagementModal({
     const runId = beginRuleApply(rule.id);
     addLog('info', 'attachments', `Scanning existing emails for rule "${rule.name}"...`);
     try {
-      await api.applyRuleRetroactively(rule.id, accountId, runId);
+      await api.applyRuleRetroactively(rule.id, rule.accountId, runId);
     } catch (err) {
       failRuleApply(rule.id, runId);
       addLog('error', 'attachments', `Failed to start applying rule "${rule.name}": ${errorText(err)}`);
@@ -203,15 +229,16 @@ export function RuleManagementModal({
   // Fetch the attachment count when a rule is armed for deletion. Done in an
   // effect (not inline) so the warning panel can show a loading state instead
   // of jumping from "no count" to "12 files" mid-render.
+  const pendingDeleteAccountId = rules.find((r) => r.id === pendingDeleteId)?.accountId;
   useEffect(() => {
-    if (!pendingDeleteId) {
+    if (!pendingDeleteId || !pendingDeleteAccountId) {
       setPendingDeleteCount(null);
       return;
     }
     let cancelled = false;
     setPendingDeleteCount(null);
     api
-      .countAttachmentsForRule(accountId, pendingDeleteId)
+      .countAttachmentsForRule(pendingDeleteAccountId, pendingDeleteId)
       .then((n) => {
         if (!cancelled) setPendingDeleteCount(n);
       })
@@ -224,10 +251,10 @@ export function RuleManagementModal({
     return () => {
       cancelled = true;
     };
-  }, [pendingDeleteId, accountId, addLog]);
+  }, [pendingDeleteId, pendingDeleteAccountId, addLog]);
 
   const resetForm = () => {
-    setForm(EMPTY_FORM);
+    setForm(emptyForm(defaultAccountId));
     setShowForm(false);
     setEditingRuleId(null);
     setReviewingSuggestionId(null);
@@ -236,6 +263,7 @@ export function RuleManagementModal({
 
   const startReviewing = (suggestion: AttachmentRuleSuggestion) => {
     setForm({
+      accountId: suggestion.accountId,
       name: suggestion.name,
       senderEmailPattern: suggestion.senderEmailPattern,
       subjectPattern: '',
@@ -272,6 +300,7 @@ export function RuleManagementModal({
 
   const startEditing = (rule: AttachmentRule) => {
     setForm({
+      accountId: rule.accountId,
       name: rule.name,
       senderEmailPattern: rule.senderEmailPattern ?? '',
       subjectPattern: rule.subjectPattern ?? '',
@@ -320,7 +349,7 @@ export function RuleManagementModal({
         // in the background, with the same progress as a new rule.
         if (updated.enabled) void runApply(updated);
       } else {
-        const newRule = await onCreateRule(trimmedName, sender, subject, filename, tags);
+        const newRule = await onCreateRule(form.accountId, trimmedName, sender, subject, filename, tags);
         if (reviewingSuggestionId) {
           // The rule exists now: a failed accept must not keep the form open
           // (saving again would create a second rule). The rule covers the
@@ -407,7 +436,9 @@ export function RuleManagementModal({
               {t('attachments:rules.modalTitle')}
             </h2>
             <p className="text-xs text-gray-500 truncate">
-              {t('attachments:rules.accountHeader', { email: accountLabel })}
+              {manyAccounts
+                ? t('attachments:rules.allAccountsHeader')
+                : t('attachments:rules.accountHeader', { email: accounts[0]?.email ?? '' })}
             </p>
           </div>
           <button
@@ -434,6 +465,21 @@ export function RuleManagementModal({
               <h3 className="text-sm font-medium text-gray-900">
                 {editingRuleId ? t('attachments:rules.editTitle') : t('attachments:rules.newTitle')}
               </h3>
+
+              {manyAccounts && (
+                <div>
+                  <span className="block text-xs font-medium text-gray-700 mb-1">{t('attachments:rules.account')}</span>
+                  <Select
+                    value={form.accountId}
+                    options={accounts.map((a) => ({ value: a.id, label: a.email }))}
+                    onChange={(accountId) => setForm({ ...form, accountId })}
+                    ariaLabel={t('attachments:rules.account')}
+                    disabled={!!editingRuleId}
+                    fullWidth
+                    testId="rule-account-select"
+                  />
+                </div>
+              )}
 
               <div>
                 <label htmlFor={ids.name} className="block text-xs font-medium text-gray-700 mb-1">
@@ -547,7 +593,7 @@ export function RuleManagementModal({
                 setShowForm(true);
                 setEditingRuleId(null);
                 setReviewingSuggestionId(null);
-                setForm(EMPTY_FORM);
+                setForm(emptyForm(defaultAccountId));
                 setError(null);
               }}
               className="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:text-gray-700 hover:border-gray-400 transition-colors flex items-center justify-center gap-2"
@@ -571,6 +617,7 @@ export function RuleManagementModal({
               onReview={startReviewing}
               onDismiss={handleDismissSuggestion}
               onRestore={handleRestoreSuggestion}
+              accountChip={manyAccounts ? accountChip : undefined}
             />
           )}
 
@@ -584,8 +631,9 @@ export function RuleManagementModal({
                   className={`border rounded-lg p-4 ${rule.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <span className="font-medium text-gray-900">{rule.name}</span>
+                      {manyAccounts && accountChip(rule.accountId)}
                       {!rule.enabled && (
                         <span className="text-xs text-gray-400">{t('attachments:rules.disabled')}</span>
                       )}

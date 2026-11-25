@@ -306,10 +306,12 @@ Avec **Tous les comptes** sélectionné dans la barre latérale, la vue réunit 
 pièces jointes de tous les comptes activés, et chaque ligne indique son compte. **Tout
 sélectionner** coche toutes les pièces jointes du filtre en cours, pas seulement les lignes déjà
 chargées. Si les fichiers que vous téléchargez viennent de plusieurs comptes, chaque nom de fichier
-commence par l'adresse de son compte. Les règles restent propres à chaque compte : **Gérer les
-règles** agit sur le premier compte activé, et **Créer une règle de pièce jointe** dans le menu
-d'un e-mail crée la règle dans le compte de cet e-mail. Les étiquettes sont communes à tous les
-comptes : le champ d'étiquettes d'une règle propose celles de tous les comptes. Pour collecter les
+commence par l'adresse de son compte. Chaque règle appartient à un compte et collecte le courrier
+de ce compte. Avec **Tous les comptes** sélectionné, **Gérer les règles** affiche les règles et
+suggestions de tous les comptes activés, chacune avec son compte, et une nouvelle règle va dans le
+compte que vous choisissez : celui de l'e-mail si vous l'ouvrez depuis **Créer une règle de pièce
+jointe** dans le menu d'un e-mail, sinon le premier compte activé. Les étiquettes sont communes à
+tous les comptes : le champ d'étiquettes d'une règle propose celles de tous les comptes. Pour collecter les
 factures que vous envoyez, créez la règle dans le compte d'envoi, avec votre propre adresse comme
 expéditeur et un motif de nom de fichier comme `*facture*`.
 

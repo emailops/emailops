@@ -24,6 +24,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { ALL_ACCOUNTS_ID } from './accountStore';
 
 function makeSuggestion(id: string, overrides: Partial<AttachmentRuleSuggestion> = {}): AttachmentRuleSuggestion {
   return {
@@ -159,6 +160,22 @@ describe('dismissed suggestions', () => {
     expect(api.restoreAttachmentRuleSuggestion).toHaveBeenCalledWith('acc-1', 'd3');
     expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['d3']);
     expect(useAttachmentStore.getState().dismissedSuggestions).toEqual([]);
+  });
+
+  it("restoring in All accounts keeps the other accounts' suggestions", async () => {
+    useAttachmentStore.setState({
+      suggestions: [makeSuggestion('a1'), makeSuggestion('b1', { accountId: 'acc-2' })],
+      suggestionsAccountId: ALL_ACCOUNTS_ID,
+    });
+    vi.mocked(api.restoreAttachmentRuleSuggestion).mockResolvedValueOnce([
+      makeSuggestion('b1', { accountId: 'acc-2' }),
+      makeSuggestion('b2', { accountId: 'acc-2' }),
+    ]);
+
+    await useAttachmentStore.getState().restoreSuggestion('acc-2', 'b2');
+
+    expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['a1', 'b1', 'b2']);
+    expect(useAttachmentStore.getState().suggestionsAccountId).toBe(ALL_ACCOUNTS_ID);
   });
 });
 
@@ -323,6 +340,16 @@ describe('rules', () => {
 
     expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['r1']);
     expect(useAttachmentStore.getState().isLoadingRules).toBe(false);
+  });
+
+  it('in All accounts asks for the rules and suggestions of every enabled account', async () => {
+    await useAttachmentStore.getState().fetchRules(ALL_ACCOUNTS_ID);
+    await useAttachmentStore.getState().fetchSuggestions(ALL_ACCOUNTS_ID);
+    await useAttachmentStore.getState().fetchDismissedSuggestions(ALL_ACCOUNTS_ID);
+
+    expect(api.listAttachmentRules).toHaveBeenCalledWith(null);
+    expect(api.listAttachmentRuleSuggestions).toHaveBeenCalledWith(null);
+    expect(api.listDismissedAttachmentRuleSuggestions).toHaveBeenCalledWith(null);
   });
 
   it('a failed rules load surfaces the error and stops loading', async () => {

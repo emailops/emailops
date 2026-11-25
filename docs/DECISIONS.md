@@ -4942,10 +4942,15 @@ no installers.
 every enabled account in one list. The frontend sends no account id (`toQueryAccountId`)
 and the backend reads with `AccountScope::AllEnabled`, joining `accounts` on
 `enabled = 1` as the outbox does. The list, its count, the tag chips, "select all"
-(`list_attachment_ids`) and the bulk download all take that scope. Rules and rule
-suggestions stay per account: the rules modal works on one account, the account of the
-email it was opened from or else the effective account, and always names it in its
-header; it has no account picker. Tags, though, are common to every account: the rule
+(`list_attachment_ids`) and the bulk download all take that scope. Each rule and rule
+suggestion belongs to one account and only reads that account's mail. In "All accounts"
+the rules modal lists the rules and suggestions of every enabled account (the list
+commands take the same optional account and read one account at a time through
+`AccountScope::account_ids`), each with its account chip, and the suggestion badge counts
+them all; every change goes to the item's own account. A new rule's form has an account
+field, preset to the account of the email the modal was opened from or else the effective
+account. With one account selected the modal shows that account's rules and names it in
+its header. Tags, though, are common to every account: the rule
 form's tag picker offers the tags of every account's rules and attachments, enabled or
 not (`get_attachment_tag_vocabulary`), so the same tag can be picked in any account and
 "All accounts" shows one chip for it. A download whose files span several accounts
@@ -4959,8 +4964,8 @@ over one date order.
 lists and fetching N×50 rows to show 50, with counts and tags summed by hand.
 *`account_id: Option<String>` down to `db/`* — a forgotten `None` would read every
 account without showing in the code; `Option` stays at the command boundary.
-*Summing every account's suggestions in the badge* — the number would not match the modal,
-which shows one account, and the suggestion miner skips sent mail anyway. *An account
-picker in the rules modal* — none of the list's problems need it, and it costs a remount,
-a reset path and a race between two accounts' rule responses; the rules of another
-account are one sidebar click away.
+*A rules modal on one account with a picker to switch it* — it costs a remount, a reset
+path and a race between two accounts' rule responses; listing every account's rules at
+once (decided after the first production smoke, 25/11/2026) has none of that. *Rules that
+span accounts* — a rule reads its own account's mail and stores into that account; one
+per account keeps ownership checks and retroactive scans as they are.

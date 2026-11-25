@@ -13,8 +13,8 @@ use crate::services;
 use crate::services::ownership::attachment_in_account;
 use crate::AppState;
 
-/// The attachments view reads one account, or every enabled account when the
-/// frontend sends no id ("All accounts").
+/// The attachments view and its rules modal read one account, or every
+/// enabled account when the frontend sends no id ("All accounts").
 fn scope_of(account_id: Option<&str>) -> AccountScope<'_> {
     match account_id {
         Some(id) => AccountScope::Account(id),
@@ -110,28 +110,38 @@ pub async fn count_attachments_for_rule(
     services::attachments::count_rule_attachments(&state.db, &account_id, &rule_id)
 }
 
+// The rules modal reads one account, or every enabled account when the
+// frontend sends no id ("All accounts"); each rule and suggestion carries its
+// account, and the commands that change one take that account.
+
 #[tauri::command]
 pub async fn list_attachment_rules(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
 ) -> Result<Vec<AttachmentRule>, AppError> {
-    services::attachments::list_rules(&state.db, &account_id)
+    services::attachments::for_each_account(&state.db, scope_of(account_id.as_deref()), |id| {
+        services::attachments::list_rules(&state.db, id)
+    })
 }
 
 #[tauri::command]
 pub async fn list_attachment_rule_suggestions(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
 ) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
-    services::attachment_suggestions::list_suggestions(&state.db, &account_id)
+    services::attachments::for_each_account(&state.db, scope_of(account_id.as_deref()), |id| {
+        services::attachment_suggestions::list_suggestions(&state.db, id)
+    })
 }
 
 #[tauri::command]
 pub async fn refresh_attachment_rule_suggestions(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
 ) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
-    services::attachment_suggestions::refresh_suggestions(&state.db, &account_id)
+    services::attachments::for_each_account(&state.db, scope_of(account_id.as_deref()), |id| {
+        services::attachment_suggestions::refresh_suggestions(&state.db, id)
+    })
 }
 
 #[tauri::command]
@@ -151,9 +161,11 @@ pub async fn dismiss_attachment_rule_suggestion(
 #[tauri::command]
 pub async fn list_dismissed_attachment_rule_suggestions(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
 ) -> Result<Vec<AttachmentRuleSuggestion>, AppError> {
-    services::attachment_suggestions::list_dismissed_suggestions(&state.db, &account_id)
+    services::attachments::for_each_account(&state.db, scope_of(account_id.as_deref()), |id| {
+        services::attachment_suggestions::list_dismissed_suggestions(&state.db, id)
+    })
 }
 
 /// Undo a dismissal; returns the pending suggestions after re-mining.
