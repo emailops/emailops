@@ -311,7 +311,9 @@ de ce compte. Avec **Tous les comptes** sélectionné, **Gérer les règles** af
 suggestions de tous les comptes activés, chacune avec son compte, et une nouvelle règle va dans le
 compte que vous choisissez : celui de l'e-mail si vous l'ouvrez depuis **Créer une règle de pièce
 jointe** dans le menu d'un e-mail, sinon le premier compte activé. Les étiquettes sont communes à
-tous les comptes : le champ d'étiquettes d'une règle propose celles de tous les comptes. **Ne
+tous les comptes : le champ d'étiquettes d'une règle propose celles de tous les comptes. Le champ
+d'expéditeur suggère, pendant la saisie, les expéditeurs du compte de la règle, votre propre adresse
+comprise. **Ne
 garder que la dernière version de chaque fichier d'un fil**, activée par défaut, conserve une seule
 copie d'un document qui fait des allers-retours : un fichier du même nom renvoyé dans la même
 conversation remplace la copie précédente. Pour collecter les

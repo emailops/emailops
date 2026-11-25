@@ -298,7 +298,9 @@ es de una cuenta y recoge el correo de esa cuenta. Con **Todas las cuentas** sel
 **Gestionar reglas** muestra las reglas y sugerencias de todas las cuentas habilitadas, cada una con
 su cuenta, y una regla nueva va a la cuenta que elijas: la del correo si la abres desde **Crear
 regla de adjunto** en el menú de un correo, y si no la primera cuenta habilitada. Las etiquetas son
-comunes a todas las cuentas: el campo de etiquetas de una regla ofrece las de todas las cuentas.
+comunes a todas las cuentas: el campo de etiquetas de una regla ofrece las de todas las cuentas. El
+campo de remitente sugiere, mientras escribes, los remitentes de la cuenta de la regla, incluida tu
+propia dirección.
 **Conservar solo la última versión de cada archivo en un hilo**, activada por defecto, guarda una
 sola copia de un documento que va y viene: un archivo con el mismo nombre enviado de nuevo en la
 misma conversación sustituye a la copia anterior. Para recoger las facturas que envías, crea la regla en la cuenta que las envía, con tu

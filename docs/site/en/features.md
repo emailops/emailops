@@ -282,7 +282,8 @@ and collects that account's mail. With **All accounts** selected, **Manage Rules
 and suggestions of every enabled account, each with its account, and a new rule goes to the
 account you pick: the email's account when you open it from **Create attachment rule** in an
 email's menu, otherwise the first enabled account. Tags are shared by all accounts: a rule's tag
-field offers the tags of every account. **Keep only the latest version of each file in a thread**,
+field offers the tags of every account. The sender field suggests, as you type, the senders of the
+rule's account, your own address included. **Keep only the latest version of each file in a thread**,
 on by default, keeps one copy of a document sent back and forth: a file with the same name sent
 again in the same conversation replaces the earlier copy. To collect the invoices you send, create the rule in the sending
 account with your own address as the sender and a filename pattern such as `*invoice*`.

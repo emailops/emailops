@@ -308,7 +308,8 @@ Konto und sammelt dessen E-Mails. Ist **Alle Konten** ausgewählt, zeigt **Regel
 Regeln und Vorschläge aller aktivierten Konten, jeweils mit ihrem Konto, und eine neue Regel kommt
 in das Konto, das Sie wählen: das Konto der E-Mail, wenn Sie sie über **Anhang-Regel erstellen** im
 Menü einer E-Mail öffnen, sonst das erste aktivierte Konto. Tags gelten für alle Konten: Das
-Tag-Feld einer Regel bietet die Tags aller Konten an. **Nur die neueste Version jeder Datei eines
+Tag-Feld einer Regel bietet die Tags aller Konten an. Das Absenderfeld schlägt beim Tippen die
+Absender des Kontos der Regel vor, Ihre eigene Adresse eingeschlossen. **Nur die neueste Version jeder Datei eines
 Verlaufs behalten** ist standardmäßig aktiviert und behält eine einzige Kopie eines Dokuments, das
 hin- und hergeschickt wird: Eine Datei mit demselben Namen, die in derselben Unterhaltung erneut
 gesendet wird, ersetzt die frühere Kopie. Um die Rechnungen zu sammeln, die

@@ -10,6 +10,7 @@ import type { AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 import { Select } from '../shared/Select';
 import { AccountChip } from './AccountChip';
 import { RuleSuggestionList } from './RuleSuggestionList';
+import { SenderPatternInput } from './SenderPatternInput';
 import { TagPicker } from './TagPicker';
 
 export interface RuleFormPrefill {
@@ -517,13 +518,12 @@ export function RuleManagementModal({
                 <label htmlFor={ids.sender} className="block text-xs font-medium text-gray-700 mb-1">
                   {t('attachments:rules.senderPattern')}
                 </label>
-                <input
-                  id={ids.sender}
-                  type="text"
+                <SenderPatternInput
+                  inputId={ids.sender}
                   value={form.senderEmailPattern}
-                  onChange={(e) => setForm({ ...form, senderEmailPattern: e.target.value })}
+                  onChange={(senderEmailPattern) => setForm({ ...form, senderEmailPattern })}
+                  accountId={form.accountId}
                   placeholder={t('attachments:rules.senderPlaceholder')}
-                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.senderPatternHelp')}</p>
               </div>

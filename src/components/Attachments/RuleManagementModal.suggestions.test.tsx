@@ -35,6 +35,7 @@ vi.mock('@/lib/api', () => ({
   getAttachmentTagVocabulary: vi.fn(async () => ['invoice']),
   // The account picker is the shared Select: native on macOS.
   currentPlatform: vi.fn(() => 'macos'),
+  autocompleteSenders: vi.fn(async () => []),
 }));
 
 import * as api from '@/lib/api';
@@ -671,7 +672,7 @@ describe('RuleManagementModal tags', () => {
   async function openTagList(): Promise<string[]> {
     await act(async () => {});
     await click(button('attachments:list.createRule'));
-    const input = container.querySelector<HTMLInputElement>('input[role="combobox"]');
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="attachments:rules.tagsPlaceholder"]');
     if (!input) throw new Error('no tag input');
     await act(async () => {
       input.focus();
@@ -809,6 +810,21 @@ describe('RuleManagementModal in All accounts', () => {
     await click(button('attachments:rules.createRule'));
 
     expect(handlers.onCreateRule.mock.calls[0][0]).toBe('acc-2');
+  });
+
+  it('suggests senders of the account the new rule goes to', async () => {
+    render([], [], { accounts: ACCOUNTS, defaultAccountId: 'acc-2' });
+    await click(button('attachments:list.createRule'));
+    const sender = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="text"]'))[1];
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(sender, 'bill');
+      sender.setSelectionRange(4, 4);
+      sender.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(api.autocompleteSenders).toHaveBeenLastCalledWith('acc-2', 'bill', 8);
   });
 
   it('scans existing mail and counts files in the account of the rule', async () => {
