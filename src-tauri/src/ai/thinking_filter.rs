@@ -73,6 +73,19 @@ impl ThinkingGate {
         Self::default()
     }
 
+    /// A gate for the output that follows `prompt`. Some chat templates open
+    /// the reasoning block in the generation prompt itself, so the output
+    /// starts inside it with no opener of its own: the gate then starts out
+    /// suppressing. Only a prompt that *ends* with an opener counts, so a
+    /// marker quoted in an email earlier in the prompt changes nothing.
+    pub fn after_prompt(prompt: &str) -> Self {
+        let tail = prompt.trim_end();
+        Self {
+            suppressing: OPEN_MARKERS.iter().any(|m| tail.ends_with(m)),
+            pending: String::new(),
+        }
+    }
+
     /// Feed one stream chunk. Returns the text to forward now (reasoning spans
     /// suppressed, partial trailing markers held back for the next chunk).
     pub fn push(&mut self, chunk: &str) -> String {
@@ -94,15 +107,18 @@ impl ThinkingGate {
                 break;
             }
 
-            // Forwarding: emit prose up to the next reasoning opener.
-            if let Some((pos, len)) = earliest_marker(&buf, OPEN_MARKERS) {
+            // Forwarding: emit prose up to the next reasoning opener. A closer
+            // with no opener is dropped: the prose before it has already
+            // been forwarded, but the marker itself never is.
+            if let Some((pos, len)) = earliest_marker(&buf, ALL_MARKERS) {
+                let opens = OPEN_MARKERS.iter().any(|m| buf[pos..].starts_with(m));
                 out.push_str(&buf[..pos]);
                 buf.drain(..pos + len);
-                self.suppressing = true;
+                self.suppressing = opens;
                 continue;
             }
-            // No opener — forward all but a trailing partial opener.
-            let hold = trailing_partial_len(&buf, OPEN_MARKERS);
+            // No marker — forward all but a trailing partial one.
+            let hold = trailing_partial_len(&buf, ALL_MARKERS);
             let split = buf.len() - hold;
             out.push_str(&buf[..split]);
             self.pending = buf[split..].to_string();
@@ -125,6 +141,8 @@ impl ThinkingGate {
 const OPEN_MARKERS: &[&str] = &["<|channel>", "<think>"];
 /// Reasoning closer markers (kept in sync with [`MARKER_PAIRS`]).
 const CLOSE_MARKERS: &[&str] = &["<channel|>", "</think>"];
+/// Every marker the forwarding state looks for.
+const ALL_MARKERS: &[&str] = &["<|channel>", "<think>", "<channel|>", "</think>"];
 
 /// Byte offset and length of the earliest complete marker from `markers` in `s`.
 fn earliest_marker(s: &str, markers: &[&str]) -> Option<(usize, usize)> {
@@ -265,6 +283,39 @@ mod tests {
     fn stream_partial_open_prefix_at_eof_is_dropped() {
         // A trailing `<` that could begin a marker is held, then dropped at EOF.
         assert_eq!(run(&["Done.", "<"]), "Done.");
+    }
+
+    #[test]
+    fn stream_stray_close_marker_is_not_forwarded() {
+        assert_eq!(run(&["No opener", "</think>", "Answer."]), "No openerAnswer.");
+    }
+
+    #[test]
+    fn stream_stray_close_marker_split_across_chunks_is_not_forwarded() {
+        assert_eq!(run(&["Sure.<chan", "nel|> Here."]), "Sure. Here.");
+    }
+
+    /// Some chat templates open the reasoning block in the generation prompt
+    /// itself, so the model's output starts inside it and only closes it.
+    #[test]
+    fn a_gate_after_a_prompt_that_opens_reasoning_suppresses_until_the_closer() {
+        let mut gate = ThinkingGate::after_prompt("<|im_start|>assistant\n<think>\n");
+        let mut out = gate.push("weighing the inbox</th");
+        out.push_str(&gate.push("ink>\n\nThe answer."));
+        out.push_str(&gate.finish());
+        assert_eq!(out, "\n\nThe answer.");
+    }
+
+    #[test]
+    fn a_gate_after_a_prompt_with_a_closed_reasoning_block_forwards() {
+        let mut gate = ThinkingGate::after_prompt("<|im_start|>assistant\n<think>\n\n</think>\n\n");
+        assert_eq!(gate.push("The answer."), "The answer.");
+    }
+
+    #[test]
+    fn an_opener_quoted_earlier_in_the_prompt_does_not_start_suppressing() {
+        let mut gate = ThinkingGate::after_prompt("Email: see <think> tag\n<|im_start|>assistant\n");
+        assert_eq!(gate.push("The answer."), "The answer.");
     }
 
     #[test]

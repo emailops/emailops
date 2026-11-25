@@ -5,10 +5,9 @@
 //   actor.rs      — persistent inference thread owning the chat context,
 //                   reuses the KV cache across requests (prefix caching)
 //   planner.rs    — pure prompt-budget / prefix-reuse planning functions
-//   errors.rs     — map llama-cpp-2 errors → AppError
+//   tool_parser.rs — pure parsers that lift tool calls out of generated text
 
 pub(crate) mod actor;
-pub mod errors;
 pub(crate) mod planner;
 pub mod runtime;
 pub(crate) mod tool_parser;

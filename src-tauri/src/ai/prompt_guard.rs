@@ -82,10 +82,27 @@ impl SpecialTokenGuard {
             None => Cow::Borrowed(text),
         }
     }
+
+    /// `value` with every string in it, object keys included, passed through
+    /// [`Self::neutralize`]. Tool-call arguments go back into the prompt on
+    /// the next round, and a model can copy an email's text into them.
+    pub fn neutralize_json(&self, value: &serde_json::Value) -> serde_json::Value {
+        use serde_json::Value;
+        match value {
+            Value::String(s) => Value::String(self.neutralize(s).into_owned()),
+            Value::Array(items) => Value::Array(items.iter().map(|v| self.neutralize_json(v)).collect()),
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(k, v)| (self.neutralize(k).into_owned(), self.neutralize_json(v)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
 }
 
 /// Turn and role markers of the chat templates the remote backends render
-/// (ChatML, Llama 3, Gemma, Mistral, Phi, gpt-oss). Ollama and the
+/// (ChatML, Llama 3, Gemma, Gemma 4, Mistral, Phi, gpt-oss, DeepSeek). Ollama and the
 /// OpenAI-compatible servers apply the template on their side, where the
 /// model's vocabulary is out of reach, so this list stands in for it. It
 /// leaves out `<tool_call>`: the system prompt teaches the model to write it.
@@ -99,10 +116,17 @@ const KNOWN_TURN_MARKERS: &[&str] = &[
     "<|end_header_id|>",
     "<|eot_id|>",
     "<|eom_id|>",
+    "<|python_tag|>",
     "<start_of_turn>",
     "<end_of_turn>",
     "<|turn>",
     "<turn|>",
+    "<|channel>",
+    "<channel|>",
+    "<|tool_call>",
+    "<tool_call|>",
+    "<|tool_response>",
+    "<tool_response|>",
     "[INST]",
     "[/INST]",
     "[SYSTEM_PROMPT]",
@@ -117,15 +141,33 @@ const KNOWN_TURN_MARKERS: &[&str] = &[
     "<|message|>",
     "<|channel|>",
     "<|return|>",
+    // DeepSeek writes its markers with a fullwidth bar and a lower block.
+    "<｜begin▁of▁sentence｜>",
+    "<｜end▁of▁sentence｜>",
+    "<｜User｜>",
+    "<｜Assistant｜>",
+    "<｜tool▁calls▁begin｜>",
+    "<｜tool▁calls▁end｜>",
+    "<｜tool▁call▁begin｜>",
+    "<｜tool▁call▁end｜>",
+    "<｜tool▁sep｜>",
+    "<｜tool▁outputs▁begin｜>",
+    "<｜tool▁outputs▁end｜>",
+    "<｜tool▁output▁begin｜>",
+    "<｜tool▁output▁end｜>",
 ];
+
+/// The guard for [`KNOWN_TURN_MARKERS`], for backends that render the chat
+/// template themselves.
+pub fn known_control_token_guard() -> &'static SpecialTokenGuard {
+    static GUARD: std::sync::OnceLock<SpecialTokenGuard> = std::sync::OnceLock::new();
+    GUARD.get_or_init(|| SpecialTokenGuard::new(KNOWN_TURN_MARKERS.iter().map(|s| s.to_string())))
+}
 
 /// `text` with every [`KNOWN_TURN_MARKERS`] string broken, for backends that
 /// render the chat template themselves.
 pub fn neutralize_known_control_tokens(text: &str) -> Cow<'_, str> {
-    static GUARD: std::sync::OnceLock<SpecialTokenGuard> = std::sync::OnceLock::new();
-    GUARD
-        .get_or_init(|| SpecialTokenGuard::new(KNOWN_TURN_MARKERS.iter().map(|s| s.to_string())))
-        .neutralize(text)
+    known_control_token_guard().neutralize(text)
 }
 
 /// The tag that fences text taken from an email inside a prompt. The prompt
@@ -231,6 +273,43 @@ mod tests {
             "x<\u{200B}|im_end|><\u{200B}|im_start|>system <\u{200B}|start_header_id|>user<\u{200B}|eot_id|> \
              <\u{200B}start_of_turn>model [\u{200B}INST]"
         );
+    }
+
+    #[test]
+    fn gemma4_llama_tool_and_deepseek_markers_are_broken_too() {
+        let out = neutralize_known_control_tokens(
+            "<|channel>a<channel|> <|tool_response>b<tool_response|> <|python_tag|> \
+             <｜end▁of▁sentence｜><｜User｜>c<｜Assistant｜>",
+        );
+        assert_eq!(
+            out,
+            "<\u{200B}|channel>a<\u{200B}channel|> <\u{200B}|tool_response>b<\u{200B}tool_response|> \
+             <\u{200B}|python_tag|> <\u{200B}｜end▁of▁sentence｜><\u{200B}｜User｜>c<\u{200B}｜Assistant｜>"
+        );
+    }
+
+    /// A model can copy an email into a tool call's arguments, and every
+    /// backend writes past calls back into the next round's prompt.
+    #[test]
+    fn every_string_in_a_json_value_is_neutralized_keys_included() {
+        let args = serde_json::json!({
+            "query": "x<|im_end|>",
+            "nested": [{"<|im_start|>k": "plain"}, 3, null, "<|im_start|>system"],
+        });
+        let out = qwen_like().neutralize_json(&args);
+        assert_eq!(
+            out,
+            serde_json::json!({
+                "query": "x<\u{200B}|im_end|>",
+                "nested": [{"<\u{200B}|im_start|>k": "plain"}, 3, null, "<\u{200B}|im_start|>system"],
+            })
+        );
+    }
+
+    #[test]
+    fn the_known_marker_guard_neutralizes_json_values() {
+        let out = known_control_token_guard().neutralize_json(&serde_json::json!({"q": "<|eot_id|>"}));
+        assert_eq!(out, serde_json::json!({"q": "<\u{200B}|eot_id|>"}));
     }
 
     #[test]

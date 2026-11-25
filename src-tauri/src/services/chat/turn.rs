@@ -3100,11 +3100,12 @@ async fn run_tool_loop(
         let t_call = std::time::Instant::now();
 
         // Stream this round's prose to the client live UNLESS a nudge is still
-        // possible — see `round_may_stream_live`. On llama.cpp the provider's
-        // StreamGate suppresses tool-call syntax, so a tool-calling round emits
-        // nothing here and only a genuine text answer reaches `on_token`. The
-        // atomic records whether any token was actually shipped so the caller's
-        // direct-answer path can skip re-emitting an already-streamed answer.
+        // possible — see `round_may_stream_live`. Tool-call syntax never
+        // reaches `on_token`, but prose written before a tool call can (see
+        // `AIProvider::chat_stream_with_tools`); the bubble is cleared below
+        // when the round turns out to carry calls. The atomic records whether
+        // any token was actually shipped so the caller's direct-answer path can
+        // skip re-emitting an already-streamed answer.
         let stream_live = round_may_stream_live(force_tool_use, tool_traces.is_empty(), nudges_used, MAX_NUDGES);
         let streamed_any = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let on_token: Box<dyn FnMut(String) -> bool + Send> = if stream_live {
@@ -3293,6 +3294,26 @@ async fn run_tool_loop(
                 break;
             }
         };
+
+        // The round ends in tool calls, but a backend that streams prose as it
+        // arrives (Ollama, OpenRouter, or llama.cpp before a call that starts
+        // mid-reply) may already have shipped a preamble. Clear the bubble so
+        // the answer a later round writes does not land after it.
+        if last_round_streamed_live {
+            crate::services::events::emit(
+                "chat-stream",
+                ChatStreamEvent {
+                    message_id: message_id.to_string(),
+                    conversation_id: conversation_id.to_string(),
+                    token: String::new(),
+                    done: false,
+                    error: None,
+                    token_count: None,
+                    latency_ms: None,
+                    replace: Some(true),
+                },
+            );
+        }
 
         // Deterministic repair: a filterless search_emails call gets the email
         // address the user wrote verbatim injected before dispatch (when the
@@ -10966,6 +10987,72 @@ Preséntalos en una tabla markdown …";
         )
         .await;
         assert!(outcome.cancelled);
+    }
+
+    /// Ollama and OpenRouter stream a round's prose before they know it ends
+    /// in tool calls. The bubble must not keep that preamble in front of the
+    /// answer the next round writes. Sync with its own runtime so the global
+    /// seam lock is never held across an await point (`clippy::await_holding_lock`).
+    #[test]
+    fn prose_streamed_before_a_tool_call_is_cleared_from_the_bubble() {
+        let _seam = crate::services::events::seam_test_lock();
+        let sink = crate::services::events::install_for_testing();
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let registry = Arc::new(tools::ToolRegistry::with_tools(vec![Arc::new(CountingTool {
+            name: "search_emails",
+            runs: Arc::clone(&runs),
+        })
+            as Arc<dyn tools::Tool>]));
+        let provider = crate::ai::provider::FakeAiProvider::new().streaming_prose_before_tool_calls();
+        provider.push_chat_message(AiMessage {
+            role: "assistant".to_string(),
+            content: "Let me search your mail.".to_string(),
+            tool_calls: Some(vec![ai_tool_call("search_emails")]),
+        });
+        provider.push_chat_response("Done.");
+        let mut tool_traces: Vec<ToolCallTrace> = Vec::new();
+        let mut llm_calls: Vec<LlmCallTrace> = Vec::new();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(run_tool_loop(
+                &db,
+                &registry,
+                &provider,
+                "conv-1",
+                "msg-1",
+                "acct-1",
+                &[],
+                None,
+                "q",
+                vec![("user".to_string(), "q".to_string())],
+                None,
+                false,
+                false,
+                false,
+                &mut tool_traces,
+                &mut llm_calls,
+                &mut TurnBudget::unlimited(),
+                Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            ));
+        crate::services::events::install(Arc::new(crate::services::events::NoopEventSink));
+
+        // What the chat store does with each event (`chatStore.ts`).
+        let bubble = sink
+            .payloads_for("chat-stream")
+            .iter()
+            .fold(String::new(), |acc, event| {
+                let token = event["token"].as_str().unwrap_or_default();
+                if event["replace"].as_bool() == Some(true) {
+                    token.to_string()
+                } else {
+                    acc + token
+                }
+            });
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(bubble, "Done.");
     }
 
     #[tokio::test]
