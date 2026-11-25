@@ -300,6 +300,10 @@ impl CalendarProvider for IcsFeedCalendarProvider {
         Err(AppError::ReadOnlyCalendar)
     }
 
+    async fn update_imported_event(&self, _provider_event_id: &str, _event: &ImportableEvent) -> Result<()> {
+        Err(AppError::ReadOnlyCalendar)
+    }
+
     async fn respond_to_event(
         &self,
         _calendar_id: &str,

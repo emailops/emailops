@@ -434,10 +434,34 @@ impl CalendarProvider for GoogleCalendarClient {
             .pointer(&format!("/extendedProperties/private/{EMAILOPS_IMPORT_MARKER}"))
             .and_then(|v| v.as_str())
             == Some("1");
+        let sequence = event
+            .get("sequence")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0);
         Ok(Some(FoundEvent {
             provider_event_id,
             imported_by_emailops,
+            sequence,
         }))
+    }
+
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()> {
+        let url = format!(
+            "{}/calendars/primary/events/{}?sendUpdates=none",
+            self.base_url,
+            urlencoding::encode(provider_event_id)
+        );
+        let body = build_google_update_body(event);
+        let patched = self
+            .send_request_with_retry("update imported event", |client, token| {
+                client.patch(&url).bearer_auth(token).json(&body)
+            })
+            .await?;
+        if !patched.status().is_success() {
+            return Err(self.http_error(patched).await);
+        }
+        Ok(())
     }
 
     async fn import_event(&self, event: &ImportableEvent) -> Result<String> {
@@ -579,6 +603,18 @@ pub(crate) fn build_google_import_body(event: &ImportableEvent) -> serde_json::V
             .collect();
     }
     body
+}
+
+/// The PATCH body moving an imported single event to `event`. Pure.
+pub(crate) fn build_google_update_body(event: &ImportableEvent) -> serde_json::Value {
+    serde_json::json!({
+        "summary": event.summary,
+        "description": event.description,
+        "location": event.location,
+        "start": google_time(&event.start),
+        "end": google_time(&event.end),
+        "sequence": event.sequence,
+    })
 }
 
 /// The body for an override: the import body pointed at its master instance.
@@ -1525,6 +1561,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn google_update_rewrites_our_copy_without_notifying() {
+        use wiremock::matchers::{body_json, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/calendars/primary/events/e1"))
+            .and(query_param("sendUpdates", "none"))
+            .and(body_json(json!({
+                "summary": "Planning",
+                "description": "Agenda",
+                "location": "Room 1",
+                "start": {"dateTime": "2026-12-01T10:00:00", "timeZone": "Europe/Madrid"},
+                "end": {"dateTime": "2026-12-01T11:00:00", "timeZone": "Europe/Madrid"},
+                "sequence": 2,
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "e1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut event = importable();
+        event.rrule = None;
+        event.exdates = Vec::new();
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client.update_imported_event("e1", &event).await.expect("update");
+    }
+
+    #[tokio::test]
+    async fn google_update_surfaces_a_refusal() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": {"code": 403}})))
+            .mount(&server)
+            .await;
+        let client = GoogleCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .update_imported_event("e1", &importable())
+            .await
+            .expect_err("refused");
+    }
+
+    #[tokio::test]
     async fn google_find_flags_emailops_copies() {
         use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -1538,7 +1620,7 @@ mod tests {
         };
         lookup(
             "ours@example.com",
-            json!({"items": [{"id": "e1", "extendedProperties": {"private": {"emailopsImported": "1"}}}]}),
+            json!({"items": [{"id": "e1", "sequence": 3, "extendedProperties": {"private": {"emailopsImported": "1"}}}]}),
         )
         .mount(&server)
         .await;
@@ -1553,7 +1635,8 @@ mod tests {
             ours,
             Some(FoundEvent {
                 provider_event_id: "e1".into(),
-                imported_by_emailops: true
+                imported_by_emailops: true,
+                sequence: 3
             })
         );
         let theirs = client.find_event_by_uid("theirs@example.com").await.expect("find");
@@ -1561,7 +1644,8 @@ mod tests {
             theirs,
             Some(FoundEvent {
                 provider_event_id: "e2".into(),
-                imported_by_emailops: false
+                imported_by_emailops: false,
+                sequence: 0
             })
         );
         assert_eq!(client.find_event_by_uid("none@example.com").await.expect("find"), None);

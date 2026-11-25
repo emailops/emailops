@@ -192,6 +192,11 @@ pub trait CalendarProvider: Send + Sync {
     /// calendar and return the provider's id of the master event.
     async fn import_event(&self, event: &ImportableEvent) -> Result<String>;
 
+    /// Rewrite a single event EmailOps imported (`provider_event_id`, in the
+    /// primary calendar) to `event`'s times, title, place, description and
+    /// SEQUENCE, without notifying anyone. Used when the organizer moved it.
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()>;
+
     /// Set the account's own response on an existing event. `self_email` is
     /// the attendee whose response changes. When `notify` is true the
     /// organizer is told (Google `sendUpdates=all`, Graph `sendResponse`).
@@ -211,6 +216,8 @@ pub struct FoundEvent {
     pub provider_event_id: String,
     /// The copy carries the marker EmailOps stamps on what it imports.
     pub imported_by_emailops: bool,
+    /// The copy's iCalendar SEQUENCE (0 when the provider has none).
+    pub sequence: u32,
 }
 
 /// The three invite answers. Wire values match the frontend buttons.
@@ -284,6 +291,10 @@ pub struct FakeCalendarProvider {
     pub responses: std::sync::Mutex<Vec<(String, String, String, bool)>>,
     /// Provider event id -> message: `respond_to_event` fails with a sync error.
     pub respond_errors: std::collections::HashMap<String, String>,
+    /// `(provider_event_id, event)` per `update_imported_event` call.
+    pub updated: std::sync::Mutex<Vec<(String, ImportableEvent)>>,
+    /// Provider event id -> message: `update_imported_event` fails with a sync error.
+    pub update_errors: std::collections::HashMap<String, String>,
     /// UID -> id of what `import_event` created, found again by later lookups.
     imported_ids: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
@@ -306,6 +317,8 @@ impl FakeCalendarProvider {
             imported: std::sync::Mutex::new(Vec::new()),
             responses: std::sync::Mutex::new(Vec::new()),
             respond_errors: std::collections::HashMap::new(),
+            updated: std::sync::Mutex::new(Vec::new()),
+            update_errors: std::collections::HashMap::new(),
             imported_ids: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -498,6 +511,13 @@ impl CalendarProvider for FakeCalendarProvider {
         if let Some(found) = self.found_by_uid.get(ical_uid) {
             return Ok(Some(found.clone()));
         }
+        let sequence = self
+            .imported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .rfind(|e| e.uid == ical_uid)
+            .map_or(0, |e| e.sequence);
         Ok(self
             .imported_ids
             .lock()
@@ -506,6 +526,7 @@ impl CalendarProvider for FakeCalendarProvider {
             .map(|id| FoundEvent {
                 provider_event_id: id.clone(),
                 imported_by_emailops: true,
+                sequence,
             }))
     }
 
@@ -526,6 +547,20 @@ impl CalendarProvider for FakeCalendarProvider {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(event.uid.clone(), id.clone());
         Ok(id)
+    }
+
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()> {
+        if let Some(error) = &self.error {
+            return Err(crate::models::error::AppError::SyncError(error.clone()));
+        }
+        if let Some(message) = self.update_errors.get(provider_event_id) {
+            return Err(crate::models::error::AppError::SyncError(message.clone()));
+        }
+        self.updated
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((provider_event_id.to_string(), event.clone()));
+        Ok(())
     }
 
     async fn respond_to_event(
@@ -657,7 +692,8 @@ mod tests {
             fake.find_event_by_uid("u1@example.com").await.expect("find"),
             Some(FoundEvent {
                 provider_event_id: id,
-                imported_by_emailops: true
+                imported_by_emailops: true,
+                sequence: 0
             })
         );
         assert_eq!(fake.imported.lock().expect("lock").len(), 1);

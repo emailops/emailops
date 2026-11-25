@@ -1445,6 +1445,7 @@ mod tests {
             FoundEvent {
                 provider_event_id: "x".into(),
                 imported_by_emailops: false,
+                sequence: 0,
             },
         );
         let pv = preview_ics_import(&p, CalendarKind::Google, &file(&[EV_A, EV_B]), "f.ics", "UTC")
@@ -1509,6 +1510,7 @@ mod tests {
             FoundEvent {
                 provider_event_id: "x".into(),
                 imported_by_emailops: false,
+                sequence: 0,
             },
         );
         let s = import_ics(&p, CalendarKind::Google, &file(&[EV_A, EV_B, EV_CANCELLED]), "UTC")
@@ -1668,6 +1670,9 @@ mod tests {
         }
         async fn import_event(&self, _: &ImportableEvent) -> Result<String> {
             Err(AppError::CalendarPermissionDenied { account_id: "a".into() })
+        }
+        async fn update_imported_event(&self, _: &str, _: &ImportableEvent) -> Result<()> {
+            unreachable!()
         }
         async fn respond_to_event(
             &self,

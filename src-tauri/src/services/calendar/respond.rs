@@ -108,6 +108,25 @@ fn plan_target(
     })
 }
 
+/// The invitation's version of our single-event copy when the organizer
+/// changed it after the copy was written: a higher SEQUENCE (RFC 5546
+/// §2.1.4), so answering an older email never moves the copy back. A series
+/// stays as it is (moving one means rewriting its exceptions too), and so
+/// does an update the planner cannot import.
+fn newer_single_event(
+    calendar: &super::ics::ParsedCalendar,
+    uid: &str,
+    kind: CalendarKind,
+    default_tz: &str,
+    copy_sequence: u32,
+) -> Result<Option<ImportableEvent>> {
+    let Ok(target) = plan_target(calendar, uid, kind, default_tz)? else {
+        return Ok(None);
+    };
+    let single = target.rrule.is_none() && target.rdates.is_empty() && target.overrides.is_empty();
+    Ok((single && target.sequence > copy_sequence).then_some(target))
+}
+
 /// Set the account's own entry to `response`, adding it when the invitation
 /// did not list the account.
 fn set_my_response(attendees: &mut Vec<CalendarAttendee>, me: &str, response: RsvpResponse) {
@@ -235,6 +254,12 @@ async fn decide(
                     reply_error,
                 })
             } else {
+                // The organizer moved it: our copy follows, quietly.
+                if !one_occurrence {
+                    if let Some(newer) = newer_single_event(&parsed, uid, req.kind, req.default_tz, found.sequence)? {
+                        calendar.update_imported_event(&found.provider_event_id, &newer).await?;
+                    }
+                }
                 // Our Google copy carries my answer; keep it current without
                 // emailing its attendees. Outlook copies have no attendees.
                 if !declined && !one_occurrence && req.kind == CalendarKind::Google {
@@ -506,6 +531,9 @@ mod tests {
         async fn import_event(&self, e: &ImportableEvent) -> Result<String> {
             self.0.import_event(e).await
         }
+        async fn update_imported_event(&self, p: &str, e: &ImportableEvent) -> Result<()> {
+            self.0.update_imported_event(p, e).await
+        }
         async fn respond_to_event(&self, c: &str, p: &str, r: RsvpResponse, e: &str, n: bool) -> Result<()> {
             self.0.respond_to_event(c, p, r, e, n).await
         }
@@ -515,6 +543,7 @@ mod tests {
         FoundEvent {
             provider_event_id: "ev-1".into(),
             imported_by_emailops: ours,
+            sequence: 0,
         }
     }
 
@@ -752,6 +781,138 @@ mod tests {
         );
         assert!(calendar.responses.lock().unwrap().is_empty());
         assert_eq!(mail.raw_sent().len(), 1);
+    }
+
+    /// The organizer's update of the invitation: same UID, this SEQUENCE.
+    fn update_ics(sequence: u32, extra: &str) -> String {
+        ics(Some("lead@example.com"), &format!("SEQUENCE:{sequence}\r\n{extra}"))
+    }
+
+    fn our_copy_at(sequence: u32) -> FoundEvent {
+        FoundEvent {
+            sequence,
+            ..found(true)
+        }
+    }
+
+    fn utc(day: u32, hour: u32) -> i64 {
+        chrono::NaiveDate::from_ymd_opt(2026, 12, day)
+            .and_then(|d| d.and_hms_opt(hour, 0, 0))
+            .expect("valid time")
+            .and_utc()
+            .timestamp()
+    }
+
+    #[tokio::test]
+    async fn a_newer_invite_moves_our_copy_then_answers() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), our_copy_at(0));
+        let mail = mail();
+        let out = run(&calendar, &mail, &update_ics(1, ""), OLD, RsvpResponse::Accepted)
+            .await
+            .expect("respond");
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Responded {
+                reply_sent_to: Some("lead@example.com".into())
+            }
+        );
+        let updated = calendar.updated.lock().unwrap();
+        assert_eq!(updated.len(), 1);
+        let (id, event) = &updated[0];
+        assert_eq!(id, "ev-1");
+        assert_eq!((event.start.to_epoch(), event.end.to_epoch()), (utc(1, 10), utc(1, 11)));
+        assert_eq!(event.sequence, 1);
+        assert_eq!(calendar.responses.lock().unwrap().len(), 1, "my answer still lands");
+        assert_eq!(mail.raw_sent().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_newer_invite_moves_our_outlook_copy_too() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), our_copy_at(0));
+        let mail = mail();
+        let account = account();
+        let update = update_ics(1, "");
+        let mut req = request(&account, &update, OLD, RsvpResponse::Accepted);
+        req.kind = CalendarKind::Outlook;
+        respond_to_invite(&calendar, &mail, &req).await.expect("respond");
+        assert_eq!(calendar.updated.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_invite_no_newer_than_our_copy_leaves_it_in_place() {
+        // An older email answered after the update must not move it back.
+        for (copy, invite) in [(1, 1), (2, 1)] {
+            let mut calendar = FakeCalendarProvider::with_events(vec![]);
+            calendar.found_by_uid.insert(UID.into(), our_copy_at(copy));
+            let mail = mail();
+            let out = run(&calendar, &mail, &update_ics(invite, ""), OLD, RsvpResponse::Accepted)
+                .await
+                .expect("respond");
+            assert!(matches!(out, InviteResponseOutcome::Responded { .. }), "{out:?}");
+            assert!(
+                calendar.updated.lock().unwrap().is_empty(),
+                "copy {copy}, invite {invite}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_newer_invite_for_a_series_leaves_our_copy_in_place() {
+        // Moving a series would also mean rewriting its exceptions.
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), our_copy_at(0));
+        let mail = mail();
+        let series = update_ics(1, "RRULE:FREQ=WEEKLY;COUNT=3\r\n");
+        let out = run(&calendar, &mail, &series, OLD, RsvpResponse::Accepted)
+            .await
+            .expect("respond");
+        assert!(matches!(out, InviteResponseOutcome::Responded { .. }), "{out:?}");
+        assert!(calendar.updated.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_newer_answer_to_one_occurrence_leaves_our_copy_in_place() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), our_copy_at(0));
+        let mail = mail();
+        let occurrence = update_ics(1, "RECURRENCE-ID:20261208T100000Z\r\n");
+        run(&calendar, &mail, &occurrence, OLD, RsvpResponse::Tentative)
+            .await
+            .expect("respond");
+        assert!(calendar.updated.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_newer_invite_the_planner_refuses_is_still_answered() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), our_copy_at(0));
+        let mail = mail();
+        let refused = update_ics(1, "STATUS:CANCELLED\r\n");
+        let out = run(&calendar, &mail, &refused, OLD, RsvpResponse::Accepted)
+            .await
+            .expect("respond");
+        assert_eq!(
+            out,
+            InviteResponseOutcome::Responded {
+                reply_sent_to: Some("lead@example.com".into())
+            }
+        );
+        assert!(calendar.updated.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_move_of_our_copy_sends_nothing() {
+        let mut calendar = FakeCalendarProvider::with_events(vec![]);
+        calendar.found_by_uid.insert(UID.into(), our_copy_at(0));
+        calendar.update_errors.insert("ev-1".into(), "patch failed".into());
+        let mail = mail();
+        run(&calendar, &mail, &update_ics(1, ""), OLD, RsvpResponse::Accepted)
+            .await
+            .expect_err("the move failed");
+        assert!(calendar.responses.lock().unwrap().is_empty());
+        assert!(mail.raw_sent().is_empty(), "no reply unless the calendar changed");
     }
 
     /// An invitation for one occurrence of a series.
@@ -1257,6 +1418,9 @@ mod tests {
             }
             async fn import_event(&self, e: &ImportableEvent) -> Result<String> {
                 self.0.import_event(e).await
+            }
+            async fn update_imported_event(&self, p: &str, e: &ImportableEvent) -> Result<()> {
+                self.0.update_imported_event(p, e).await
             }
             async fn respond_to_event(&self, _: &str, _: &str, _: RsvpResponse, _: &str, _: bool) -> Result<()> {
                 Err(AppError::ReadOnlyCalendar)

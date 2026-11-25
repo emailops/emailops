@@ -116,6 +116,44 @@ impl OutlookCalendarClient {
             .map(str::to_string))
     }
 
+    /// The id and stored SEQUENCE (0 when missing) of the event EmailOps
+    /// imported for `ical_uid`, if any.
+    async fn own_copy(&self, ical_uid: &str) -> Result<Option<(String, u32)>> {
+        let url = format!(
+            "{}/me/events?$filter={}&$select=id&$top=1&$expand={}",
+            self.base_url,
+            urlencoding::encode(&outlook_imported_uid_filter(ical_uid)),
+            urlencoding::encode(&format!(
+                "singleValueExtendedProperties($filter=id eq '{EMAILOPS_SEQUENCE_PROPERTY}')"
+            ))
+        );
+        let response = self.send_get_with_retry(&url, "find event by uid").await?;
+        if !response.status().is_success() {
+            return Err(self.failure(response).await);
+        }
+        let page: serde_json::Value = response.json().await?;
+        let Some(event) = page
+            .get("value")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())
+        else {
+            return Ok(None);
+        };
+        let Some(id) = event.get("id").and_then(|v| v.as_str()) else {
+            return Ok(None);
+        };
+        let sequence = event
+            .get("singleValueExtendedProperties")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(EMAILOPS_SEQUENCE_PROPERTY))
+            .and_then(|p| p.get("value").and_then(|v| v.as_str()))
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        Ok(Some((id.to_string(), sequence)))
+    }
+
     /// Delete the instances an EXDATE removes and patch the ones an override
     /// replaces, on a series that was just created.
     async fn apply_exceptions(&self, series_id: &str, event: &ImportableEvent) -> Result<()> {
@@ -542,11 +580,12 @@ impl CalendarProvider for OutlookCalendarClient {
         // extended-property filter is not known to work on every account type,
         // so a failure other than an auth one counts as "no copy of ours" and
         // the iCalUId lookup that invite answers rely on still runs.
-        match self.first_event_id(&outlook_imported_uid_filter(ical_uid)).await {
-            Ok(Some(id)) => {
+        match self.own_copy(ical_uid).await {
+            Ok(Some((id, sequence))) => {
                 return Ok(Some(FoundEvent {
                     provider_event_id: id,
                     imported_by_emailops: true,
+                    sequence,
                 }))
             }
             Ok(None) => {}
@@ -567,7 +606,22 @@ impl CalendarProvider for OutlookCalendarClient {
             .map(|id| FoundEvent {
                 provider_event_id: id,
                 imported_by_emailops: false,
+                sequence: 0,
             }))
+    }
+
+    async fn update_imported_event(&self, provider_event_id: &str, event: &ImportableEvent) -> Result<()> {
+        let body = build_graph_update_request(event)?;
+        let url = format!("{}/me/events/{}", self.base_url, urlencoding::encode(provider_event_id));
+        let response = self
+            .send_request_with_retry("update imported event", |client, token| {
+                client.patch(&url).bearer_auth(token).json(&body)
+            })
+            .await?;
+        if !response.status().is_success() {
+            return Err(self.failure(response).await);
+        }
+        Ok(())
     }
 
     async fn import_event(&self, event: &ImportableEvent) -> Result<String> {
@@ -681,7 +735,10 @@ pub(crate) fn build_graph_import_request(event: &ImportableEvent) -> Result<serd
         "start": graph_time(&event.start)?,
         "end": graph_time(&event.end)?,
         "isAllDay": matches!(event.start, EventTime::AllDay(_)),
-        "singleValueExtendedProperties": [{"id": EMAILOPS_UID_PROPERTY, "value": event.uid}],
+        "singleValueExtendedProperties": [
+            {"id": EMAILOPS_UID_PROPERTY, "value": event.uid},
+            {"id": EMAILOPS_SEQUENCE_PROPERTY, "value": event.sequence.to_string()},
+        ],
     });
     if !event.description.is_empty() {
         body["body"] = serde_json::json!({"contentType": "text", "content": event.description});
@@ -717,9 +774,30 @@ fn build_graph_override_patch(over: &ImportableEvent) -> Result<serde_json::Valu
     }))
 }
 
+/// Body of `PATCH /me/events/{id}` moving an imported single event to
+/// `event`, with its new SEQUENCE. Like the import, never carries attendees.
+pub(crate) fn build_graph_update_request(event: &ImportableEvent) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "subject": event.summary,
+        "start": graph_time(&event.start)?,
+        "end": graph_time(&event.end)?,
+        "isAllDay": matches!(event.start, EventTime::AllDay(_)),
+        "location": {"displayName": event.location},
+        "body": {"contentType": "text", "content": event.description},
+        "singleValueExtendedProperties": [
+            {"id": EMAILOPS_SEQUENCE_PROPERTY, "value": event.sequence.to_string()},
+        ],
+    }))
+}
+
 /// Extended property EmailOps stamps on events it imports, so a later import
 /// of the same `.ics` UID finds the event again.
 pub(crate) const EMAILOPS_UID_PROPERTY: &str = "String {6f5a6c1e-8d2b-4f0e-9a3c-2b7e1d4c5a90} Name EmailOpsIcalUid";
+
+/// Extended property holding the iCalendar SEQUENCE of what EmailOps wrote,
+/// so a later invitation update can tell whether it is newer.
+pub(crate) const EMAILOPS_SEQUENCE_PROPERTY: &str =
+    "String {6f5a6c1e-8d2b-4f0e-9a3c-2b7e1d4c5a90} Name EmailOpsSequence";
 
 /// Hex of the MS-OXOCAL `PidLidGlobalObjectId` class id.
 const GLOBAL_OBJECT_ID_CLASS: &str = "040000008200E00074C5B7101A82E008";
@@ -2027,6 +2105,20 @@ mod tests {
     }
 
     #[test]
+    fn graph_import_body_stamps_the_sequence_next_to_the_uid() {
+        let mut event = import_timed("a@example.com");
+        event.sequence = 2;
+        let body = build_graph_import_request(&event).expect("body");
+        assert_eq!(
+            body["singleValueExtendedProperties"],
+            serde_json::json!([
+                {"id": EMAILOPS_UID_PROPERTY, "value": "a@example.com"},
+                {"id": EMAILOPS_SEQUENCE_PROPERTY, "value": "2"}
+            ])
+        );
+    }
+
+    #[test]
     fn graph_import_body_uses_the_windows_zone_of_the_event() {
         let mut event = import_timed("a@example.com");
         event.rrule = Some("FREQ=WEEKLY;COUNT=3".into());
@@ -2410,6 +2502,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn outlook_find_reads_an_older_copy_without_a_sequence_as_zero() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/me/events"))
+            .and(query_param("$filter", outlook_imported_uid_filter("u@example.com")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"id": "ours"}]})))
+            .mount(&server)
+            .await;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        let found = client.find_event_by_uid("u@example.com").await.expect("find");
+        assert_eq!(found.map(|f| f.sequence), Some(0));
+    }
+
+    #[tokio::test]
+    async fn outlook_update_rewrites_our_copy_and_its_sequence() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path("/me/events/ours"))
+            .and(body_json(serde_json::json!({
+                "subject": "Planning sync",
+                "start": {"dateTime": "2026-12-01T10:00:00", "timeZone": "Romance Standard Time"},
+                "end": {"dateTime": "2026-12-01T11:00:00", "timeZone": "Romance Standard Time"},
+                "isAllDay": false,
+                "location": {"displayName": "Room 4"},
+                "body": {"contentType": "text", "content": "Agenda"},
+                "singleValueExtendedProperties": [{"id": EMAILOPS_SEQUENCE_PROPERTY, "value": "1"}],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": "ours"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut event = import_timed("a@example.com");
+        event.sequence = 1;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client.update_imported_event("ours", &event).await.expect("update");
+    }
+
+    #[tokio::test]
+    async fn outlook_update_surfaces_a_refusal() {
+        use crate::sync::calendar_provider::CalendarProvider;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_json(serde_json::json!({"error": {"code": "ErrorAccessDenied"}})),
+            )
+            .mount(&server)
+            .await;
+        let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
+        client
+            .update_imported_event("ours", &import_timed("a@example.com"))
+            .await
+            .expect_err("refused");
+    }
+
+    #[tokio::test]
     async fn outlook_find_checks_our_copies_first_then_the_uid() {
         use crate::sync::calendar_provider::CalendarProvider;
         use wiremock::matchers::{method, path, query_param};
@@ -2421,7 +2579,14 @@ mod tests {
             .and(query_param("$filter", outlook_imported_uid_filter("u@example.com")))
             .and(query_param("$select", "id"))
             .and(query_param("$top", "1"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{"id": "ours"}]})))
+            .and(query_param(
+                "$expand",
+                format!("singleValueExtendedProperties($filter=id eq '{EMAILOPS_SEQUENCE_PROPERTY}')"),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"value": [{
+                "id": "ours",
+                "singleValueExtendedProperties": [{"id": EMAILOPS_SEQUENCE_PROPERTY, "value": "3"}]
+            }]})))
             .mount(&server)
             .await;
         let client = OutlookCalendarClient::new("tok".into(), None, None).with_base_url(server.uri());
@@ -2430,7 +2595,8 @@ mod tests {
             found,
             Some(FoundEvent {
                 provider_event_id: "ours".into(),
-                imported_by_emailops: true
+                imported_by_emailops: true,
+                sequence: 3
             })
         );
     }
@@ -2459,7 +2625,8 @@ mod tests {
             found,
             Some(FoundEvent {
                 provider_event_id: "invite".into(),
-                imported_by_emailops: false
+                imported_by_emailops: false,
+                sequence: 0
             })
         );
         assert_eq!(client.find_event_by_uid("none@example.com").await.expect("find"), None);
@@ -2498,7 +2665,8 @@ mod tests {
             found.expect("find"),
             Some(FoundEvent {
                 provider_event_id: "invite".into(),
-                imported_by_emailops: false
+                imported_by_emailops: false,
+                sequence: 0
             })
         );
         let ours: Vec<_> = entries
