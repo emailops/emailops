@@ -262,7 +262,8 @@ Above the text of a new email, a reply or a reply-all, the **Instructions for AI
 the AI what you want: what you type there is never sent and never saved with the draft.
 **Generate with AI** writes the email from them; in a new email, the text you already wrote is
 background for it. **Polish** edits the text you wrote as the instructions say and keeps its
-facts and meaning. While the AI works, the text and **Send** are locked; if it fails or takes
+facts and meaning. It works on plain text, so it is not offered while the text holds a link
+or an image. While the AI works, the text and **Send** are locked; if it fails or takes
 longer than two minutes, your text stays as it was. Instructions or text too long for the AI
 are refused with how much to shorten them, never cut.
 

@@ -4935,3 +4935,17 @@ the GitHub API* — no release step to forget, but the hop would exist only to b
 *Generating the file in the site build from the newest tag* — a tag exists hours before
 its release is published, so any site build in that window would announce a release with
 no installers.
+
+## 2026-11-25 — Polish is not offered on a draft with links or images
+
+**Decision:** The composer's **Polish** action is disabled while the text the user wrote
+(signature left out) holds a link or an image, and its tooltip says why. Bold, italics and
+lists are still flattened to plain text by Polish; that loss is accepted.
+**Context:** Polish (#275) sends the model the draft as plain text and puts the model's
+plain-text answer in its place, so a link or an image in the draft would be dropped without
+the user choosing it. Generate already returned plain text, but Polish works on what the user
+wrote.
+**Rejected:** Leaving Polish on and documenting that it drops formatting — content the user
+added would disappear on one click. Making Polish keep the HTML — the most complete answer but
+much more work (markup through a small local model, sanitizing what comes back); it can be
+its own issue later.

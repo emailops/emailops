@@ -90,6 +90,7 @@
     "polishing": "Polishing…",
     "polishTitle": "Edit your draft as the instructions say, keeping its facts and meaning",
     "polishNeedsDraft": "Write something first, then polish it",
+    "polishDropsLinks": "Polish works on plain text and would drop this draft's links and images",
     "failed": "The AI could not finish: {{error}}. Your text is unchanged.",
     "timedOut": "The AI took too long to answer. Your text is unchanged; try again."
   },

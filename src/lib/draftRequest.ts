@@ -1,4 +1,5 @@
 import type { DraftFailedEvent, DraftGeneratedEvent } from '@/lib/api';
+import { withoutSignature } from '@/lib/signature';
 
 /** A `draft-generated` or `draft-failed` event, tagged by kind, or the end
  *  of the wait for one (`timedOut`). */
@@ -14,6 +15,16 @@ export type DraftOutcome =
  * model calls, with room for a request queued behind another AI task.
  */
 export const AI_DRAFT_TIMEOUT_MS = 120_000;
+
+/**
+ * Whether the text the user wrote (the composer's HTML, signature left out)
+ * holds a link or an image. Polish sends the model plain text and puts its
+ * answer in place of that text, so it would drop them: it is not offered then.
+ */
+export function draftHasLinksOrImages(bodyHtml: string): boolean {
+  const typed = new DOMParser().parseFromString(`<body>${withoutSignature(bodyHtml)}</body>`, 'text/html').body;
+  return typed.querySelector('a[href], img') !== null;
+}
 
 /** An outcome the backend sends: a `draft-generated` or `draft-failed` event. */
 export type EventOutcome = Extract<DraftOutcome, { event: unknown }>;

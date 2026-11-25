@@ -285,7 +285,8 @@ Au-dessus du texte d'un nouvel e-mail, d'une réponse ou d'une réponse à tous,
 **Instructions pour l'IA** dit à l'IA ce que vous voulez : ce que vous y tapez n'est jamais
 envoyé ni enregistré avec le brouillon. **Générer avec l'IA** écrit l'e-mail à partir de ces
 instructions ; dans un nouvel e-mail, le texte déjà écrit lui sert de contexte. **Peaufiner**
-retravaille votre texte selon les instructions en gardant ses faits et son sens. Pendant que
+retravaille votre texte selon les instructions en gardant ses faits et son sens. Il travaille sur du texte brut : il
+n'est pas proposé tant que le texte contient un lien ou une image. Pendant que
 l'IA travaille, le texte et **Envoyer** sont verrouillés ; si elle échoue ou met plus de deux
 minutes, votre texte reste tel quel. Des instructions ou un texte trop longs pour l'IA sont
 refusés avec la longueur à retirer, jamais coupés.
