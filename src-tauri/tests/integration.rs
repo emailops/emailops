@@ -69,6 +69,8 @@ fn make_email(id: &str, account_id: &str, timestamp: i64) -> Email {
         mailbox: "inbox".to_string(),
         is_sent: false,
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: None,
     }
 }
@@ -667,6 +669,8 @@ fn make_email_with(id: &str, account_id: &str, timestamp: i64, sender_email: &st
         mailbox: mailbox.to_string(),
         is_sent: mailbox == "sent",
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: None,
     }
 }

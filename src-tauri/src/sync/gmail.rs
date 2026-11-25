@@ -227,6 +227,9 @@ struct GmailMessage {
     payload: GmailPayload,
     #[serde(rename = "internalDate")]
     internal_date: String,
+    /// The whole message in bytes, attachments included.
+    #[serde(rename = "sizeEstimate", default)]
+    size_estimate: Option<i64>,
 }
 
 /// Draft resource where we only need the draft `id`. Used for `drafts.create`,
@@ -1108,6 +1111,8 @@ impl GmailClient {
             // through a send-as alias.
             is_sent: labels.iter().any(|l| l == "SENT"),
             is_starred: labels.iter().any(|l| l == "STARRED"),
+            size_bytes: msg.size_estimate,
+            has_attachments: None,
             // `?format=full` already returns the complete header list; before
             // this we read five of them and discarded the rest. No extra
             // network cost.
@@ -4688,6 +4693,31 @@ mod tests {
         assert!(starred.0.is_starred);
         let plain = client.parse_message(test_message(&["INBOX"])).await.expect("parse");
         assert!(!plain.0.is_starred);
+    }
+
+    /// `sizeEstimate` comes with every `format=full` read: the whole message,
+    /// attachments included, with no extra request.
+    #[tokio::test]
+    async fn parse_message_keeps_the_size_gmail_reports() {
+        let client = GmailClient::new("token".to_string(), None, None, None);
+        let mut sized: serde_json::Value = serde_json::from_str(
+            r#"{"id": "m1", "threadId": "t1", "labelIds": ["INBOX"], "snippet": "", "internalDate": "1700000000000",
+                "sizeEstimate": 48213,
+                "payload": {"mimeType": "text/plain", "headers": [], "body": {"size": 0}}}"#,
+        )
+        .expect("json");
+        let parsed = client
+            .parse_message(serde_json::from_value(sized.clone()).expect("decode"))
+            .await
+            .expect("parse");
+        assert_eq!(parsed.0.size_bytes, Some(48_213));
+
+        sized.as_object_mut().expect("object").remove("sizeEstimate");
+        let without_size = client
+            .parse_message(serde_json::from_value(sized).expect("decode"))
+            .await
+            .expect("parse");
+        assert_eq!(without_size.0.size_bytes, None);
     }
 
     // --- collect_inline_image_refs tests ---

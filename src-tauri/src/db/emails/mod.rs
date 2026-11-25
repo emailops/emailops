@@ -19,6 +19,7 @@ pub mod headers;
 pub mod junk;
 pub mod junk_model;
 pub mod list;
+pub mod list_sort;
 pub mod mailbox_state;
 pub mod search;
 pub mod snippets;
@@ -36,7 +37,7 @@ pub(super) use crate::util::html::strip_html_for_fts;
 // Body lives in email_bodies — all queries on the emails table use this column list.
 pub(super) const EMAIL_COLUMNS: &str = "id, account_id, thread_id, message_id, subject, sender, sender_email, \
      recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, \
-     references_header, is_starred";
+     references_header, is_starred, size_bytes";
 
 pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
     let recipients_json: String = row.get(7)?;
@@ -67,6 +68,9 @@ pub(super) fn row_to_email(row: &rusqlite::Row) -> rusqlite::Result<Email> {
         references: row.get(16).unwrap_or(None),
         // Absent from queries that list their own columns: not starred.
         is_starred: row.get::<_, i32>(17).unwrap_or(0) != 0,
+        size_bytes: row.get(18)?,
+        // Looked up per list page (`services::emails::mark_attachments`).
+        has_attachments: None,
         // Write-only transport field. Headers live in their own table and are
         // read via `get_email_headers_batch`, not hydrated onto every Email —
         // the vast majority of reads (list views, search) never need them.

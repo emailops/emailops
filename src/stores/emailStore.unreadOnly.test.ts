@@ -14,6 +14,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { DEFAULT_LIST_SORT } from '@/lib/listColumns';
 import { useEmailStore } from './emailStore';
 
 function unreadRow(id: string): Email {
@@ -31,7 +32,7 @@ describe('the Unread toggle', () => {
 
     await useEmailStore.getState().fetchEmails('acc', null, [], false, 'sent');
 
-    expect(api.getEmails).toHaveBeenCalledWith('acc', 50, 0, 'sent', true);
+    expect(api.getEmails).toHaveBeenCalledWith('acc', 50, 0, 'sent', true, DEFAULT_LIST_SORT);
     expect(api.getEmailCount).toHaveBeenCalledWith('acc', 'sent', true);
   });
 
@@ -45,7 +46,7 @@ describe('the Unread toggle', () => {
 
     await useEmailStore.getState().loadMoreEmails('acc', null, [], 'inbox');
 
-    expect(api.getEmails).toHaveBeenCalledWith('acc', 50, 1, 'inbox', true);
+    expect(api.getEmails).toHaveBeenCalledWith('acc', 50, 1, 'inbox', true, DEFAULT_LIST_SORT);
   });
 
   it('narrows a sidebar filter to unread conversations', async () => {

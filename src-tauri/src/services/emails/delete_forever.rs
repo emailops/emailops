@@ -673,6 +673,8 @@ mod tests {
             is_sent: false,
             is_starred: false,
             headers: None,
+            size_bytes: None,
+            has_attachments: None,
         }
     }
 

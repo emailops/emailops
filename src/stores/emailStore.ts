@@ -4,6 +4,7 @@ import type { EmailAttachment, MailboxView, ThreadAction, ThreadRef, ThreadSnooz
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { filterFromQuery, planListSource } from '@/lib/filterQuery';
+import { DEFAULT_LIST_SORT, type ListSort } from '@/lib/listColumns';
 import {
   INITIAL_PAGING,
   type ListPaging,
@@ -565,6 +566,11 @@ interface EmailStore {
    *  does not take it out of the list; the next fetch does. */
   unreadOnly: boolean;
   setUnreadOnly: (on: boolean) => void;
+  /** The full-width list's column-header sort. Session state like
+   *  `unreadOnly`: newest first at launch; `useEmails` refetches the list
+   *  when it changes, and a mailbox list asks the backend for this order. */
+  listSort: ListSort;
+  setListSort: (sort: ListSort) => void;
   /**
    * Thread actions, for one conversation or many (bulk selection). Each
    * updates the UI optimistically, sends the change to the account, and rolls
@@ -669,12 +675,14 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   resetAccountKey: null,
   listScope: 'inbox',
   unreadOnly: false,
+  listSort: DEFAULT_LIST_SORT,
   pendingRemovals: new Set<string>(),
   snoozes: new Map<string, ThreadSnooze>(),
 
   setPendingChatDraft: (draft) => set({ pendingChatDraft: draft }),
 
   setUnreadOnly: (on) => set({ unreadOnly: on }),
+  setListSort: (sort) => set({ listSort: sort }),
   consumePendingChatDraft: () => set({ pendingChatDraft: null }),
 
   openTab: async (email, focusId) => {
@@ -815,7 +823,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     // every later search or filter until the account changed.
     if (get().navigationInFlight) return;
 
-    const { searchQuery, unreadOnly } = get();
+    const { searchQuery, unreadOnly, listSort } = get();
     const view = mailbox ?? 'inbox';
     const source = planListSource(searchQuery);
 
@@ -885,7 +893,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         loaded = { type: 'pageLoaded', cursor: page.nextCursor, offset: 0, hasMore: page.nextCursor !== null };
       } else {
         [emails, totalCount] = await Promise.all([
-          api.getEmails(accountId, limit, 0, mailbox, unreadOnly),
+          api.getEmails(accountId, limit, 0, mailbox, unreadOnly, listSort),
           // Same mailbox and read filter as the list — counting the inbox
           // while listing Sent made hasMore compare two different sets.
           api.getEmailCount(accountId, mailbox, unreadOnly),
@@ -934,7 +942,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 
   loadMoreEmails: async (accountId, _filter, _selectedCategories, mailbox) => {
-    const { paging, totalCount, currentFetchId, searchQuery, unreadOnly } = get();
+    const { paging, totalCount, currentFetchId, searchQuery, unreadOnly, listSort } = get();
     if (paging.status !== 'idle') return;
     const source = planListSource(searchQuery);
     if (source.kind === 'query' && paging.cursor === null) return;
@@ -959,7 +967,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         moreEmails = withThreadActivity(page.emails, page.threadLatestAt);
         nextCursor = page.nextCursor;
       } else {
-        moreEmails = await api.getEmails(accountId, PAGE_SIZE, paging.offset, mailbox, unreadOnly);
+        moreEmails = await api.getEmails(accountId, PAGE_SIZE, paging.offset, mailbox, unreadOnly, listSort);
       }
 
       await useJunkStore.getState().fetchVerdicts(moreEmails.map((e) => e.id));
@@ -1081,6 +1089,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       focusEmailId: emailId,
       navigationMode: true,
       navigationInFlight: true,
+      // The message is placed by its date in the newest-first list.
+      listSort: DEFAULT_LIST_SORT,
     });
 
     try {

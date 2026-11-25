@@ -178,6 +178,8 @@ mod tests {
             is_read: false,
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             triage_status: None,
             category: "primary".to_string(),
             mailbox: "inbox".to_string(),

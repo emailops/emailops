@@ -604,6 +604,8 @@ mod tests {
             mailbox: mailbox.into(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }

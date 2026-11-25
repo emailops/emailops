@@ -24,6 +24,7 @@ mod uid_validity;
 
 use std::sync::Arc;
 
+use crate::db::emails::list_sort::ListSort;
 use crate::db::Database;
 use crate::models::error::Result;
 use crate::models::{Draft, Email, SaveDraftRequest};
@@ -72,7 +73,9 @@ pub use thread_actions::{
 
 /// List emails for one account, or — when `account_id` is `None` — merged
 /// across all enabled accounts (the unified "All accounts" inbox).
-/// `unread_only` keeps the unread rows (see `mailbox_scope_sql`).
+/// `unread_only` keeps the unread rows (see `mailbox_scope_sql`); `sort` is
+/// the order the list's column headers picked.
+#[allow(clippy::too_many_arguments)]
 pub fn get_emails(
     db: &Arc<Database>,
     account_id: Option<&str>,
@@ -81,12 +84,14 @@ pub fn get_emails(
     mailbox: Option<&str>,
     category: Option<&str>,
     unread_only: bool,
+    sort: ListSort,
 ) -> Result<Vec<Email>> {
     let scope = match account_id {
         Some(id) => crate::db::AccountScope::Account(id),
         None => crate::db::AccountScope::AllEnabled,
     };
-    let mut emails = db.get_emails(scope, limit, offset, None, mailbox, category, unread_only)?;
+    let mut emails = db.get_emails_sorted(scope, limit, offset, mailbox, category, unread_only, sort)?;
+    mark_attachments(db, &mut emails)?;
     // The inbox lists one row per conversation: its star is the thread's.
     if matches!(mailbox, None | Some("inbox")) {
         widen_stars_to_threads(db, &mut emails)?;
@@ -96,6 +101,16 @@ pub fn get_emails(
         widen_unread_to_threads(db, &mut emails)?;
     }
     Ok(emails)
+}
+
+/// Fill each list row's `has_attachments`: one lookup for the page.
+pub fn mark_attachments(db: &Database, emails: &mut [Email]) -> Result<()> {
+    let ids: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+    let with = db.email_ids_with_attachments(&ids)?;
+    for email in emails.iter_mut() {
+        email.has_attachments = Some(with.contains(&email.id));
+    }
+    Ok(())
 }
 
 /// List an account's custom folders for the sidebar. Well-known role folders
@@ -255,6 +270,7 @@ mod participant_tests {
 #[cfg(test)]
 mod list_tests {
     use super::*;
+    use crate::db::emails::list_sort::ListSortKey;
 
     fn inbox_message(id: &str, timestamp: i64, is_starred: bool) -> Email {
         Email {
@@ -277,8 +293,53 @@ mod list_tests {
             mailbox: "inbox".into(),
             is_sent: false,
             is_starred,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
+    }
+
+    #[test]
+    fn a_listed_row_says_whether_its_message_has_attachments() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        let mut with = inbox_message("with", 200, false);
+        with.thread_id = "t-with".into();
+        let mut without = inbox_message("without", 100, false);
+        without.thread_id = "t-without".into();
+        db.insert_emails_batch(&[with, without]).unwrap();
+        db.insert_email_attachment_meta("with", "acc-1", "att-1", "report.pdf", "application/pdf", 1_200)
+            .unwrap();
+        let db = Arc::new(db);
+
+        let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None, false, ListSort::default()).unwrap();
+
+        let flag = |id: &str| listed.iter().find(|e| e.id == id).unwrap().has_attachments;
+        assert_eq!(flag("with"), Some(true));
+        assert_eq!(flag("without"), Some(false));
+    }
+
+    #[test]
+    fn the_list_comes_back_in_the_chosen_order() {
+        let db = Database::new_for_testing().unwrap();
+        db.seed_test_account("acc-1");
+        let mut zed = inbox_message("zed", 200, false);
+        zed.thread_id = "t-zed".into();
+        zed.subject = "Zinc".into();
+        let mut ann = inbox_message("ann", 100, false);
+        ann.thread_id = "t-ann".into();
+        ann.subject = "Argon".into();
+        db.insert_emails_batch(&[zed, ann]).unwrap();
+        let db = Arc::new(db);
+        let by_subject = ListSort {
+            key: ListSortKey::Subject,
+            ascending: true,
+        };
+
+        let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None, false, by_subject).unwrap();
+
+        let ids: Vec<&str> = listed.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["ann", "zed"]);
     }
 
     #[test]
@@ -289,7 +350,7 @@ mod list_tests {
             .unwrap();
         let db = Arc::new(db);
 
-        let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None, false).unwrap();
+        let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None, false, ListSort::default()).unwrap();
 
         assert_eq!(listed.len(), 1, "{listed:?}");
         assert_eq!(listed[0].id, "new");
@@ -307,7 +368,7 @@ mod list_tests {
         let db = Arc::new(db);
 
         for unread_only in [false, true] {
-            let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None, unread_only).unwrap();
+            let listed = get_emails(&db, Some("acc-1"), 50, 0, None, None, unread_only, ListSort::default()).unwrap();
 
             assert_eq!(listed.len(), 1, "{listed:?}");
             assert_eq!(listed[0].id, "new");

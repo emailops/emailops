@@ -84,6 +84,13 @@ export interface Email {
   /** Starred (Gmail STARRED, Outlook flag, IMAP \Flagged). Per message; in
    *  the thread-deduped inbox list it means "any message of the thread". */
   isStarred: boolean;
+  /** The whole message in bytes, attachments included, as the provider
+   *  reported it at sync. `null` when unknown: Outlook reports none, and mail
+   *  synced before sizes were stored keeps none. */
+  sizeBytes?: number | null;
+  /** List rows only: the message has attachments (the `has:attachment`
+   *  definition). Absent outside the list. */
+  hasAttachments?: boolean;
   /** Search and smart-filter rows: when the row's thread last had activity.
    *  The row is the thread's newest MATCHING email, but the list sorts and
    *  dates threads by their newest email of any kind. */

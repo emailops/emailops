@@ -590,6 +590,8 @@ mod executor_tests {
             mailbox: "inbox".to_string(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: Some(RawHeaders {
                 list_unsubscribe: Some(list_unsubscribe.to_string()),
                 list_unsubscribe_post: post.map(str::to_string),

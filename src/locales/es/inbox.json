@@ -24,6 +24,19 @@
     "unread": "No leídos",
     "empty": "No hay correos sin leer"
   },
+  "listColumns": {
+    "sender": "Remitente",
+    "recipients": "Para",
+    "subject": "Asunto",
+    "size": "Tamaño",
+    "attachment": "Con adjunto",
+    "date": "Fecha",
+    "sortBy": "Ordenar por {{column}}",
+    "sortedAscending": "{{column}}, orden ascendente",
+    "sortedDescending": "{{column}}, orden descendente",
+    "columns": "Columnas",
+    "sizeUnknown": "Tamaño desconocido"
+  },
   "emptyState": {
     "syncing": "Sincronizando correos...",
     "noSearchResults": "Ningún correo coincide con tu búsqueda",

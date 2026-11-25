@@ -6820,6 +6820,8 @@ mod tests {
             mailbox: "inbox".into(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         };
         ScoredEmail {

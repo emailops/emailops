@@ -73,8 +73,8 @@ impl Database {
                 r#"INSERT INTO emails
                    (id, account_id, thread_id, message_id, subject, sender, sender_email,
                     sender_domain, recipients_json, cc_json, snippet, timestamp, is_read, triage_status, category, mailbox, is_sent, created_at,
-                    references_header, is_starred)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                    references_header, is_starred, size_bytes)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                    ON CONFLICT(id) DO UPDATE SET
                      account_id = excluded.account_id,
                      thread_id = excluded.thread_id,
@@ -96,7 +96,10 @@ impl Database {
                      -- A star change still owed to the provider wins over
                      -- the provider's older copy (V030).
                      is_starred = CASE WHEN star_push_pending_since IS NULL
-                                       THEN excluded.is_starred ELSE is_starred END"#,
+                                       THEN excluded.is_starred ELSE is_starred END,
+                     -- A copy without a size (Outlook, a locally rebuilt row)
+                     -- never makes a known size unknown again.
+                     size_bytes = COALESCE(excluded.size_bytes, size_bytes)"#,
                 params![
                     email.id,
                     email.account_id,
@@ -118,6 +121,7 @@ impl Database {
                     now,
                     email.references,
                     email.is_starred as i32,
+                    email.size_bytes,
                 ],
             )?;
             tx.execute(
@@ -175,6 +179,34 @@ mod tests {
     /// verdict *including a permanent `not_junk` override*, lens rows with
     /// hand-edited values, the chat citations linking the mail to past answers,
     /// and its embeddings.
+    #[test]
+    fn a_synced_size_is_stored() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.test");
+        let mut email = email_fixture("e1", "acc1", "<p>body</p>");
+        email.size_bytes = Some(48_213);
+
+        db.insert_emails_batch(&[email]).unwrap();
+
+        assert_eq!(db.get_email_by_id("e1").unwrap().unwrap().size_bytes, Some(48_213));
+    }
+
+    /// Outlook reports no size; neither does a row a local path rebuilds. A
+    /// known size never turns back into "unknown".
+    #[test]
+    fn re_ingesting_without_a_size_keeps_the_known_one() {
+        let db = Database::new_for_testing().unwrap();
+        insert_account(&db, "acc1", "me@example.test");
+        let mut sized = email_fixture("e1", "acc1", "<p>body</p>");
+        sized.size_bytes = Some(48_213);
+        db.insert_emails_batch(&[sized]).unwrap();
+
+        db.insert_emails_batch(&[email_fixture("e1", "acc1", "<p>body</p>")])
+            .unwrap();
+
+        assert_eq!(db.get_email_by_id("e1").unwrap().unwrap().size_bytes, Some(48_213));
+    }
+
     #[test]
     fn re_ingesting_an_email_keeps_its_tags() {
         let db = Database::new_for_testing().unwrap();

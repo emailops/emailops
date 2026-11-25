@@ -2,6 +2,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { arch as osArch, platform as osPlatform, version as osVersion } from '@tauri-apps/plugin-os';
 import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
+import type { ListSort } from '@/lib/listColumns';
 import type {
   Account,
   AccountColor,
@@ -298,15 +299,25 @@ export interface Folder {
 
 /** `accountId: null` selects the unified ("All accounts") view — emails
  *  merged across every enabled account. `unreadOnly` lists only unread rows
- *  (in a thread view, conversations with any unread message). */
+ *  (in a thread view, conversations with any unread message). `sort` orders
+ *  the whole list (omitted: newest first); the Snoozed view ignores it. */
 export async function getEmails(
   accountId: string | null,
   limit?: number,
   offset?: number,
   mailbox?: MailboxView,
   unreadOnly?: boolean,
+  sort?: ListSort,
 ): Promise<Email[]> {
-  return invoke('get_emails', { accountId, limit, offset, mailbox, unreadOnly });
+  return invoke('get_emails', {
+    accountId,
+    limit,
+    offset,
+    mailbox,
+    unreadOnly,
+    sortBy: sort?.key,
+    sortDir: sort?.dir,
+  });
 }
 
 /** Custom folders of one account, sorted by display name. Empty for

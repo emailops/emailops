@@ -3689,6 +3689,8 @@ mod extra_mailbox_window_tests {
             mailbox: "sent".to_string(),
             is_sent: true,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
@@ -4579,6 +4581,8 @@ mod sync_anchor_tests {
             mailbox: mailbox.to_string(),
             is_sent: mailbox == "sent",
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
@@ -4715,6 +4719,8 @@ mod backfill_watermark_persistence_tests {
             mailbox: "inbox".to_string(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         };
         db.insert_email(&existing).expect("seed inbox email");
@@ -4782,6 +4788,8 @@ mod inbox_gap_repair_tests {
             mailbox: "inbox".to_string(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
@@ -5015,6 +5023,8 @@ mod spam_reconcile_tests {
             mailbox: mailbox.to_string(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
@@ -5446,6 +5456,8 @@ mod interrupted_run_tests {
             mailbox: "inbox".to_string(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
@@ -5603,6 +5615,8 @@ mod download_pipeline_tests {
             mailbox: "inbox".to_string(),
             is_sent: false,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }
