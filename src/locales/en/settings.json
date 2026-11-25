@@ -77,6 +77,10 @@
     "afterLeaveNext": "Open the next conversation",
     "afterLeavePrevious": "Open the previous conversation",
     "afterLeaveList": "Go back to the list",
+    "conversationView": "Conversation view",
+    "conversationViewHelp": "How an open conversation is shown. With your latest message first, every message is open: the last one you wrote is on top and the rest of the conversation follows, oldest first. Reply, Reply all and Forward work the same in both.",
+    "conversationViewPerMessage": "Open the latest message, expand the others one by one",
+    "conversationViewOwnFirst": "Your latest message first, every message open",
     "defaultSender": "Send new messages from",
     "defaultSenderHelp": "The account a new message starts from. Replies, forwards and drafts keep their own account.",
     "defaultSenderView": "Account of the selected view"

@@ -110,6 +110,25 @@ impl Database {
         rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
     }
 
+    /// Which of `email_ids` have stored attachment metadata: what the list's
+    /// attachment column shows, by the same definition as `has:attachment`.
+    pub fn email_ids_with_attachments(&self, email_ids: &[&str]) -> Result<std::collections::HashSet<String>> {
+        let mut found = std::collections::HashSet::new();
+        let conn = self.reader();
+        // One bind per id; stay well under SQLite's variable limit.
+        for chunk in email_ids.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT DISTINCT email_id FROM email_attachment_meta WHERE email_id IN ({placeholders})"
+            ))?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| row.get::<_, String>(0))?;
+            for row in rows {
+                found.insert(row?);
+            }
+        }
+        Ok(found)
+    }
+
     /// Ids of the account's emails with no attachment metadata at all — the
     /// candidates of the one-time attachment backfill.
     pub fn get_email_ids_without_attachment_meta(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {

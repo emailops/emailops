@@ -294,7 +294,7 @@ async fn generate_reply_draft(
 /// New-email path: skip the inbound lookup and the thread context; the
 /// service builds a "compose new" prompt. Save and emit OpenComposer.
 async fn generate_new_draft(ctx: &ToolCtx<'_>, to: &[String], subject: &str, instructions: Option<&str>) -> ToolOutput {
-    let result = match emails::generate_new_draft(ctx.db, ctx.account_id, to, subject, instructions).await {
+    let result = match emails::generate_new_draft(ctx.db, ctx.account_id, to, subject, instructions, None).await {
         Ok(r) => r,
         Err(e) => return ToolOutput::text(format!("Draft generation failed: {e}")),
     };

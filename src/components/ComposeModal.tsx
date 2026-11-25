@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { InlineError } from '@/components/common/InlineError';
 import { Modal } from '@/components/common/Modal';
+import { AiInstructionBar } from '@/components/EmailView/AiInstructionBar';
 import { AttachMenu } from '@/components/shared/AttachMenu';
 import { RichTextEditor } from '@/components/shared/RichTextEditor';
 import { Select } from '@/components/shared/Select';
@@ -34,7 +35,12 @@ import {
 } from '@/lib/composeDraft';
 import { plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { extractEmail, mergePendingRecipient } from '@/lib/composeRecipients';
-import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
+import {
+  AI_DRAFT_TIMEOUT_MS,
+  createDraftRequestTracker,
+  type DraftOutcome,
+  draftHasLinksOrImages,
+} from '@/lib/draftRequest';
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { replaceBodyKeepingSignature, withoutSignature } from '@/lib/signature';
@@ -149,6 +155,8 @@ export function ComposeModal({
   // each time a draft is requested — same pattern as EmailView's AI Draft.
   const draftTrackerRef = useRef(createDraftRequestTracker());
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  // Why the last AI request failed, shown under the instructions.
+  const [aiError, setAiError] = useState<string | null>(null);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
 
   useEffect(() => {
@@ -161,13 +169,20 @@ export function ComposeModal({
   const applyDraftOutcomeRef = useRef<(outcome: DraftOutcome) => void>(() => {});
   applyDraftOutcomeRef.current = (outcome) => {
     setIsGeneratingDraft(false);
+    // A failure or a timeout leaves the body as the user left it.
     if (outcome.kind === 'failed') {
+      setAiError(t('compose:aiDraft.failed', { error: outcome.event.error }));
       addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
       return;
     }
-    // Replace the body with the generated draft (the typed text was the
-    // brief, sent as instructions), above the signature. Convert plain text
-    // → HTML so the rich-text editor renders line breaks correctly.
+    if (outcome.kind === 'timedOut') {
+      setAiError(t('compose:aiDraft.timedOut'));
+      addLog('error', 'ai', 'AI draft timed out; the composer keeps its text');
+      return;
+    }
+    // Replace the body with the generated or polished draft (the typed text
+    // went to the model as the draft), above the signature. Convert plain
+    // text → HTML so the rich-text editor renders line breaks correctly.
     const draft = plainTextToHtml(outcome.event.body);
     setBodyHtml((current) => replaceBodyKeepingSignature(current, draft, 'new'));
     addLog('success', 'ai', 'AI draft ready');
@@ -199,6 +214,8 @@ export function ComposeModal({
   const unusualRecipients = detectUnusualRecipients(allRecipients, selfEmails);
   const isLoadingAttachments = draftFiles.isStoring;
   const outgoing = useMemo(() => prepareOutgoingHtml(bodyHtml), [bodyHtml]);
+  // What the user wrote, signature left out: the draft the AI works on.
+  const typedBody = useMemo(() => prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim(), [bodyHtml]);
   const readyToSend = canSend({
     to: mergePendingRecipient(toRecipients, toInput),
     cc: mergePendingRecipient(ccRecipients, ccInput),
@@ -404,7 +421,8 @@ export function ComposeModal({
       inlineImages: prepared.inlineImages.length,
       attachments: attachments.length + draftFiles.files.length,
     });
-    if (!ready || isLoadingAttachments) return;
+    // The AI is about to replace the body: what would go out is not final.
+    if (!ready || isLoadingAttachments || isGeneratingDraft) return;
     setSendError(null);
     setIsSending(true);
     try {
@@ -475,31 +493,49 @@ export function ComposeModal({
   };
 
   const handleSend = () => void submit(null);
-  const handleSendKey = useComposerSendKey(handleSend, isSending || sent || isLoadingAttachments);
+  const handleSendKey = useComposerSendKey(handleSend, isSending || sent || isLoadingAttachments || isGeneratingDraft);
 
   // Recipients + subject are the minimum the backend needs to draft a new
   // email; the subject is always part of the brief on that side.
   const canDraftWithAi = mergePendingRecipient(toRecipients, toInput).length > 0 && !!subject.trim();
 
-  const handleDraftWithAI = async () => {
-    const to = mergePendingRecipient(toRecipients, toInput);
-    if (to.length === 0 || !subject.trim()) return;
-    // Whatever the user has already typed in the body becomes the freeform
-    // brief for the model (subject is folded in backend-side). Empty is fine —
-    // the model then drafts purely from recipients + subject.
-    const brief = prepareOutgoingHtml(withoutSignature(bodyHtml)).plainText.trim();
+  /** Start an AI request (`start` returns its id) and wait for its outcome,
+   *  at most `AI_DRAFT_TIMEOUT_MS`. */
+  const requestAi = async (what: string, start: () => Promise<string>) => {
+    setAiError(null);
     setIsGeneratingDraft(true);
-    addLog('info', 'ai', 'Requesting AI draft…');
-    draftTrackerRef.current.begin();
+    addLog('info', 'ai', `Requesting ${what}…`);
+    const token = draftTrackerRef.current.begin();
+    setTimeout(() => {
+      const expired = draftTrackerRef.current.expire(token);
+      if (expired) applyDraftOutcomeRef.current(expired);
+    }, AI_DRAFT_TIMEOUT_MS);
     try {
-      const requestId = await api.generateNewDraft(fromAccountId, to, subject.trim(), brief || null);
+      const requestId = await start();
       const early = draftTrackerRef.current.resolve(requestId);
       if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
       setIsGeneratingDraft(false);
       draftTrackerRef.current.cancel();
-      addLog('error', 'ai', `Failed to start AI draft: ${errorText(err)}`);
+      setAiError(t('compose:aiDraft.failed', { error: errorText(err) }));
+      addLog('error', 'ai', `Failed to start ${what}: ${errorText(err)}`);
     }
+  };
+
+  // The instructions steer the model and are never part of the email; the
+  // body goes to it as the draft (background for Generate, the text Polish
+  // edits).
+  const handleDraftWithAI = (instructions: string) => {
+    const to = mergePendingRecipient(toRecipients, toInput);
+    if (to.length === 0 || !subject.trim()) return;
+    void requestAi('AI draft', () =>
+      api.generateNewDraft(fromAccountId, to, subject.trim(), instructions || null, typedBody || null),
+    );
+  };
+
+  const handlePolishWithAI = (instructions: string) => {
+    if (!typedBody) return;
+    void requestAi('AI polish', () => api.polishDraft(fromAccountId, 'new', typedBody, instructions || null));
   };
 
   const renderTokenInput = (
@@ -603,7 +639,7 @@ export function ComposeModal({
               <button
                 type="button"
                 onClick={() => void handleMaximize()}
-                disabled={isSending || isLoadingAttachments}
+                disabled={isSending || isLoadingAttachments || isGeneratingDraft}
                 className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100 transition-colors disabled:opacity-40"
                 title={t('compose:openInTab')}
               >
@@ -704,10 +740,24 @@ export function ComposeModal({
             />
           </div>
 
-          {/* Body */}
+          {aiDraftsEnabled && (
+            <AiInstructionBar
+              onGenerate={handleDraftWithAI}
+              onPolish={handlePolishWithAI}
+              isGenerating={isGeneratingDraft}
+              hasDraft={typedBody.length > 0}
+              draftHasLinksOrImages={draftHasLinksOrImages(bodyHtml)}
+              canGenerate={canDraftWithAi && !isSending && !sent}
+              generateTitle={t('compose:aiDraft.newTitle')}
+              error={aiError}
+            />
+          )}
+
+          {/* Body: locked while the AI writes it */}
           <RichTextEditor
             value={bodyHtml}
             onChange={setBodyHtml}
+            disabled={isGeneratingDraft}
             placeholder={t('compose:bodyPlaceholder')}
             contentClassName="min-h-[240px]"
             onAttachFiles={handleFiles}
@@ -831,30 +881,11 @@ export function ComposeModal({
               />
             </svg>
           </AttachMenu>
-          {aiDraftsEnabled && (
-            <button
-              type="button"
-              onClick={handleDraftWithAI}
-              disabled={isSending || sent || isGeneratingDraft || !canDraftWithAi}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
-              title={t('compose:aiDraft.newTitle')}
-            >
-              {isGeneratingDraft ? (
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-b-2 border-white" />
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 17.657l.707.707M12 21v-1m-3-7a3 3 0 116 0c0 1.657-1.5 2.5-1.5 4h-3c0-1.5-1.5-2.343-1.5-4z"
-                  />
-                </svg>
-              )}
-              {isGeneratingDraft ? t('compose:aiDraft.generating') : t('compose:aiDraft.generate')}
-            </button>
-          )}
-          <TranslateComposeControl bodyHtml={bodyHtml} onApply={setBodyHtml} disabled={isSending || sent} />
+          <TranslateComposeControl
+            bodyHtml={bodyHtml}
+            onApply={setBodyHtml}
+            disabled={isSending || sent || isGeneratingDraft}
+          />
           <div className="flex-1" />
           <button
             type="button"
@@ -871,7 +902,7 @@ export function ComposeModal({
             }
             onSend={handleSend}
             onSchedule={(at) => void submit(at)}
-            disabled={isSending || sent || isLoadingAttachments || !readyToSend}
+            disabled={isSending || sent || isLoadingAttachments || isGeneratingDraft || !readyToSend}
           />
         </div>
       </div>

@@ -2,6 +2,7 @@ import { observeElementRect, type Rect, useVirtualizer } from '@tanstack/react-v
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { allowEmailDragOver, ignoreEmailDrop } from '@/lib/emailDrag';
+import type { ListColumns } from '@/lib/listColumns';
 import { measuredRowHeight, visibleScrollRect } from '@/lib/rowMeasure';
 import {
   INITIAL_SCROLL_RESTORE,
@@ -46,6 +47,8 @@ interface VirtualEmailListProps {
   onOpenInTab?: (email: Email) => void;
   onChatAboutThread?: (email: Email) => void;
   compact?: boolean;
+  /** The optional cells of the compact rows (see `EmailRow.columns`). */
+  columns?: ListColumns;
   /** Unified ("All accounts") mode: per-account color bar. Returns undefined
    *  outside unified mode so rows render exactly as before. */
   getAccountBadge?: (email: Email) => { colorClass: string; label: string; chip?: boolean } | undefined;
@@ -86,6 +89,7 @@ export function VirtualEmailList({
   onOpenInTab,
   onChatAboutThread,
   compact = false,
+  columns,
   getAccountBadge,
   getOwnerEmail,
   nameOf,
@@ -323,7 +327,9 @@ export function VirtualEmailList({
   return (
     <div
       ref={scrollContainerRef as React.LegacyRef<HTMLDivElement>}
-      className="flex-1 overflow-y-auto"
+      // The compact list's column header reserves the same scrollbar gutter,
+      // so its right-hand columns line up with the rows'.
+      className={`flex-1 overflow-y-auto ${compact ? '[scrollbar-gutter:stable]' : ''}`}
       // An email dragged across the list on its way to a folder: keep the
       // normal drag cursor instead of "no drop" (see allowEmailDragOver).
       onDragOver={allowEmailDragOver}
@@ -378,6 +384,7 @@ export function VirtualEmailList({
                 onOpenInTab={onOpenInTab}
                 onChatAboutThread={onChatAboutThread}
                 compact={compact}
+                columns={columns}
                 accountBadge={getAccountBadge?.(email)}
                 ownerEmail={getOwnerEmail?.(email)}
                 nameOf={nameOf}

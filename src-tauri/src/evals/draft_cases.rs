@@ -3,10 +3,11 @@
 //! `draft_eval` scores drafts against the user's real replies, so it needs a
 //! private mailbox. This harness needs none: each case in
 //! `src-tauri/evals/drafts/cases.yaml` describes a synthetic account (with or
-//! without a signature), a thread to answer or a new message to write, and
-//! what the end of the draft must look like. It seeds an in-memory DB and runs
-//! the real `services::emails::{generate_draft, generate_new_draft}`, so the
-//! prompt the app builds is the one under test. Scoring is heuristic (no judge).
+//! without a signature), a thread to answer, a new message to write or a draft
+//! to polish, and what the draft must look like. It seeds an in-memory DB and
+//! runs the real `services::emails::{generate_draft, generate_new_draft,
+//! polish_draft}`, so the prompt the app builds is the one under test. Scoring
+//! is heuristic (no judge).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use serde::Deserialize;
 
 use crate::db::Database;
 use crate::models::{Account, Email};
-use crate::services::emails::{generate_draft, generate_new_draft};
+use crate::services::emails::{generate_draft, generate_new_draft, polish_draft, DraftKind};
 
 use super::json_report::{EvidenceCheck, ItemEvidence, ItemResult, JsonRunReport};
 use super::{EvalError, EvalResult};
@@ -27,6 +28,8 @@ const EVAL_ACCOUNT_ID: &str = "eval-draft-acct";
 pub enum DraftCaseKind {
     Reply,
     New,
+    /// Polish `draft` as a new message, following `instructions`.
+    Polish,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +78,10 @@ pub struct DraftCase {
     pub subject: Option<String>,
     #[serde(default)]
     pub instructions: Option<String>,
+    /// New: what the compose window already holds, background for the model.
+    /// Polish: the draft to polish.
+    #[serde(default)]
+    pub draft: Option<String>,
     /// Reply: the user's prompt template (Settings → AI drafts); absent = the
     /// default one.
     #[serde(default)]
@@ -342,6 +349,8 @@ fn case_email(id: String, thread_id: String, account_email: &str, m: &CaseMessag
         is_read: true,
         is_sent,
         is_starred: false,
+        size_bytes: None,
+        has_attachments: None,
         headers: None,
         triage_status: None,
         category: "primary".to_string(),
@@ -416,7 +425,22 @@ async fn draft_once(db: &Arc<Database>, case: &DraftCase, reply_to: Option<&str>
                 .subject
                 .as_deref()
                 .ok_or_else(|| EvalError::Config(format!("case {}: new needs a subject", case.id)))?;
-            generate_new_draft(db, EVAL_ACCOUNT_ID, &case.to, subject, instructions).await?
+            generate_new_draft(
+                db,
+                EVAL_ACCOUNT_ID,
+                &case.to,
+                subject,
+                instructions,
+                case.draft.as_deref(),
+            )
+            .await?
+        }
+        DraftCaseKind::Polish => {
+            let draft = case
+                .draft
+                .as_deref()
+                .ok_or_else(|| EvalError::Config(format!("case {}: polish needs a draft", case.id)))?;
+            polish_draft(db, EVAL_ACCOUNT_ID, DraftKind::New, draft, instructions).await?
         }
     };
     Ok(result.body)
@@ -677,6 +701,7 @@ mod tests {
             match c.kind {
                 DraftCaseKind::Reply => assert!(!c.thread.is_empty(), "{} needs a thread", c.id),
                 DraftCaseKind::New => assert!(c.subject.is_some() && !c.to.is_empty(), "{} needs to+subject", c.id),
+                DraftCaseKind::Polish => assert!(c.draft.is_some(), "{} needs a draft to polish", c.id),
             }
         }
     }

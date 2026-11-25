@@ -12,7 +12,7 @@ use crate::db::emails::search::TagQuery;
 use crate::db::{AccountScope, Database};
 use crate::models::error::Result;
 use crate::models::{Email, ThreadCursor};
-use crate::services::emails::{widen_stars_to_threads, widen_unread_to_threads};
+use crate::services::emails::{mark_attachments, widen_stars_to_threads, widen_unread_to_threads};
 use crate::services::search::matches_parsed_filters;
 
 /// One page of a list, as the frontend and the CLI ask for it.
@@ -178,6 +178,7 @@ pub fn list_threads(db: &Arc<Database>, request: ListRequest<'_>) -> Result<Thre
     };
     widen_stars_to_threads(db, &mut page.emails)?;
     widen_unread_to_threads(db, &mut page.emails)?;
+    mark_attachments(db, &mut page.emails)?;
     // The query's shape only: a query can hold names and addresses.
     crate::services::logger::log(
         "debug",
@@ -258,6 +259,21 @@ mod tests {
             assert!(pages < 100, "the walk must end");
             between(pages, db);
         }
+    }
+
+    #[test]
+    fn a_search_row_says_whether_its_message_has_attachments() {
+        let db = db();
+        insert(&db, "with", "a", "t1", 200);
+        insert(&db, "without", "a", "t2", 100);
+        db.insert_email_attachment_meta("with", "a", "att-1", "factura.pdf", "application/pdf", 1_200)
+            .unwrap();
+
+        let page = list_threads(&db, request(Some("a"), "factura", None)).unwrap();
+
+        let flag = |id: &str| page.emails.iter().find(|e| e.id == id).unwrap().has_attachments;
+        assert_eq!(flag("with"), Some(true));
+        assert_eq!(flag("without"), Some(false));
     }
 
     #[test]

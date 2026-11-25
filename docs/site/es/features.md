@@ -120,6 +120,15 @@ o 30 segundos, 6 por defecto. Desactivado, archivar y eliminar llegan a tu prove
 momento, sin Deshacer. El Deshacer que aparece tras posponer dura lo mismo. **Deshacer envío** es
 un ajuste aparte.
 
+<!-- claim:feat-organize-delete-forever -->
+En **Papelera** y **Spam**, **Eliminar definitivamente** en la barra de la selección borra los
+mensajes seleccionados, y **Vaciar la papelera** o **Vaciar spam** encima de la lista los borra
+todos. Primero ves cuántos mensajes se irán y lo confirmas; una barra muestra el avance,
+**Cancelar** se detiene tras el lote en curso, y al final se indica cuántos se borraron y por qué
+no se pudo con alguno. Solo se toca esa carpeta. Funciona en cuentas IMAP y Outlook. Gmail borra
+por su cuenta lo que lleva 30 días en la papelera o el spam; borrarlo antes desde EmailOps
+requeriría acceso completo a la cuenta de Gmail, que EmailOps no pide.
+
 <!-- claim:feat-organize-5 -->
 Cuando la conversación que estás leyendo sale de la lista — archivada, eliminada, pospuesta o
 movida a Spam —, se abre la siguiente. **Ajustes → Apariencia → Después de archivar o eliminar**
@@ -487,6 +496,31 @@ predeterminado. Una columna deja de crecer antes de que el panel de lectura qued
 320 px, y los anchos se conservan entre reinicios. Si se abre el panel de la derecha (chat o
 calendario) o la ventana se estrecha, una columna ensanchada devuelve ese ancho, primero la lista,
 hasta su ancho predeterminado, y lo recupera cuando vuelve a haber sitio.
+
+<!-- claim:feat-interface-7 -->
+En la vista a ancho completo, la lista de correos tiene encabezados de columna. Haz clic en
+**Remitente**, **Asunto**, **Fecha** o **Tamaño** para ordenar toda la lista por esa columna, con
+todas sus páginas, y vuelve a hacer clic para invertir el orden. La lista empieza por lo más reciente
+y vuelve a ese orden en la vista dividida; una búsqueda, un filtro inteligente y **Pospuestos**
+mantienen su propio orden, y en **Enviados** la primera columna muestra los destinatarios y no
+ordena. El botón **Columnas**, al final del encabezado, muestra u oculta **Tamaño** y **Con
+adjunto**, y la elección se conserva entre reinicios. El tamaño es el del mensaje completo, con sus
+adjuntos, tal como lo indica Gmail o el servidor IMAP al sincronizar el mensaje. Outlook no lo
+indica, y el correo sincronizado antes de que existiera la columna tampoco lo tiene: ambos muestran
+un guion.
+
+<!-- claim:feat-interface-8 -->
+**Ajustes → Apariencia → Vista de conversación** elige cómo se muestra una conversación abierta.
+**Abrir el último mensaje y desplegar los demás uno a uno**, la predeterminada, abre el mensaje más
+reciente y muestra cerrados los anteriores, que se abren con un clic. **Tu último mensaje primero,
+todos los mensajes abiertos** pone arriba el último mensaje que enviaste desde esa cuenta y debajo el
+resto de la conversación, del más antiguo al más reciente, con todos los mensajes abiertos y cada uno
+una sola vez; una conversación en la que no has escrito lo indica y muestra todos los mensajes del más
+antiguo al más reciente. Al abrir otra conversación se empieza desde arriba,
+salvo si se abrió en un mensaje concreto desde un enlace, que se muestra como en la vista
+predeterminada. La vista solo cambia lo
+que se ve: **Responder**, **Responder a todos** y **Reenviar** contestan, citan y adjuntan los mismos
+mensajes en las dos, y la elección se conserva entre reinicios.
 
 ## Atajos de teclado {#keyboard-shortcuts}
 

@@ -2,6 +2,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
 import { arch as osArch, platform as osPlatform, version as osVersion } from '@tauri-apps/plugin-os';
 import type { CalendarDeleteScope, CalendarRecurrence } from '@/lib/calendarEvent';
+import type { ListSort } from '@/lib/listColumns';
 import type {
   Account,
   AccountColor,
@@ -302,15 +303,25 @@ export interface Folder {
 
 /** `accountId: null` selects the unified ("All accounts") view — emails
  *  merged across every enabled account. `unreadOnly` lists only unread rows
- *  (in a thread view, conversations with any unread message). */
+ *  (in a thread view, conversations with any unread message). `sort` orders
+ *  the whole list (omitted: newest first); the Snoozed view ignores it. */
 export async function getEmails(
   accountId: string | null,
   limit?: number,
   offset?: number,
   mailbox?: MailboxView,
   unreadOnly?: boolean,
+  sort?: ListSort,
 ): Promise<Email[]> {
-  return invoke('get_emails', { accountId, limit, offset, mailbox, unreadOnly });
+  return invoke('get_emails', {
+    accountId,
+    limit,
+    offset,
+    mailbox,
+    unreadOnly,
+    sortBy: sort?.key,
+    sortDir: sort?.dir,
+  });
 }
 
 /** Custom folders of one account, sorted by display name. Empty for
@@ -619,6 +630,26 @@ export async function deleteEmail(accountId: string, emailId: string): Promise<v
 }
 
 /**
+ * Delete messages of one account's Trash or Spam forever, in the background;
+ * `emailIds: null` empties the whole folder. Resolves once the run is queued:
+ * progress and the outcome arrive as `delete-forever-progress` and
+ * `delete-forever-finished`, tagged with `runId`.
+ */
+export async function deleteForever(
+  accountId: string,
+  folder: 'trash' | 'spam',
+  emailIds: string[] | null,
+  runId: string,
+): Promise<void> {
+  return invoke('delete_forever', { accountId, folder, emailIds, runId });
+}
+
+/** Stop a `deleteForever` run before its next batch. */
+export async function cancelDeleteForever(runId: string): Promise<void> {
+  return invoke('cancel_delete_forever', { runId });
+}
+
+/**
  * Past thread used as precedent in an AI-generated draft. Surfaced in the
  * reply panel so the user can audit what the model was grounded on.
  */
@@ -661,8 +692,9 @@ export async function generateDraft(accountId: string, emailId: string, instruct
 
 /**
  * Kick off AI draft generation for a brand-new email (no thread to reply to).
- * Drives the compose window's recipients + subject, plus an optional freeform
- * brief (`instructions` — typically whatever the user has jotted in the body).
+ * Drives the compose window's recipients + subject, the user's
+ * `instructions` (the Instructions for AI box, never sent) and, as
+ * background, the `draft` already in the body.
  *
  * Same async contract as `generateDraft`: returns a `requestId` immediately;
  * the draft arrives via the `draft-generated` / `draft-failed` events keyed by
@@ -673,8 +705,26 @@ export async function generateNewDraft(
   to: string[],
   subject: string,
   instructions?: string | null,
+  draft?: string | null,
 ): Promise<string> {
-  return invoke('generate_new_draft', { accountId, to, subject, instructions });
+  return invoke('generate_new_draft', { accountId, to, subject, instructions, draft });
+}
+
+/**
+ * Kick off an AI polish of the draft being written (`draft`, plain text with
+ * the signature left out): the same facts and meaning, edited as
+ * `instructions` say. `kind` decides who signs, as for a generated draft.
+ *
+ * Same async contract as `generateNewDraft`: a `requestId` now, the polished
+ * body on `draft-generated` or the error on `draft-failed`.
+ */
+export async function polishDraft(
+  accountId: string,
+  kind: 'new' | 'reply',
+  draft: string,
+  instructions?: string | null,
+): Promise<string> {
+  return invoke('polish_draft', { accountId, kind, draft, instructions });
 }
 
 // ── AI translation ───────────────────────────────────────────────────────────

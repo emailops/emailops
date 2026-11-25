@@ -112,6 +112,15 @@ you archive or delete something else or open another view), so Undo simply puts 
 6 by default. With it off, archiving and deleting reach your mail provider at once, without Undo.
 The Undo offered after a snooze lasts as long. **Undo send** is a separate setting.
 
+<!-- claim:feat-organize-delete-forever -->
+In **Trash** and **Spam**, **Delete forever** in the selection toolbar erases the selected
+messages, and **Empty Trash** or **Empty Spam** above the list erases them all. You see how many
+messages will go and confirm first; a bar shows the progress, **Cancel** stops after the current
+batch, and the end says how many were erased and why any could not be. Only that folder is
+touched. This works on IMAP and Outlook accounts. Gmail erases what has been in Trash or Spam
+for 30 days on its own; erasing sooner from EmailOps would need full access to the Gmail
+account, which EmailOps does not ask for.
+
 <!-- claim:feat-organize-5 -->
 When the conversation you are reading leaves the list — archived, deleted, snoozed, or moved to
 Spam — the next one opens. **Settings → Appearance → After archiving or deleting** chooses
@@ -465,6 +474,27 @@ before the reading pane gets narrower than 320 px, and the widths are kept acros
 the panel on the right (chat or calendar) opens or the window gets narrower, a widened column gives
 that width back, the list first, down to its default width, and gets it back when there is room
 again.
+
+<!-- claim:feat-interface-7 -->
+In the full-width layout the email list has column headers. Click **Sender**, **Subject**, **Date**
+or **Size** to sort the whole list by that column, every page of it, and click again to reverse the
+order. The list starts newest first and goes back to that order in the split layout; a search, a
+smart filter and **Snoozed** keep their own order, and in **Sent** the first column lists the
+recipients and does not sort. The **Columns** button at the end of the header shows or hides
+**Size** and **Has attachment**, and the choice is kept across restarts. The size is the whole
+message, attachments included, as Gmail or the IMAP server reports it when the message is synced.
+Outlook reports none, and mail synced before the column existed has none either: both show a dash.
+
+<!-- claim:feat-interface-8 -->
+**Settings → Appearance → Conversation view** chooses how an open conversation is shown. **Open
+the latest message, expand the others one by one**, the default, opens the newest message and shows
+the earlier ones closed, to open with a click. **Your latest message first, every message open**
+puts the last message you sent from that account on top and the rest of the conversation below it,
+oldest first, with every message open and each one shown once; a conversation you have not written
+in says so and shows every message oldest first. Opening another conversation starts it from the
+top, unless it was opened on one message, from a link, which is brought into view as in the default
+view. The view only changes what is on screen: **Reply**, **Reply all** and **Forward** answer,
+quote and attach the same messages in both, and the choice is kept across restarts.
 
 ## Keyboard shortcuts {#keyboard-shortcuts}
 

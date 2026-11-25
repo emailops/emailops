@@ -111,14 +111,15 @@ que ves en todas partes:
 |---|---|
 | Marcar un mensaje como leído o no leído | El mismo mensaje se marca como leído en la cuenta |
 | Eliminar un mensaje | El mensaje se mueve a la **Papelera** de la cuenta (Elementos eliminados en Outlook), donde se puede recuperar hasta que el proveedor la vacíe: 30 días en Gmail |
+| **Eliminar definitivamente**, **Vaciar la papelera** o **Vaciar spam**, en una cuenta IMAP u Outlook | Los mensajes se borran para siempre de la papelera o el spam de la cuenta; no se toca ninguna otra carpeta |
 | Mover un mensaje a otra carpeta, o **Confirmar basura** | El mensaje también se mueve en la cuenta — Confirmar basura lo archiva en la carpeta de correo no deseado del proveedor |
 | **No es spam — mover a Recibidos**, o **No es basura** en un mensaje de **Spam** | El mensaje vuelve a la bandeja de entrada de la cuenta |
 | Crear, renombrar o eliminar una carpeta | La carpeta también cambia en la cuenta |
 | Guardar un borrador | El borrador se guarda en los Borradores de la cuenta en Gmail y Outlook; en una cuenta IMAP se queda en este ordenador |
 
 <!-- claim:priv-what-emailops-2 -->
-EmailOps nunca borra un mensaje de forma permanente: las eliminaciones siempre van a la
-papelera, nunca a un borrado definitivo. La lectura se aplica primero en local para que la app
+Eliminar un mensaje lo manda a la papelera, donde aún se puede recuperar; **Eliminar definitivamente**
+y **Vaciar la papelera** / **Vaciar spam** borran mensajes para siempre, y solo después de que lo confirmes. La lectura se aplica primero en local para que la app
 funcione sin conexión, y la cuenta se pone al día en segundo plano. Todo lo demás — etiquetas,
 filtros, carpetas que no has tocado — se queda exactamente como está.
 

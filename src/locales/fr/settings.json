@@ -77,6 +77,10 @@
     "afterLeaveNext": "Ouvrir la conversation suivante",
     "afterLeavePrevious": "Ouvrir la conversation précédente",
     "afterLeaveList": "Revenir à la liste",
+    "conversationView": "Affichage des conversations",
+    "conversationViewHelp": "Comment une conversation ouverte s’affiche. Avec votre dernier message d’abord, tous les messages sont ouverts : en haut le dernier que vous avez écrit, puis le reste de la conversation, du plus ancien au plus récent. Répondre, Répondre à tous et Transférer fonctionnent de la même façon dans les deux.",
+    "conversationViewPerMessage": "Ouvrir le dernier message, déplier les autres un par un",
+    "conversationViewOwnFirst": "Votre dernier message d’abord, tous les messages ouverts",
     "defaultSender": "Envoyer les nouveaux messages depuis",
     "defaultSenderHelp": "Le compte avec lequel commence un nouveau message. Les réponses, les transferts et les brouillons gardent leur propre compte.",
     "defaultSenderView": "Compte de la vue sélectionnée"

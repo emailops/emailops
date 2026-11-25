@@ -1,3 +1,4 @@
+use super::list_sort::ListSort;
 use super::*;
 
 /// How a mailbox view scopes a query, shared by the list and the count so the
@@ -348,9 +349,41 @@ impl Database {
         category: Option<&str>,
         unread_only: bool,
     ) -> Result<Vec<Email>> {
-        let (sql, params_vec) = Self::email_list_query(scope, limit, offset, cursor, mailbox, category, unread_only);
+        let (sql, params_vec) = Self::email_list_query(
+            scope,
+            limit,
+            offset,
+            cursor,
+            mailbox,
+            category,
+            unread_only,
+            ListSort::default(),
+        );
+        self.read_email_list(&sql, params_vec)
+    }
+
+    /// [`Database::get_emails`] in the order the list's column headers picked,
+    /// paged by OFFSET. The order is in the query, so it holds across pages.
+    /// The Snoozed view keeps its wake order whatever `sort` says.
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_emails_sorted(
+        &self,
+        scope: crate::db::AccountScope<'_>,
+        limit: i32,
+        offset: i32,
+        mailbox: Option<&str>,
+        category: Option<&str>,
+        unread_only: bool,
+        sort: ListSort,
+    ) -> Result<Vec<Email>> {
+        let (sql, params_vec) =
+            Self::email_list_query(scope, limit, offset, None, mailbox, category, unread_only, sort);
+        self.read_email_list(&sql, params_vec)
+    }
+
+    fn read_email_list(&self, sql: &str, params_vec: Vec<Box<dyn rusqlite::ToSql>>) -> Result<Vec<Email>> {
         let conn = self.reader();
-        let mut stmt = conn.prepare(&sql)?;
+        let mut stmt = conn.prepare(sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
         let emails = stmt.query_map(params_refs.as_slice(), row_to_email)?;
         let mut result = Vec::new();
@@ -371,7 +404,16 @@ impl Database {
         mailbox: Option<&str>,
         unread_only: bool,
     ) -> Vec<String> {
-        let (sql, binds) = Self::email_list_query(scope, limit, offset, None, mailbox, None, unread_only);
+        let (sql, binds) = Self::email_list_query(
+            scope,
+            limit,
+            offset,
+            None,
+            mailbox,
+            None,
+            unread_only,
+            ListSort::default(),
+        );
         let conn = self.reader();
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
@@ -384,6 +426,8 @@ impl Database {
     }
 
     /// SQL + binds behind [`Database::get_emails`], shared with the plan test.
+    /// The `cursor` pages the default order only; sorted lists page by OFFSET.
+    #[allow(clippy::too_many_arguments)]
     fn email_list_query(
         scope: crate::db::AccountScope<'_>,
         limit: i32,
@@ -392,6 +436,7 @@ impl Database {
         mailbox: Option<&str>,
         category: Option<&str>,
         unread_only: bool,
+        sort: ListSort,
     ) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
         let mut conditions: Vec<String> = Vec::new();
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -472,7 +517,7 @@ impl Database {
             ListShape::Flat => format!(
                 "SELECT {} FROM emails e WHERE {where_clause}{cursor_on_date} ORDER BY {} {paging}",
                 EMAIL_COLUMNS,
-                thread_order_clause("e", false),
+                sort.order_by("e.", "e.timestamp"),
             ),
             // Two arms merged on a sort key: the woken conversations (a
             // handful, driven from `thread_snoozes`) by their wake time, and
@@ -498,9 +543,10 @@ impl Database {
                          WHERE {where_clause} AND {no_record}{cursor_on_date}
                          ORDER BY {order} LIMIT ?{window_idx}
                        )
-                     ) ORDER BY sort_ts DESC, id DESC {paging}",
+                     ) ORDER BY {merged_order} {paging}",
                     no_record = super::snoozes::no_snooze_record_predicate("e."),
-                    order = thread_order_clause("e", false),
+                    order = sort.order_by("e.", "e.timestamp"),
+                    merged_order = sort.order_by("", "sort_ts"),
                 )
             }
             // Drives from the snooze table; pages by offset only (it is not
@@ -1138,8 +1184,103 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use super::super::list_sort::{ListSort, ListSortKey};
     use super::super::test_helpers::*;
     use crate::db::{AccountScope, Database};
+
+    fn set_size(db: &Database, id: &str, size: Option<i64>) {
+        db.connection()
+            .execute(
+                "UPDATE emails SET size_bytes = ?2 WHERE id = ?1",
+                rusqlite::params![id, size],
+            )
+            .unwrap();
+    }
+
+    fn sorted_ids(db: &Database, view: Option<&str>, limit: i32, offset: i32, sort: ListSort) -> Vec<String> {
+        db.get_emails_sorted(AccountScope::Account("acc1"), limit, offset, view, None, false, sort)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect()
+    }
+
+    #[test]
+    fn the_size_is_read_back_with_the_row_and_unknown_until_known() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "sized", "acc1", "t1", 100);
+        insert_email(&db, "unsized", "acc1", "t2", 200);
+        set_size(&db, "sized", Some(52_000));
+
+        assert_eq!(db.get_email_by_id("sized").unwrap().unwrap().size_bytes, Some(52_000));
+        assert_eq!(db.get_email_by_id("unsized").unwrap().unwrap().size_bytes, None);
+    }
+
+    #[test]
+    fn a_size_sort_orders_every_page_largest_first_with_unknown_sizes_last() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "small", "acc1", "t1", 400);
+        insert_email(&db, "big", "acc1", "t2", 100);
+        insert_email(&db, "unknown", "acc1", "t3", 500);
+        insert_email(&db, "mid", "acc1", "t4", 300);
+        set_size(&db, "small", Some(10));
+        set_size(&db, "big", Some(9_000));
+        set_size(&db, "mid", Some(500));
+        let largest_first = ListSort {
+            key: ListSortKey::Size,
+            ascending: false,
+        };
+
+        assert_eq!(sorted_ids(&db, None, 2, 0, largest_first), ["big", "mid"]);
+        assert_eq!(sorted_ids(&db, None, 2, 2, largest_first), ["small", "unknown"]);
+    }
+
+    #[test]
+    fn an_ascending_date_sort_lists_the_oldest_first() {
+        let db = Database::new_for_testing().unwrap();
+        insert_email(&db, "new", "acc1", "t1", 300);
+        insert_email(&db, "old", "acc1", "t2", 100);
+        insert_email(&db, "mid", "acc1", "t3", 200);
+        let oldest_first = ListSort {
+            key: ListSortKey::Date,
+            ascending: true,
+        };
+
+        assert_eq!(sorted_ids(&db, None, 50, 0, oldest_first), ["old", "mid", "new"]);
+    }
+
+    #[test]
+    fn a_sender_sort_ignores_case_and_keeps_a_senders_mail_newest_first() {
+        let db = Database::new_for_testing().unwrap();
+        insert_search_email(&db, "b", "acc1", "t1", "beta", "b@x.example", "s", "x", 500);
+        insert_search_email(&db, "a_old", "acc1", "t2", "alpha", "a@x.example", "s", "x", 100);
+        insert_search_email(&db, "a_new", "acc1", "t3", "Alpha", "a@x.example", "s", "x", 300);
+        let a_to_z = ListSort {
+            key: ListSortKey::Sender,
+            ascending: true,
+        };
+        let z_to_a = ListSort {
+            key: ListSortKey::Sender,
+            ascending: false,
+        };
+
+        assert_eq!(sorted_ids(&db, None, 50, 0, a_to_z), ["a_new", "a_old", "b"]);
+        assert_eq!(sorted_ids(&db, None, 50, 0, z_to_a), ["b", "a_new", "a_old"]);
+    }
+
+    #[test]
+    fn a_subject_sort_orders_a_flat_view_too() {
+        let db = Database::new_for_testing().unwrap();
+        for (id, subject, ts) in [("c", "Cobalt", 300), ("a", "anchor", 100), ("b", "Basalt", 200)] {
+            insert_search_email_in_mailbox(&db, id, "acc1", id, "s", "s@x.example", subject, "x", ts, "spam");
+        }
+        let a_to_z = ListSort {
+            key: ListSortKey::Subject,
+            ascending: true,
+        };
+
+        assert_eq!(sorted_ids(&db, Some("spam"), 50, 0, a_to_z), ["a", "b", "c"]);
+    }
 
     fn insert_from(db: &Database, id: &str, thread_id: &str, sender_email: &str, is_sent: bool, timestamp: i64) {
         insert_email(db, id, "acc1", thread_id, timestamp);
@@ -1812,6 +1953,8 @@ mod tests {
             mailbox: "sent".to_string(),
             is_sent: true,
             is_starred: false,
+            size_bytes: None,
+            has_attachments: None,
             headers: None,
         }
     }

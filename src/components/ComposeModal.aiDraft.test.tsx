@@ -69,7 +69,7 @@ async function typeInto(input: HTMLInputElement, value: string) {
   });
 }
 
-const draftButton = () => document.querySelector<HTMLButtonElement>('button[title="compose:aiDraft.newTitle"]');
+const draftButton = () => document.querySelector<HTMLButtonElement>('[data-testid="ai-generate"]');
 
 describe('ComposeModal AI draft', () => {
   it('stops generating when the failure arrives before the request id', async () => {
@@ -127,8 +127,9 @@ describe('ComposeModal AI draft', () => {
     await act(async () => {
       draftButton()?.click();
     });
-    // The signature is not part of the brief the model drafts from.
+    // The signature is neither an instruction nor the draft the model works from.
     expect(vi.mocked(api.generateNewDraft).mock.calls[0]?.[3]).toBeNull();
+    expect(vi.mocked(api.generateNewDraft).mock.calls[0]?.[4]).toBeNull();
 
     await act(async () => {
       handlers.get('draft-generated')?.({ payload: { requestId: 'r2', emailId: '', body: 'Dear Bob,', sources: [] } });

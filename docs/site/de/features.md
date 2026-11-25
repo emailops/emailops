@@ -125,6 +125,16 @@ Archivieren und Löschen Ihren E-Mail-Anbieter sofort, ohne Rückgängig. Das R�
 Zurückstellen bleibt genauso lange verfügbar. **Senden rückgängig machen** ist eine eigene
 Einstellung.
 
+<!-- claim:feat-organize-delete-forever -->
+In **Papierkorb** und **Spam** löscht **Endgültig löschen** in der Auswahlleiste die ausgewählten
+Nachrichten, und **Papierkorb leeren** oder **Spam leeren** über der Liste löscht alle. Sie sehen
+zuerst, wie viele Nachrichten gehen, und bestätigen; ein Balken zeigt den Fortschritt,
+**Abbrechen** hält nach dem laufenden Stapel an, und am Ende steht, wie viele gelöscht wurden und
+warum einzelne nicht gelöscht werden konnten. Nur dieser Ordner wird angefasst. Das funktioniert
+bei IMAP- und Outlook-Konten. Gmail löscht selbst, was seit 30 Tagen im Papierkorb oder Spam
+liegt; früher aus EmailOps zu löschen, bräuchte vollen Zugriff auf das Gmail-Konto, den EmailOps
+nicht anfordert.
+
 <!-- claim:feat-organize-5 -->
 Wenn die Konversation, die Sie gerade lesen, die Liste verlässt — archiviert, gelöscht,
 zurückgestellt oder in den Spam verschoben —, öffnet sich die nächste. **Einstellungen →
@@ -502,6 +512,31 @@ mindestens 320 px breit bleibt, und die Breiten bleiben über Neustarts erhalten
 Panel rechts (Chat oder Kalender) oder wird das Fenster schmaler, gibt eine verbreiterte Spalte
 diese Breite zurück, zuerst die Liste, bis zu ihrer Standardbreite, und erhält sie wieder, sobald
 Platz frei wird.
+
+<!-- claim:feat-interface-7 -->
+In der Ansicht mit voller Breite hat die E-Mail-Liste Spaltenköpfe. Klicken Sie auf **Absender**,
+**Betreff**, **Datum** oder **Größe**, um die ganze Liste nach dieser Spalte zu sortieren, mit allen
+ihren Seiten, und klicken Sie erneut, um die Reihenfolge umzukehren. Die Liste beginnt mit den
+neuesten E-Mails und kehrt in der geteilten Ansicht zu dieser Reihenfolge zurück; eine Suche, ein
+intelligenter Filter und **Zurückgestellt** behalten ihre eigene Reihenfolge, und in **Gesendet**
+zeigt die erste Spalte die Empfänger und sortiert nicht. Die Schaltfläche **Spalten** am Ende der
+Kopfzeile blendet **Größe** und **Mit Anhang** ein oder aus, und die Auswahl bleibt über Neustarts
+erhalten. Die Größe ist die der ganzen Nachricht, Anhänge eingeschlossen, so wie Gmail oder der
+IMAP-Server sie beim Synchronisieren der Nachricht angibt. Outlook gibt keine an, und E-Mails, die
+vor dieser Spalte synchronisiert wurden, haben auch keine: Beide zeigen einen Strich.
+
+<!-- claim:feat-interface-8 -->
+**Einstellungen → Erscheinungsbild → Konversationsansicht** legt fest, wie eine geöffnete
+Konversation angezeigt wird. **Neueste Nachricht öffnen, die anderen einzeln aufklappen**, die
+Voreinstellung, öffnet die neueste Nachricht und zeigt die früheren geschlossen, zum Öffnen per Klick.
+**Ihre letzte Nachricht zuerst, alle Nachrichten geöffnet** zeigt oben die letzte Nachricht, die Sie
+von diesem Konto gesendet haben, und darunter den Rest der Konversation, die älteste zuerst, mit allen
+Nachrichten geöffnet und jeder nur einmal; eine Konversation, in der Sie nichts geschrieben haben,
+weist darauf hin und zeigt alle Nachrichten, die älteste zuerst. Eine andere Konversation beginnt
+beim Öffnen oben, außer sie wurde über einen Link bei einer bestimmten Nachricht geöffnet, die wie in
+der Standardansicht angezeigt wird. Die Ansicht ändert nur, was zu sehen ist: **Antworten**, **Allen antworten** und
+**Weiterleiten** beantworten, zitieren und hängen in beiden dieselben Nachrichten an, und die Wahl
+bleibt über Neustarts erhalten.
 
 ## Tastenkombinationen {#keyboard-shortcuts}
 

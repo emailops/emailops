@@ -26,6 +26,7 @@ import {
 } from '@/lib/composeDraft';
 import { htmlToPlainText, plainTextToHtml, prepareOutgoingHtml } from '@/lib/composeHtml';
 import { mergePendingRecipient } from '@/lib/composeRecipients';
+import { draftHasLinksOrImages } from '@/lib/draftRequest';
 import { eoDocAttachment } from '@/lib/eoDocAttachment';
 import { errorText } from '@/lib/errors';
 import { findSendWarnings, type SendWarning } from '@/lib/sendWarnings';
@@ -94,6 +95,11 @@ interface ReplyComposeProps {
    *  set (AI drafts enabled, not a forward) an instruction bar sits above the
    *  editor. */
   onGenerateDraft?: (instructions: string) => void;
+  /** Polish the reply's own text (`draft`, signature left out) as the
+   *  instruction says. Offered in the same bar. */
+  onPolishDraft?: (instructions: string, draft: string) => void;
+  /** Why the last AI request failed, shown under the instruction bar. */
+  draftError?: string | null;
 }
 
 const NO_REPLY_TO: Record<string, string[]> = {};
@@ -229,6 +235,8 @@ export function ReplyCompose({
   isLoadingDraft = false,
   draftSources = [],
   onGenerateDraft,
+  onPolishDraft,
+  draftError = null,
   restoredDraft = null,
   onDraftSaved,
 }: ReplyComposeProps) {
@@ -580,7 +588,8 @@ export function ReplyCompose({
       inlineImages: prepared.inlineImages.length,
       attachments: attachments.length + draftFiles.files.length,
     });
-    if (!ready || attachmentsLoading || draftFiles.isStoring) return;
+    // The AI is about to replace the body: what would go out is not final.
+    if (!ready || attachmentsLoading || draftFiles.isStoring || isLoadingDraft) return;
     // A forward quotes someone else's text, which may well say "attached".
     if (!force && mode !== 'forward') {
       // The signature is not the user's text: "attached" in it is no promise.
@@ -818,12 +827,11 @@ export function ReplyCompose({
       {onGenerateDraft && mode !== 'forward' && (
         <AiInstructionBar
           onGenerate={onGenerateDraft}
+          onPolish={(instructions) => onPolishDraft?.(instructions, typedText(bodyHtml))}
           isGenerating={isLoadingDraft}
-          hasDraft={
-            withoutSignature(bodyHtml)
-              .replace(/<[^>]*>/g, '')
-              .trim().length > 0
-          }
+          hasDraft={typedText(bodyHtml).length > 0}
+          draftHasLinksOrImages={draftHasLinksOrImages(bodyHtml)}
+          error={draftError}
         />
       )}
 

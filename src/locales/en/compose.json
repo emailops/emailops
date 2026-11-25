@@ -76,7 +76,7 @@
     "generate": "Generate with AI",
     "generating": "Generating…",
     "generatingLong": "Generating draft… retrieving similar threads",
-    "newTitle": "Draft this email with AI from the recipients, subject, and any notes you've typed",
+    "newTitle": "Draft this email with AI from the recipients, the subject, your instructions and anything you have written. Needs a recipient and a subject.",
     "rewrite": "Rewrite",
     "shorten": "Shorter",
     "expand": "Longer",
@@ -84,8 +84,15 @@
     "toneFormal": "Formal",
     "toneCasual": "Casual",
     "toneFriendly": "Friendly",
-    "instructionPlaceholder": "Tell the AI what to say (optional), e.g. accept but propose Thursday",
-    "regenerate": "Regenerate"
+    "instructionPlaceholder": "Instructions for AI, never sent (optional), e.g. accept but propose Thursday",
+    "regenerate": "Regenerate",
+    "polish": "Polish",
+    "polishing": "Polishing…",
+    "polishTitle": "Edit your draft as the instructions say, keeping its facts and meaning",
+    "polishNeedsDraft": "Write something first, then polish it",
+    "polishDropsLinks": "Polish works on plain text and would drop this draft's links and images",
+    "failed": "The AI could not finish: {{error}}. Your text is unchanged.",
+    "timedOut": "The AI took too long to answer. Your text is unchanged; try again."
   },
   "feedback": {
     "general": {

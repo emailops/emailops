@@ -127,6 +127,16 @@ vue) : Annuler se contente donc de les remettre en place.
 à votre fournisseur de messagerie, sans Annuler. L’annulation proposée après une mise en attente
 dure aussi longtemps. **Annuler l’envoi** est un réglage distinct.
 
+<!-- claim:feat-organize-delete-forever -->
+Dans **Corbeille** et **Indésirables**, **Supprimer définitivement** dans la barre de sélection
+efface les messages sélectionnés, et **Vider la corbeille** ou **Vider les indésirables** au-dessus
+de la liste les efface tous. Vous voyez d'abord combien de messages vont partir et vous
+confirmez ; une barre montre la progression, **Annuler** s'arrête après le lot en cours, et la fin
+indique combien ont été effacés et pourquoi certains n'ont pas pu l'être. Seul ce dossier est
+touché. Cela fonctionne sur les comptes IMAP et Outlook. Gmail efface de lui-même ce qui est dans
+la corbeille ou les indésirables depuis 30 jours ; effacer plus tôt depuis EmailOps demanderait
+un accès complet au compte Gmail, qu'EmailOps ne demande pas.
+
 <!-- claim:feat-organize-5 -->
 Quand la conversation que vous lisez quitte la liste — archivée, supprimée, mise en attente ou
 déplacée dans les spams —, la suivante s'ouvre. **Paramètres → Apparence → Après l’archivage ou
@@ -504,6 +514,31 @@ largeur par défaut. Une colonne cesse de s'élargir avant que le volet de lectu
 sous 320 px, et les largeurs sont conservées d'un redémarrage à l'autre. Si le panneau de droite
 (chat ou calendrier) s'ouvre ou si la fenêtre rétrécit, une colonne élargie rend cette largeur, la
 liste d'abord, jusqu'à sa largeur par défaut, et la retrouve quand la place revient.
+
+<!-- claim:feat-interface-7 -->
+En disposition pleine largeur, la liste des e-mails a des en-têtes de colonne. Cliquez sur
+**Expéditeur**, **Objet**, **Date** ou **Taille** pour trier toute la liste selon cette colonne,
+toutes ses pages comprises, et cliquez à nouveau pour inverser l'ordre. La liste commence par les
+plus récents et revient à cet ordre en vue divisée ; une recherche, un filtre intelligent et **En
+attente** gardent leur propre ordre, et dans **Envoyés** la première colonne affiche les
+destinataires et ne trie pas. Le bouton **Colonnes**, au bout de l'en-tête, affiche ou masque
+**Taille** et **Avec pièce jointe**, et le choix est conservé d'un redémarrage à l'autre. La taille
+est celle du message entier, pièces jointes comprises, telle que Gmail ou le serveur IMAP l'indique
+à la synchronisation du message. Outlook ne l'indique pas, et le courrier synchronisé avant
+l'existence de la colonne ne l'a pas non plus : les deux affichent un tiret.
+
+<!-- claim:feat-interface-8 -->
+**Paramètres → Apparence → Affichage des conversations** choisit comment une conversation ouverte
+s'affiche. **Ouvrir le dernier message, déplier les autres un par un**, le réglage par défaut, ouvre
+le message le plus récent et affiche fermés les précédents, qui s'ouvrent d'un clic. **Votre dernier
+message d’abord, tous les messages ouverts** place en haut le dernier message que vous avez envoyé
+depuis ce compte et en dessous le reste de la conversation, du plus ancien au plus récent, avec tous
+les messages ouverts et chacun une seule fois ; une conversation dans laquelle vous n'avez pas écrit
+l'indique et affiche tous les messages du plus ancien au plus récent. Ouvrir une autre conversation
+la fait commencer en haut, sauf si elle a été ouverte sur un message précis depuis un lien, qui est
+alors affiché comme dans la vue par défaut. L'affichage ne change que ce qui est à l'écran : **Répondre**, **Répondre
+à tous** et **Transférer** répondent, citent et joignent les mêmes messages dans les deux cas, et le
+choix est conservé d'un redémarrage à l'autre.
 
 ## Raccourcis clavier {#keyboard-shortcuts}
 

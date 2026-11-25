@@ -1714,6 +1714,51 @@ impl EmailProvider for OutlookClient {
         Ok(None)
     }
 
+    /// `POST /me/messages/{id}/permanentDelete` (`Mail.ReadWrite`), one per
+    /// message. Graph gives a message a new id whenever it changes folder,
+    /// so an id stored from Deleted Items or Junk names a message that is
+    /// still there or none at all (404): this cannot reach another folder.
+    ///
+    /// Resending is safe — a second call answers 404. After a transport or
+    /// sign-in failure the rest of the batch is not sent and is reported as
+    /// failed.
+    async fn delete_forever(
+        &self,
+        _folder: provider::DeleteForeverFolder,
+        messages: &[provider::DeleteForeverTarget],
+    ) -> Result<Vec<Result<()>>> {
+        let mut results = Vec::with_capacity(messages.len());
+        let mut stopped: Option<String> = None;
+        for message in messages {
+            if let Some(reason) = &stopped {
+                results.push(Err(AppError::SyncError(reason.clone())));
+                continue;
+            }
+            let url = format!(
+                "{}/me/messages/{}/permanentDelete",
+                self.base_url,
+                urlencoding::encode(&message.id)
+            );
+            let sent = self
+                .send_request_with_retry("delete message forever", |client, token| {
+                    client
+                        .post(&url)
+                        .bearer_auth(token)
+                        .header(reqwest::header::CONTENT_LENGTH, 0)
+                })
+                .await;
+            match sent {
+                Ok(_) => results.push(Ok(())),
+                Err(e @ (AppError::NotFound(_) | AppError::SyncError(_))) => results.push(Err(e)),
+                Err(e) => {
+                    stopped = Some(e.to_string());
+                    results.push(Err(e));
+                }
+            }
+        }
+        Ok(results)
+    }
+
     async fn list_mailbox_messages(
         &self,
         mailbox: provider::ExtraMailbox,
@@ -1968,6 +2013,9 @@ fn parse_message(msg: GraphMessage) -> (Email, EmailCategory) {
         // derives from the caller's `mailbox` value.
         is_sent: false,
         is_starred: graph_flag_is_starred(msg.flag.as_ref().and_then(|f| f.flag_status.as_deref())),
+        // Graph's message resource has no size: unknown.
+        size_bytes: None,
+        has_attachments: None,
         headers,
     };
 
@@ -3493,6 +3541,84 @@ mod tests {
         assert_eq!(requests.len(), 1);
         let body: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("json body");
         assert_eq!(body, serde_json::json!({ "destinationId": "deleteditems" }));
+    }
+
+    // Graph re-keys a message whenever it changes folder, so an id stored
+    // from Deleted Items or Junk can only name a message still there: the
+    // per-message `permanentDelete` cannot reach another folder.
+    #[tokio::test]
+    async fn deleting_forever_posts_permanent_delete_per_message() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-1/permanentDelete"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/me/messages/m-2/permanentDelete"))
+            .respond_with(ResponseTemplate::new(404).set_body_raw(
+                r#"{"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let target = |id: &str| provider::DeleteForeverTarget {
+            id: id.to_string(),
+            message_id_header: None,
+        };
+        let results = EmailProvider::delete_forever(
+            &client,
+            provider::DeleteForeverFolder::Trash,
+            &[target("m-1"), target("m-2")],
+        )
+        .await
+        .expect("answered per message");
+
+        assert!(
+            matches!(results[..], [Ok(()), Err(AppError::NotFound(_))]),
+            "got {results:?}"
+        );
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|r| r.url.path().ends_with("/permanentDelete")));
+    }
+
+    // Signed out: every further request would be refused the same way, so
+    // the rest of the batch is reported without being sent.
+    #[tokio::test]
+    async fn deleting_forever_stops_sending_once_the_session_is_refused() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = OutlookClient::new("tok".into(), None, None, None).with_base_url(server.uri());
+        let target = |id: &str| provider::DeleteForeverTarget {
+            id: id.to_string(),
+            message_id_header: None,
+        };
+        let results = EmailProvider::delete_forever(
+            &client,
+            provider::DeleteForeverFolder::Spam,
+            &[target("m-1"), target("m-2")],
+        )
+        .await
+        .expect("answered per message");
+
+        assert!(
+            matches!(results[..], [Err(AppError::AuthError(_)), Err(AppError::SyncError(_))]),
+            "got {results:?}"
+        );
+        assert_eq!(server.received_requests().await.expect("requests").len(), 1);
     }
 
     #[tokio::test]

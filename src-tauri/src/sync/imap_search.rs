@@ -176,9 +176,18 @@ pub(crate) struct FetchedIdentity {
 /// The header comes back as a literal, so this goes through the crate's typed
 /// parser with the same retry as [`uid_fetch_body`].
 pub(crate) fn uid_fetch_identities<T: Read + Write>(session: &mut imap::Session<T>) -> Result<Vec<FetchedIdentity>> {
+    uid_fetch_identities_in(session, "1:*")
+}
+
+/// [`uid_fetch_identities`] for the messages of `uid_set` only. A UID the
+/// mailbox does not hold is simply absent from the answer.
+pub(crate) fn uid_fetch_identities_in<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uid_set: &str,
+) -> Result<Vec<FetchedIdentity>> {
     let mut last_err: Option<imap::Error> = None;
     for attempt in 1..=FETCH_RETRY_ATTEMPTS {
-        match session.uid_fetch("1:*", "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])") {
+        match session.uid_fetch(uid_set, "(UID INTERNALDATE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])") {
             Ok(messages) => {
                 return Ok(messages
                     .iter()
@@ -251,6 +260,19 @@ pub(crate) fn uid_store_flagged<T: Read + Write>(
     flagged: bool,
 ) -> Result<()> {
     uid_store_flag(session, uid, "\\Flagged", flagged)
+}
+
+/// Set or clear `\\Deleted` on every message of `uid_set`, the same way as
+/// [`uid_store_seen`]. Only an expunge then removes them.
+pub(crate) fn uid_store_deleted<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    uid_set: &str,
+    on: bool,
+) -> Result<()> {
+    let sign = if on { '+' } else { '-' };
+    session
+        .run_command_and_check_ok(format!("UID STORE {uid_set} {sign}FLAGS.SILENT (\\Deleted)"))
+        .map_err(|e| AppError::SyncError(format!("IMAP STORE failed: {}", describe_error(&e))))
 }
 
 fn uid_store_flag<T: Read + Write>(session: &mut imap::Session<T>, uid: u32, flag: &str, on: bool) -> Result<()> {

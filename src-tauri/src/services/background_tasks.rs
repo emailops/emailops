@@ -79,6 +79,9 @@ pub enum BackgroundTask {
     /// Apply an attachment rule to the mail already stored. `run_id` comes
     /// from the frontend and tags the progress / finished events.
     ApplyAttachmentRule { rule_id: String, run_id: String },
+    /// Delete messages of one account's Trash or Spam forever. `run_id`
+    /// comes from the frontend and tags the progress / finished events.
+    DeleteForever { account_id: String, run_id: String },
 }
 
 /// Which queue a task should be routed to.
@@ -109,7 +112,7 @@ impl BackgroundTask {
             | Self::BackfillTasks { .. }
             | Self::DownloadModel { .. } => QueueKind::AiBackground,
             Self::SyncAccount { .. } | Self::RedownloadEmptyEmails { .. } => QueueKind::Sync,
-            Self::ApplyAttachmentRule { .. } => QueueKind::Db,
+            Self::ApplyAttachmentRule { .. } | Self::DeleteForever { .. } => QueueKind::Db,
         }
     }
 
@@ -136,6 +139,7 @@ impl BackgroundTask {
                 format!("redownload-empty:{account_id}")
             }
             Self::ApplyAttachmentRule { rule_id, .. } => format!("attachment-rule:{rule_id}"),
+            Self::DeleteForever { account_id, .. } => format!("delete-forever:{account_id}"),
         }
     }
 }
@@ -276,6 +280,16 @@ mod tests {
             .queue(),
             QueueKind::Sync
         );
+    }
+
+    #[test]
+    fn deleting_forever_runs_on_the_db_queue() {
+        let task = BackgroundTask::DeleteForever {
+            account_id: "acc-1".into(),
+            run_id: "run-1".into(),
+        };
+        assert_eq!(task.queue(), QueueKind::Db);
+        assert_eq!(task.label(), "delete-forever:acc-1");
     }
 
     #[test]

@@ -35,6 +35,7 @@ pub async fn dispatch(session: &mut CliSession, command: Command) -> Result<()> 
                 mailbox.as_deref(),
                 category.as_deref(),
                 false,
+                crate::db::emails::list_sort::ListSort::default(),
             )?;
             output::render_emails(&emails, session.style)
         }

@@ -833,6 +833,14 @@ checks = [
   { manual = 'The 6-second length and the early commit when another archive/delete starts or another view opens are covered by src/lib/pendingActions.test.ts and src/stores/emailStore tests (vitest), not by a check this harness runs.', covers = ["(or sooner, if you archive or delete something else or open another view)"] },
 ]
 
+[feat-organize-delete-forever]
+checks = [
+  { tests = ['services::emails::delete_forever::tests::messages_the_provider_deleted_are_removed_here_and_counted', 'services::emails::delete_forever::tests::a_message_the_provider_kept_stays_and_is_reported', 'services::emails::delete_forever::tests::cancel_stops_between_batches_and_leaves_the_rest_in_place', 'services::emails::delete_forever::tests::selected_messages_outside_the_folder_stay_and_are_reported', 'sync::imap::tests::delete_forever_flags_and_uid_expunges_only_the_given_messages', 'sync::imap::tests::delete_forever_refuses_ids_of_another_folder_without_connecting', 'sync::outlook::tests::deleting_forever_posts_permanent_delete_per_message'], covers = ["Only that folder is touched.", "This works on IMAP and Outlook accounts."] },
+  { tests = ['sync::provider::tests::deleting_forever_is_offered_on_imap_and_outlook_but_not_gmail', 'services::emails::delete_forever::tests::a_gmail_account_is_refused_before_anything_is_read'], covers = ["Gmail erases what has been in Trash or Spam for 30 days on its own; erasing sooner from EmailOps would need full access to the Gmail account, which EmailOps does not ask for."] },
+  { manual = 'The toolbar button, the Empty bar, the count and confirmation, the progress bar, Cancel and the summary are the dialog: src/components/Inbox/DeleteForeverDialog.test.tsx, FolderCleanup.test.tsx and BulkToolbar.test.tsx (vitest), which the docs check does not run. The demo accounts are offline IMAP accounts, so a run there ends in a sign-in error.', covers = ["In Trash and Spam, Delete forever in the selection toolbar erases the selected messages, and Empty Trash or Empty Spam above the list erases them all.", "You see how many messages will go and confirm first; a bar shows the progress, Cancel stops after the current batch, and the end says how many were erased and why any could not be."] },
+]
+fix = 'Delete forever is IMAP and Outlook only (provider_supports_delete_forever); if a provider was added or Gmail gained it, update the paragraph in all four languages.'
+
 [feat-organize-undo-window]
 checks = [
   { app = true },
@@ -942,6 +950,19 @@ checks = [
 [feat-interface-6]
 checks = [
   { judge = "In the split inbox view, can the folder sidebar and the email list each be made wider or narrower by dragging the line on their right edge and, with the line focused, with the arrow keys, Home and End; does a double-click on the line restore the default width; does a column stop growing before the reading pane gets narrower than 320 px; when the chat panel opens or the window narrows after a column was widened, does that column give its extra width back (the list first, never below its default width) and get it back when the panel closes; and are the widths kept after a relaunch?", evidence = ["file:src/lib/columnResize.ts", "file:src/hooks/useColumnSpace.ts", "file:src/components/shared/ColumnResizeHandle.tsx", "file:src/components/shared/ColumnResizeHandle.test.tsx", "file:src/lib/columnResize.test.ts", "file:src/hooks/useColumnSpace.test.tsx"], visual = true, covers = ["The folder sidebar and, in the split view, the email list can be made wider or narrower: drag the line on their right edge, or reach it with Tab and use the arrow keys (Shift for bigger steps), Home and End.", "Double-click the line to go back to the default width.", "A column stops growing before the reading pane gets narrower than 320 px, and the widths are kept across restarts.", "When the panel on the right (chat or calendar) opens or the window gets narrower, a widened column gives that width back, the list first, down to its default width, and gets it back when there is room again."] },
+]
+
+[feat-interface-7]
+checks = [
+  { judge = "In the full-width layout with demo mail, does the list show Sender, Subject and Date headers; does a click on each, and on Size once it is shown, reorder the whole list (scroll to load more pages and check they continue the order) with a second click reversing it; does the split layout list newest first with no header; does a search keep its order with the headers not clickable; does the Sent view label the first column To without sorting it; does the Columns button show or hide Size and Has attachment, kept after a relaunch?", evidence = ["file:src/components/Inbox/ListColumnHeader.tsx", "file:src/components/Inbox/Inbox.tsx", "file:src/lib/listColumns.ts", "file:src/lib/listColumns.test.ts", "file:src/components/Inbox/Inbox.columnHeader.test.tsx", "file:src/components/Inbox/ListColumnHeader.test.tsx"], visual = true, covers = ["In the full-width layout the email list has column headers.", "Click Sender, Subject, Date or Size to sort the whole list by that column, every page of it, and click again to reverse the order.", "The list starts newest first and goes back to that order in the split layout; a search, a smart filter and Snoozed keep their own order, and in Sent the first column lists the recipients and does not sort.", "The Columns button at the end of the header shows or hides Size and Has attachment, and the choice is kept across restarts."] },
+  { tests = ['db::emails::crud::tests::a_size_sort_orders_every_page_largest_first_with_unknown_sizes_last', 'db::emails::snoozes::tests::the_snoozed_view_keeps_its_wake_order_whatever_the_sort'], covers = ["Click Sender, Subject, Date or Size to sort the whole list by that column, every page of it, and click again to reverse the order."] },
+  { tests = ['sync::gmail::tests::parse_message_keeps_the_size_gmail_reports', 'sync::imap::tests::the_size_is_the_length_of_the_fetched_message', 'db::emails::batch::tests::re_ingesting_without_a_size_keeps_the_known_one'], covers = ["The size is the whole message, attachments included, as Gmail or the IMAP server reports it when the message is synced."] },
+  { manual = 'No Outlook account or pre-update mailbox in the demo; the Graph adapter stores no size (sync/outlook.rs) and EmailRow.columns.test.tsx shows an unknown size as a dash.', covers = ["Outlook reports none, and mail synced before the column existed has none either: both show a dash."] },
+]
+
+[feat-interface-8]
+checks = [
+  { judge = "Open Settings → Appearance. Does Conversation view offer 'Open the latest message, expand the others one by one' (selected with no saved choice) and 'Your latest message first, every message open'? With the second chosen, does a conversation the user replied in show the last message they sent on top, then the rest oldest first, every message open and none twice; does one they never wrote in say so and list every message oldest first; does opening another conversation start at the top, while one opened on a message from a link (chat citation) scrolls to that message; do Reply, Reply all and Forward open with the same recipients, quote and attachments as in the default view; and is the choice still selected after a relaunch?", evidence = ["file:src/lib/conversationView.ts", "file:src/lib/conversationView.test.ts", "file:src/components/Settings/ConversationViewSetting.tsx", "file:src/stores/conversationViewStore.test.ts", "file:src/components/EmailView/EmailView.ownFirst.test.tsx"], visual = true, covers = ["Settings → Appearance → Conversation view chooses how an open conversation is shown.", "Open the latest message, expand the others one by one, the default, opens the newest message and shows the earlier ones closed, to open with a click.", "Your latest message first, every message open puts the last message you sent from that account on top and the rest of the conversation below it, oldest first, with every message open and each one shown once; a conversation you have not written in says so and shows every message oldest first.", "Opening another conversation starts it from the top, unless it was opened on one message, from a link, which is brought into view as in the default view.", "The view only changes what is on screen: Reply, Reply all and Forward answer, quote and attach the same messages in both, and the choice is kept across restarts."] },
 ]
 
 [feat-shortcuts-1]
@@ -1237,6 +1258,15 @@ checks = [
   { manual = 'Writing a draft needs the local model; the instruction box and Regenerate are not driven by the docs check.' },
 ]
 
+[ai-ai-drafts-3]
+checks = [
+  { tests = ['services::emails::drafts::tests::the_current_draft_is_background_for_a_new_draft'], covers = ["Generate with AI writes the email from them; in a new email, the text you already wrote is background for it."] },
+  { tests = ['services::emails::drafts::tests::polish_returns_the_models_text_never_the_instructions', 'services::emails::drafts::tests::polish_prompt_keeps_the_facts_meaning_and_language'], covers = ["Polish edits the text you wrote as the instructions say and keeps its facts and meaning."] },
+  { tests = ['services::emails::drafts::tests::reply_prompt_refuses_instructions_too_long_instead_of_cutting_them', 'services::emails::drafts::tests::polish_prompt_refuses_an_input_too_long_instead_of_cutting_it', 'services::emails::drafts::tests::fit_new_draft_prompt_refuses_a_long_brief_instead_of_cutting_its_end'], covers = ["Instructions or text too long for the AI are refused with how much to shorten them, never cut."] },
+  { manual = 'Writing a draft needs the local model; the instructions box, the save/send payloads, the locks and the two-minute timeout are covered by vitest (ComposeModal.aiInstructions, ComposeTabView.aiInstructions, ReplyCompose.aiInstructions, EmailView.aiDraft) and are not driven by the docs check.' },
+  { manual = 'Polish off on a draft with a link or an image (signature left out): src/lib/draftRequest.test.ts, AiInstructionBar.test.tsx and the three composers aiInstructions tests (vitest), not driven by the docs check.', covers = ["It works on plain text, so it is not offered while the text holds a link or an image."] },
+]
+
 [ai-classification-1]
 checks = [
   { app = true },
@@ -1515,13 +1545,14 @@ checks = [
   { tests = ['services::emails::compose::tests::compose_draft_stays_local_for_unsupported_provider', 'sync::provider::tests::every_shipped_provider_has_its_drafts_folder_read_and_only_imap_is_never_written'], covers = ["on an IMAP account it stays on this computer"] },
   { tests = ['services::emails::thread_actions::tests::not_spam_moves_the_spam_messages_to_the_inbox_and_records_not_junk', 'services::emails::thread_actions::tests::not_spam_records_not_junk_under_the_id_the_provider_gave_the_message'], covers = ["The message moves back to the account's inbox"] },
   { manual = 'Moves, Confirm junk and folder changes writing to the account need a real provider; the demo accounts are offline.' },
+  { tests = ['sync::imap::tests::delete_forever_flags_and_uid_expunges_only_the_given_messages', 'sync::outlook::tests::deleting_forever_posts_permanent_delete_per_message', 'services::emails::delete_forever::tests::selected_messages_outside_the_folder_stay_and_are_reported'], covers = ["Delete forever, Empty Trash or Empty Spam, on an IMAP or Outlook account", "The messages are erased for good from the account's Trash or Spam; no other folder is touched"] },
 ]
 fix = 'Every action that writes to the account must be in this table: if one was added or removed, update the rows in all four languages.'
 
 [priv-what-emailops-2]
 checks = [
   { tests = ['services::emails::mailbox_state::tests::mark_read_survives_a_failing_push'], covers = ["Reading is applied locally first so the app works offline, and the account catches up in the background."] },
-  { manual = 'Delete-to-Trash on each provider needs a real account; IMAP delete semantics are not pinned by a test.' },
+  { manual = 'Delete-to-Trash on each provider needs a real account; IMAP delete semantics are not pinned by a test. The confirmation before Delete forever and Empty Trash / Empty Spam is src/components/Inbox/DeleteForeverDialog.test.tsx (vitest), which the docs check does not run.' },
 ]
 
 [priv-what-emailops-3]

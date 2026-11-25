@@ -24,6 +24,19 @@
     "unread": "Unread",
     "empty": "No unread emails"
   },
+  "listColumns": {
+    "sender": "Sender",
+    "recipients": "To",
+    "subject": "Subject",
+    "size": "Size",
+    "attachment": "Has attachment",
+    "date": "Date",
+    "sortBy": "Sort by {{column}}",
+    "sortedAscending": "{{column}}, sorted ascending",
+    "sortedDescending": "{{column}}, sorted descending",
+    "columns": "Columns",
+    "sizeUnknown": "Size unknown"
+  },
   "emptyState": {
     "syncing": "Syncing emails...",
     "noSearchResults": "No emails match your search",
@@ -142,6 +155,9 @@
     "noPreview": "(No preview)",
     "toLine": "To: {{recipients}}",
     "ccLine": "Cc: {{recipients}}",
+    "ownFirstLatest": "Your latest message",
+    "ownFirstRest": "The rest of the conversation, oldest first",
+    "ownFirstNoOwn": "You have not written in this conversation. Every message is shown, oldest first.",
     "backLabel": "Back",
     "messageCount_one": "{{count}} msg",
     "messageCount_other": "{{count}} msgs",
@@ -358,5 +374,51 @@
     "unblockFailed": "Could not unblock the sender",
     "blockedBanner": "You blocked this sender. Their new mail goes to Spam.",
     "unblockAction": "Unblock"
+  },
+  "deleteForever": {
+    "action": "Delete forever",
+    "empty": {
+      "trash": "Empty Trash",
+      "spam": "Empty Spam"
+    },
+    "barText": {
+      "trash": "Delete every message in Trash forever, here and in your account.",
+      "spam": "Delete every message in Spam forever, here and in your account."
+    },
+    "gmailNote": {
+      "trash": "Gmail deletes messages that have been in Trash for 30 days. To delete them sooner, use Gmail: it needs full access to your Gmail account, which EmailOps does not ask for.",
+      "spam": "Gmail deletes messages that have been in Spam for 30 days. To delete them sooner, use Gmail: it needs full access to your Gmail account, which EmailOps does not ask for."
+    },
+    "titleSelected": "Delete forever",
+    "counting": "Counting the messages…",
+    "alreadyEmpty": {
+      "trash": "Trash is already empty.",
+      "spam": "Spam is already empty."
+    },
+    "confirmTrash_one": "{{count}} message in Trash will be deleted forever, here and in your account. This cannot be undone.",
+    "confirmTrash_other": "{{count}} messages in Trash will be deleted forever, here and in your account. This cannot be undone.",
+    "confirmTrash_many": "{{count}} messages in Trash will be deleted forever, here and in your account. This cannot be undone.",
+    "confirmSpam_one": "{{count}} message in Spam will be deleted forever, here and in your account. This cannot be undone.",
+    "confirmSpam_other": "{{count}} messages in Spam will be deleted forever, here and in your account. This cannot be undone.",
+    "confirmSpam_many": "{{count}} messages in Spam will be deleted forever, here and in your account. This cannot be undone.",
+    "confirmButton": "Delete forever",
+    "progress": "Deleting forever: {{processed}} of {{total}}",
+    "cancelling": "Stopping after the current batch…",
+    "removed_one": "{{count}} message deleted forever.",
+    "removed_other": "{{count}} messages deleted forever.",
+    "removed_many": "{{count}} messages deleted forever.",
+    "failed_one": "{{count}} message could not be deleted and is still there:",
+    "failed_other": "{{count}} messages could not be deleted and are still there:",
+    "failed_many": "{{count}} messages could not be deleted and are still there:",
+    "cancelled_one": "Cancelled: {{count}} message was left as it was.",
+    "cancelled_other": "Cancelled: {{count}} messages were left as they were.",
+    "cancelled_many": "Cancelled: {{count}} messages were left as they were.",
+    "stopped_one": "Stopped: {{count}} message was left as it was.",
+    "stopped_other": "Stopped: {{count}} messages were left as they were.",
+    "stopped_many": "Stopped: {{count}} messages were left as they were.",
+    "reasonCount": "{{reason}} ({{count}})",
+    "startFailed": "Could not start deleting forever: {{detail}}",
+    "countFailed": "Could not count the messages: {{detail}}",
+    "cancelFailed": "Could not cancel: {{detail}}"
   }
 }

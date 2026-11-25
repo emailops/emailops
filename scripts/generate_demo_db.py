@@ -2983,6 +2983,24 @@ def insert_attachments_meta(conn: sqlite3.Connection, locale: Locale) -> None:
             )
 
 
+# Rough size of a message's headers, added to the body for the demo's sizes.
+DEMO_HEADER_BYTES = 2000
+
+
+def fill_message_sizes(conn: sqlite3.Connection) -> None:
+    """Give every demo message a size for the list's Size column: its stored
+    body, some headers, and its attachments as they travel, base64-encoded
+    (4/3 of the file). Real sync stores the size the provider reports."""
+    conn.execute(
+        """UPDATE emails SET size_bytes =
+             COALESCE((SELECT LENGTH(CAST(b.body AS BLOB)) FROM email_bodies b WHERE b.email_id = emails.id), 0)
+             + ?
+             + COALESCE((SELECT SUM(m.file_size) * 4 / 3 FROM email_attachment_meta m
+                         WHERE m.email_id = emails.id), 0)""",
+        (DEMO_HEADER_BYTES,),
+    )
+
+
 def insert_pending_tasks(conn: sqlite3.Connection, locale: Locale) -> None:
     """A few tasks so the Tasks panel has something to show during the demo."""
     now = now_s()
@@ -3539,6 +3557,7 @@ def main() -> int:
             insert_memory_facts(conn, locale)
             insert_thread_states(conn, locale)
             insert_calendar_events(conn, locale)
+            fill_message_sizes(conn)
         n = conn.execute("SELECT COUNT(*) FROM emails").fetchone()[0]
         threads = conn.execute("SELECT COUNT(DISTINCT thread_id) FROM emails").fetchone()[0]
         print(f"[demo-db] inserted {n} emails across {threads} threads")

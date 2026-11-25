@@ -5017,6 +5017,33 @@ the GitHub API* — no release step to forget, but the hop would exist only to b
 its release is published, so any site build in that window would announce a release with
 no installers.
 
+## 2026-11-24 — Delete forever is explicit, folder-bound, and not offered on Gmail
+
+**Decision:** Messages are erased for good only through **Delete forever** (selected
+messages in Trash or Spam) and **Empty Trash** / **Empty Spam**, each after a confirmation
+that states the count (issue #304). Only the folder being emptied is touched: the provider
+is asked only about rows filed in that folder, IMAP refuses an id whose UID lives in
+another folder, and Graph ids change whenever a message changes folder. IMAP flags
+`\Deleted` and expunges with `UID EXPUNGE`; without UIDPLUS a plain `EXPUNGE` runs only
+when no other message of the folder is flagged, otherwise nothing is deleted
+(`ExpungeNotSafe`). A local row is removed only after the provider confirms its message is
+gone. Trash rows that are in the Trash view only because EmailOps deleted them while they
+stay filed elsewhere are removed locally and never sent to the provider. Gmail accounts get
+no Delete forever: they show why instead. Every other delete still goes to Trash; this
+narrows "EmailOps never permanently erases a message" in the privacy page and leaves the
+2026-08-15 entry's Gmail behaviour as it was.
+**Context:** Users asked for predictable cleanup of large Spam and Trash folders. Gmail's
+`messages.delete` and `batchDelete` require the full `https://mail.google.com/` scope;
+the app holds `gmail.modify`, which can only trash.
+**Rejected:** *Requesting `https://mail.google.com/`* — every Gmail user would have to
+sign in again and the app would reopen Google's restricted-scope verification for one
+cleanup action that Gmail already does on its own after 30 days. *Hiding Gmail's Trash and
+Spam rows locally* — the messages would stay in the account while EmailOps said they were
+gone. *Emptying the whole server folder, including mail EmailOps never synced* — the count
+the user confirms would not be the set that goes. *A plain `EXPUNGE` whenever UIDPLUS is
+missing* — it removes every `\Deleted` message of the folder, including ones the user
+never selected.
+
 ## 2026-11-25 — An updated invitation moves the copy EmailOps imported; look-alike events are not merged
 
 **Decision:** "Yes"/"Maybe" on an invitation whose event is a copy EmailOps imported first rewrites
@@ -5037,3 +5064,17 @@ back.
 - *Re-importing the updated event*: Google does not document what `events.import` does with an
   existing iCalUID.
 - *Moving series*: their exceptions and exclusions would need rewriting too; left for a follow-up.
+
+## 2026-11-25 — Polish is not offered on a draft with links or images
+
+**Decision:** The composer's **Polish** action is disabled while the text the user wrote
+(signature left out) holds a link or an image, and its tooltip says why. Bold, italics and
+lists are still flattened to plain text by Polish; that loss is accepted.
+**Context:** Polish (#275) sends the model the draft as plain text and puts the model's
+plain-text answer in its place, so a link or an image in the draft would be dropped without
+the user choosing it. Generate already returned plain text, but Polish works on what the user
+wrote.
+**Rejected:** Leaving Polish on and documenting that it drops formatting — content the user
+added would disappear on one click. Making Polish keep the HTML — the most complete answer but
+much more work (markup through a small local model, sanitizing what comes back); it can be
+its own issue later.
