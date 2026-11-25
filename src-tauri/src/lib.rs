@@ -290,6 +290,7 @@ macro_rules! app_commands {
             commands::attachments::get_attachments,
             commands::attachments::get_attachments_for_email,
             commands::attachments::count_attachments,
+            commands::attachments::list_attachment_ids,
             commands::attachments::get_attachment,
             commands::attachments::get_attachment_tags,
             commands::attachments::get_attachment_file_path,

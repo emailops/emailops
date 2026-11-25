@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -6,9 +7,9 @@ use regex::Regex;
 #[cfg(feature = "desktop")]
 use tauri::Emitter;
 
-use crate::db::Database;
+use crate::db::{AccountScope, Database};
 use crate::models::error::{AppError, Result};
-use crate::models::{Account, Attachment, AttachmentRule};
+use crate::models::{Account, Attachment, AttachmentRule, BulkDownloadSummary, DownloadSkipReason, SkippedDownload};
 use crate::services::attachment_safety::{self, quarantine_saved_file};
 use crate::services::emails::build_provider;
 use crate::sync::provider::{AttachmentInfo, EmailProvider};
@@ -182,18 +183,97 @@ fn download_dest_in(dir: &Path, name: &str) -> Result<PathBuf> {
     Ok(dest)
 }
 
-/// Destination filename for a bulk download: `<RuleName>_<original>`, or just
-/// the original when the rule has no name. Both parts are reduced to a single
+/// Destination filename for a bulk download: `<account>_<RuleName>_<original>`,
+/// leaving out the account (given only when the download spans several
+/// accounts) and the rule name when absent. Every part is reduced to a single
 /// path component so the result always stays inside the Downloads folder.
-pub fn bulk_download_name(rule_name: Option<&str>, filename: &str) -> String {
+pub fn bulk_download_name(account_label: Option<&str>, rule_name: Option<&str>, filename: &str) -> String {
     let filename = sanitize_download_filename(filename);
-    match rule_name
-        .map(|n| n.replace([' ', '/', '\\'], "_"))
-        .filter(|n| !n.is_empty())
-    {
-        Some(prefix) => sanitize_download_filename(&format!("{prefix}_{filename}")),
-        None => filename,
+    let prefix: Vec<String> = [account_label, rule_name]
+        .into_iter()
+        .flatten()
+        .map(|part| part.replace([' ', '/', '\\'], "_"))
+        .filter(|part| !part.is_empty())
+        .collect();
+    if prefix.is_empty() {
+        return filename;
     }
+    sanitize_download_filename(&format!("{}_{filename}", prefix.join("_")))
+}
+
+/// Copy the stored files of `attachment_ids` into `dest_dir`, skipping (and
+/// reporting why) each one that cannot be copied instead of aborting the batch.
+///
+/// An id outside `scope` — missing, of another account, or of a disabled
+/// account under `AllEnabled` — is `NotFound`, never told apart, so the result
+/// does not reveal ids of other accounts. Only a database error aborts. When
+/// the files to copy span more than one account, each name starts with its
+/// account's address.
+pub fn bulk_download(
+    db: &Database,
+    app_data_dir: &Path,
+    dest_dir: &Path,
+    scope: AccountScope<'_>,
+    attachment_ids: &[String],
+) -> Result<BulkDownloadSummary> {
+    let accounts: HashMap<String, Account> = db
+        .list_accounts()?
+        .into_iter()
+        .map(|account| (account.id.clone(), account))
+        .collect();
+    let in_scope = |attachment: &Attachment| match scope {
+        AccountScope::Account(id) => attachment.account_id == id,
+        AccountScope::AllEnabled => accounts.get(&attachment.account_id).is_some_and(|a| a.enabled),
+    };
+
+    let mut skipped = Vec::new();
+    let mut skip = |attachment_id: &str, reason| {
+        skipped.push(SkippedDownload {
+            attachment_id: attachment_id.to_string(),
+            reason,
+        })
+    };
+
+    // Resolve every id first: the account prefix depends on which files will
+    // actually be copied.
+    let mut to_copy = Vec::new();
+    for id in attachment_ids {
+        let attachment = match db.get_attachment(id)? {
+            Some(attachment) if in_scope(&attachment) => attachment,
+            _ => {
+                skip(id, DownloadSkipReason::NotFound);
+                continue;
+            }
+        };
+        match safe_attachment_path(app_data_dir, &attachment.file_path) {
+            Ok(src) => to_copy.push((attachment, src)),
+            Err(AppError::NotFound(_)) => skip(id, DownloadSkipReason::FileMissing),
+            Err(_) => skip(id, DownloadSkipReason::Unreadable),
+        }
+    }
+
+    let first_account = to_copy.first().map(|(a, _)| a.account_id.as_str());
+    let spans_accounts = to_copy
+        .iter()
+        .any(|(a, _)| Some(a.account_id.as_str()) != first_account);
+
+    let mut copied = 0u32;
+    for (attachment, src) in &to_copy {
+        let account_label = spans_accounts
+            .then(|| accounts.get(&attachment.account_id).map(|a| a.email.as_str()))
+            .flatten();
+        let name = bulk_download_name(account_label, attachment.rule_name.as_deref(), &attachment.filename);
+        match copy_attachment_to_downloads(src, dest_dir, &name) {
+            Ok(_) => copied += 1,
+            Err(_) => skip(&attachment.id, DownloadSkipReason::CopyFailed),
+        }
+    }
+
+    Ok(BulkDownloadSummary {
+        dest: dest_dir.to_string_lossy().into_owned(),
+        copied,
+        skipped,
+    })
 }
 
 /// Write attachment bytes into `dir` (the user's Downloads folder) under a
@@ -725,6 +805,7 @@ pub(crate) async fn store_collected_attachment(
         account_id: email.account_id.clone(),
         email_id: email.id.clone(),
         rule_id: rule.id.clone(),
+        rule_name: None,
         gmail_attachment_id: info.attachment_id.clone(),
         filename: info.filename.clone(),
         mime_type: info.mime_type.clone(),
@@ -960,24 +1041,28 @@ pub fn list_rules(db: &Arc<Database>, account_id: &str) -> Result<Vec<Attachment
 
 pub fn get_attachments(
     db: &Arc<Database>,
-    account_id: &str,
+    scope: AccountScope<'_>,
     tag: Option<&str>,
     limit: i32,
     offset: i32,
 ) -> Result<Vec<Attachment>> {
-    db.get_attachments(account_id, tag, limit, offset)
+    db.get_attachments(scope, tag, limit, offset)
 }
 
-pub fn count_attachments(db: &Arc<Database>, account_id: &str, tag: Option<&str>) -> Result<i32> {
-    db.count_attachments(account_id, tag)
+pub fn count_attachments(db: &Arc<Database>, scope: AccountScope<'_>, tag: Option<&str>) -> Result<i32> {
+    db.count_attachments(scope, tag)
+}
+
+pub fn list_attachment_ids(db: &Arc<Database>, scope: AccountScope<'_>, tag: Option<&str>) -> Result<Vec<String>> {
+    db.list_attachment_ids(scope, tag)
 }
 
 pub fn get_attachment(db: &Arc<Database>, attachment_id: &str) -> Result<Option<Attachment>> {
     db.get_attachment(attachment_id)
 }
 
-pub fn get_tags(db: &Arc<Database>, account_id: &str) -> Result<Vec<String>> {
-    db.get_all_tags(account_id)
+pub fn get_tags(db: &Arc<Database>, scope: AccountScope<'_>) -> Result<Vec<String>> {
+    db.get_all_tags(scope)
 }
 
 /// List every attachment surfaced on one email: both the canonical
@@ -2746,6 +2831,7 @@ pub(crate) mod tests {
             account_id: "acc-del".into(),
             email_id: "m1".into(),
             rule_id: rule.id.clone(),
+            rule_name: None,
             gmail_attachment_id: String::new(),
             filename: "f.pdf".into(),
             mime_type: "application/pdf".into(),
@@ -3121,7 +3207,7 @@ pub(crate) mod tests {
     #[test]
     fn bulk_download_name_prefixes_the_rule_name() {
         assert_eq!(
-            bulk_download_name(Some("Monthly invoices"), "march.pdf"),
+            bulk_download_name(None, Some("Monthly invoices"), "march.pdf"),
             "Monthly_invoices_march.pdf"
         );
     }
@@ -3129,24 +3215,24 @@ pub(crate) mod tests {
     #[test]
     fn bulk_download_name_strips_path_components_from_the_email_filename() {
         assert_eq!(
-            bulk_download_name(None, "../../Library/LaunchAgents/x.plist"),
+            bulk_download_name(None, None, "../../Library/LaunchAgents/x.plist"),
             "x.plist"
         );
-        assert_eq!(bulk_download_name(None, "/etc/evil.sh"), "evil.sh");
+        assert_eq!(bulk_download_name(None, None, "/etc/evil.sh"), "evil.sh");
         assert_eq!(
-            bulk_download_name(Some("Invoices"), "..\\..\\evil.sh"),
+            bulk_download_name(None, Some("Invoices"), "..\\..\\evil.sh"),
             "Invoices_evil.sh"
         );
     }
 
     #[test]
     fn bulk_download_name_keeps_a_rule_name_with_slashes_in_one_component() {
-        assert_eq!(bulk_download_name(Some("a/../b"), "x.pdf"), "a_.._b_x.pdf");
+        assert_eq!(bulk_download_name(None, Some("a/../b"), "x.pdf"), "a_.._b_x.pdf");
     }
 
     #[test]
     fn bulk_download_name_neutralises_a_drive_prefix_in_the_rule_name() {
-        assert_eq!(bulk_download_name(Some("C:"), "x.pdf"), "C__x.pdf");
+        assert_eq!(bulk_download_name(None, Some("C:"), "x.pdf"), "C__x.pdf");
     }
 
     // --- sanitize_download_filename: names Windows would misread ---
@@ -3380,5 +3466,779 @@ pub(crate) mod tests {
         let tmp = tempfile::tempdir().expect("tmp dir");
         let err = validate_reveal_path(tmp.path(), &tmp.path().join("gone.pdf")).expect_err("must reject");
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    // --- Attachments of one account or every enabled account ---
+
+    use crate::db::AccountScope;
+    use crate::models::DownloadSkipReason;
+
+    /// One stored attachment for the listing and download tests. Its rule and
+    /// its email are created on insert, because `attachments` has foreign keys
+    /// to both.
+    struct AttachmentFixture<'a> {
+        id: &'a str,
+        account_id: &'a str,
+        rule_name: &'a str,
+        email_timestamp: i64,
+        tags: &'a [&'a str],
+        filename: &'a str,
+        file_path: &'a str,
+    }
+
+    impl<'a> AttachmentFixture<'a> {
+        fn new(id: &'a str, account_id: &'a str) -> Self {
+            AttachmentFixture {
+                id,
+                account_id,
+                rule_name: "Invoices",
+                email_timestamp: 1_700_000_000,
+                tags: &[],
+                filename: "invoice.pdf",
+                file_path: "",
+            }
+        }
+    }
+
+    fn insert_attachment_row(db: &Database, f: &AttachmentFixture) {
+        let rule_id = format!("rule-{}-{}", f.account_id, f.rule_name);
+        db.connection()
+            .execute(
+                "INSERT OR IGNORE INTO attachment_rules (id, account_id, name, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, 0, 0)",
+                rusqlite::params![rule_id, f.account_id, f.rule_name],
+            )
+            .expect("insert rule");
+        let email_id = format!("email-{}", f.id);
+        db.insert_email(&make_email(
+            f.account_id,
+            &email_id,
+            "billing@vendor.example",
+            "Invoice",
+        ))
+        .expect("insert email");
+        let file_path = if f.file_path.is_empty() {
+            format!("attachments/{}/{}", f.account_id, f.id)
+        } else {
+            f.file_path.to_string()
+        };
+        db.insert_attachment(&Attachment {
+            id: f.id.into(),
+            account_id: f.account_id.into(),
+            email_id,
+            rule_id,
+            rule_name: None,
+            gmail_attachment_id: String::new(),
+            filename: f.filename.into(),
+            mime_type: "application/pdf".into(),
+            file_size: 4,
+            file_path,
+            tags: f.tags.iter().map(|t| t.to_string()).collect(),
+            sender_email: "billing@vendor.example".into(),
+            subject: "Invoice".into(),
+            email_timestamp: f.email_timestamp,
+            created_at: 0,
+        })
+        .expect("insert attachment");
+    }
+
+    /// Writes the stored file of `id` (default `file_path`) under `data_dir`.
+    fn write_stored_file(data_dir: &Path, account_id: &str, id: &str, bytes: &[u8]) {
+        let dir = data_dir.join("attachments").join(account_id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join(id), bytes).expect("write stored file");
+    }
+
+    fn two_accounts() -> Arc<Database> {
+        let db = Arc::new(Database::new_for_testing().expect("test db"));
+        make_account(&db, "acc-a", "imap", "a@example.com");
+        make_account(&db, "acc-b", "imap", "b@example.com");
+        db
+    }
+
+    fn disable_account(db: &Database, account_id: &str) {
+        db.connection()
+            .execute(
+                "UPDATE accounts SET enabled = 0 WHERE id = ?1",
+                rusqlite::params![account_id],
+            )
+            .expect("disable account");
+    }
+
+    fn listed_ids(db: &Arc<Database>, scope: AccountScope<'_>, tag: Option<&str>) -> Vec<String> {
+        get_attachments(db, scope, tag, 1000, 0)
+            .expect("list")
+            .into_iter()
+            .map(|a| a.id)
+            .collect()
+    }
+
+    #[test]
+    fn all_enabled_scope_lists_every_enabled_account_newest_first() {
+        let db = two_accounts();
+        for (id, account, ts) in [("a1", "acc-a", 100), ("b1", "acc-b", 300), ("a2", "acc-a", 200)] {
+            insert_attachment_row(
+                &db,
+                &AttachmentFixture {
+                    email_timestamp: ts,
+                    ..AttachmentFixture::new(id, account)
+                },
+            );
+        }
+
+        assert_eq!(listed_ids(&db, AccountScope::AllEnabled, None), ["b1", "a2", "a1"]);
+    }
+
+    #[test]
+    fn all_enabled_scope_leaves_out_disabled_accounts() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["invoice"],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["receipt"],
+                ..AttachmentFixture::new("b1", "acc-b")
+            },
+        );
+        disable_account(&db, "acc-b");
+
+        assert_eq!(listed_ids(&db, AccountScope::AllEnabled, None), ["a1"]);
+        assert_eq!(
+            count_attachments(&db, AccountScope::AllEnabled, None).expect("count"),
+            1
+        );
+        assert_eq!(
+            list_attachment_ids(&db, AccountScope::AllEnabled, None).expect("ids"),
+            ["a1"]
+        );
+        assert_eq!(get_tags(&db, AccountScope::AllEnabled).expect("tags"), ["invoice"]);
+    }
+
+    #[test]
+    fn account_scope_lists_only_that_account() {
+        let db = two_accounts();
+        insert_attachment_row(&db, &AttachmentFixture::new("a1", "acc-a"));
+        insert_attachment_row(&db, &AttachmentFixture::new("b1", "acc-b"));
+
+        assert_eq!(listed_ids(&db, AccountScope::Account("acc-b"), None), ["b1"]);
+    }
+
+    #[test]
+    fn paging_through_equal_timestamps_returns_each_attachment_once() {
+        let db = two_accounts();
+        // Every row shares one date, so both page borders (50 and 100) fall
+        // inside a tie; ids are inserted out of order.
+        let ids: Vec<String> = (0..120).map(|i| format!("att-{:03}", (i * 37) % 120)).collect();
+        for (i, id) in ids.iter().enumerate() {
+            let account = if i % 2 == 0 { "acc-a" } else { "acc-b" };
+            insert_attachment_row(&db, &AttachmentFixture::new(id, account));
+        }
+
+        let mut paged = Vec::new();
+        for offset in [0, 50, 100] {
+            let page = get_attachments(&db, AccountScope::AllEnabled, None, 50, offset).expect("page");
+            paged.extend(page.into_iter().map(|a| a.id));
+        }
+
+        let mut expected = ids.clone();
+        expected.sort_unstable_by(|a, b| b.cmp(a));
+        assert_eq!(paged, expected);
+    }
+
+    #[test]
+    fn count_matches_the_rows_listed_for_each_scope_and_tag() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["invoice"],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["invoice", "2026"],
+                ..AttachmentFixture::new("a2", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["Invoice"],
+                ..AttachmentFixture::new("b1", "acc-b")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["receipt"],
+                ..AttachmentFixture::new("b2", "acc-b")
+            },
+        );
+
+        for scope in [
+            AccountScope::Account("acc-a"),
+            AccountScope::Account("acc-b"),
+            AccountScope::AllEnabled,
+        ] {
+            for tag in [None, Some("invoice"), Some("receipt"), Some("missing")] {
+                let listed = listed_ids(&db, scope, tag).len() as i32;
+                let counted = count_attachments(&db, scope, tag).expect("count");
+                assert_eq!(counted, listed, "scope {scope:?}, tag {tag:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tag_filter_ignores_ascii_case() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["Invoice"],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+
+        assert_eq!(listed_ids(&db, AccountScope::AllEnabled, Some("invoice")), ["a1"]);
+    }
+
+    #[test]
+    fn tag_filter_treats_percent_and_underscore_literally() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["a_b"],
+                ..AttachmentFixture::new("under", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["axb"],
+                ..AttachmentFixture::new("letter", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["100%"],
+                ..AttachmentFixture::new("percent", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["1000"],
+                ..AttachmentFixture::new("digits", "acc-a")
+            },
+        );
+
+        assert_eq!(listed_ids(&db, AccountScope::AllEnabled, Some("a_b")), ["under"]);
+        assert_eq!(listed_ids(&db, AccountScope::AllEnabled, Some("100%")), ["percent"]);
+    }
+
+    #[test]
+    fn tag_filter_matches_a_tag_with_quotes() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["say \"hi\""],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+
+        assert_eq!(listed_ids(&db, AccountScope::AllEnabled, Some("say \"hi\"")), ["a1"]);
+    }
+
+    #[test]
+    fn tags_are_unioned_across_accounts_once_per_case_folded_spelling() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["invoice"],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["Invoice", "receipt"],
+                ..AttachmentFixture::new("b1", "acc-b")
+            },
+        );
+
+        assert_eq!(
+            get_tags(&db, AccountScope::AllEnabled).expect("tags"),
+            ["Invoice", "receipt"]
+        );
+        assert_eq!(
+            get_tags(&db, AccountScope::Account("acc-a")).expect("tags"),
+            ["invoice"]
+        );
+    }
+
+    #[test]
+    fn attachment_ids_cover_the_whole_filter_in_list_order() {
+        let db = two_accounts();
+        for i in 0..60 {
+            let id = format!("att-{i:02}");
+            let account = if i % 3 == 0 { "acc-b" } else { "acc-a" };
+            let tags: &[&str] = if i % 4 == 0 { &["other"] } else { &["invoice"] };
+            insert_attachment_row(
+                &db,
+                &AttachmentFixture {
+                    email_timestamp: i64::from(i % 7),
+                    tags,
+                    ..AttachmentFixture::new(&id, account)
+                },
+            );
+        }
+
+        let ids = list_attachment_ids(&db, AccountScope::AllEnabled, Some("invoice")).expect("ids");
+
+        assert_eq!(ids.len(), 45);
+        assert_eq!(ids, listed_ids(&db, AccountScope::AllEnabled, Some("invoice")));
+    }
+
+    #[test]
+    fn each_listed_attachment_carries_its_rule_name() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                rule_name: "Sent invoices",
+                ..AttachmentFixture::new("b1", "acc-b")
+            },
+        );
+
+        let listed = get_attachments(&db, AccountScope::AllEnabled, None, 50, 0).expect("list");
+        assert_eq!(listed[0].rule_name.as_deref(), Some("Sent invoices"));
+        let one = get_attachment(&db, "b1").expect("get").expect("found");
+        assert_eq!(one.rule_name.as_deref(), Some("Sent invoices"));
+    }
+
+    #[test]
+    fn an_unreadable_tags_json_fails_every_attachment_read() {
+        let db = two_accounts();
+        insert_attachment_row(&db, &AttachmentFixture::new("a1", "acc-a"));
+        db.connection()
+            .execute("UPDATE attachments SET tags_json = 'not json' WHERE id = 'a1'", [])
+            .expect("corrupt the row");
+
+        assert!(get_attachments(&db, AccountScope::AllEnabled, None, 50, 0).is_err());
+        assert!(get_tags(&db, AccountScope::AllEnabled).is_err());
+        assert!(db.get_attachments_for_email("email-a1").is_err());
+        assert!(db.get_attachments_for_rule("rule-acc-a-Invoices").is_err());
+    }
+
+    // --- bulk_download ---
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn downloaded_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read dest")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn skipped(summary: &BulkDownloadSummary) -> Vec<(String, DownloadSkipReason)> {
+        summary
+            .skipped
+            .iter()
+            .map(|s| (s.attachment_id.clone(), s.reason))
+            .collect()
+    }
+
+    #[test]
+    fn bulk_download_copies_two_accounts_with_the_account_prefix() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "march.pdf",
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                rule_name: "Sent invoices",
+                filename: "april.pdf",
+                ..AttachmentFixture::new("b1", "acc-b")
+            },
+        );
+        write_stored_file(data.path(), "acc-a", "a1", b"%PDF-a");
+        write_stored_file(data.path(), "acc-b", "b1", b"%PDF-b");
+
+        let summary = bulk_download(
+            &db,
+            data.path(),
+            dest.path(),
+            AccountScope::AllEnabled,
+            &ids(&["a1", "b1"]),
+        )
+        .expect("download");
+
+        assert_eq!(summary.copied, 2);
+        assert!(summary.skipped.is_empty());
+        assert_eq!(
+            downloaded_names(dest.path()),
+            [
+                "a@example.com_Invoices_march.pdf",
+                "b@example.com_Sent_invoices_april.pdf"
+            ]
+        );
+    }
+
+    #[test]
+    fn bulk_download_of_one_account_has_no_account_prefix() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "march.pdf",
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "april.pdf",
+                ..AttachmentFixture::new("a2", "acc-a")
+            },
+        );
+        write_stored_file(data.path(), "acc-a", "a1", b"%PDF");
+        write_stored_file(data.path(), "acc-a", "a2", b"%PDF");
+
+        for scope in [AccountScope::AllEnabled, AccountScope::Account("acc-a")] {
+            let dest = tempfile::tempdir().expect("dest dir");
+            bulk_download(&db, data.path(), dest.path(), scope, &ids(&["a1", "a2"])).expect("download");
+            assert_eq!(
+                downloaded_names(dest.path()),
+                ["Invoices_april.pdf", "Invoices_march.pdf"],
+                "{scope:?}"
+            );
+        }
+        drop(dest);
+    }
+
+    #[test]
+    fn bulk_download_skips_an_id_of_another_account_as_not_found() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        insert_attachment_row(&db, &AttachmentFixture::new("a1", "acc-a"));
+        insert_attachment_row(&db, &AttachmentFixture::new("b1", "acc-b"));
+        write_stored_file(data.path(), "acc-a", "a1", b"%PDF");
+        write_stored_file(data.path(), "acc-b", "b1", b"%PDF");
+
+        let summary = bulk_download(
+            &db,
+            data.path(),
+            dest.path(),
+            AccountScope::Account("acc-a"),
+            &ids(&["a1", "b1", "nope"]),
+        )
+        .expect("download");
+
+        assert_eq!(summary.copied, 1);
+        assert_eq!(
+            skipped(&summary),
+            [
+                ("b1".to_string(), DownloadSkipReason::NotFound),
+                ("nope".to_string(), DownloadSkipReason::NotFound)
+            ]
+        );
+    }
+
+    #[test]
+    fn bulk_download_skips_a_disabled_account_in_all_scope() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        insert_attachment_row(&db, &AttachmentFixture::new("a1", "acc-a"));
+        insert_attachment_row(&db, &AttachmentFixture::new("b1", "acc-b"));
+        write_stored_file(data.path(), "acc-a", "a1", b"%PDF");
+        write_stored_file(data.path(), "acc-b", "b1", b"%PDF");
+        disable_account(&db, "acc-b");
+
+        let summary = bulk_download(
+            &db,
+            data.path(),
+            dest.path(),
+            AccountScope::AllEnabled,
+            &ids(&["a1", "b1"]),
+        )
+        .expect("download");
+
+        assert_eq!(summary.copied, 1);
+        assert_eq!(skipped(&summary), [("b1".to_string(), DownloadSkipReason::NotFound)]);
+    }
+
+    #[test]
+    fn bulk_download_skips_a_missing_file_and_copies_the_rest() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "gone.pdf",
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "here.pdf",
+                ..AttachmentFixture::new("a2", "acc-a")
+            },
+        );
+        write_stored_file(data.path(), "acc-a", "a2", b"%PDF");
+
+        let summary = bulk_download(
+            &db,
+            data.path(),
+            dest.path(),
+            AccountScope::AllEnabled,
+            &ids(&["a1", "a2"]),
+        )
+        .expect("download");
+
+        assert_eq!(summary.copied, 1);
+        assert_eq!(skipped(&summary), [("a1".to_string(), DownloadSkipReason::FileMissing)]);
+        assert_eq!(downloaded_names(dest.path()), ["Invoices_here.pdf"]);
+    }
+
+    #[test]
+    fn bulk_download_skips_a_path_outside_the_data_dir_as_unreadable() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        let outside = tempfile::tempdir().expect("outside dir");
+        std::fs::write(outside.path().join("secret.txt"), b"x").expect("seed");
+        let escaping = format!(
+            "../{}/secret.txt",
+            outside.path().file_name().expect("name").to_string_lossy()
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                file_path: &escaping,
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "here.pdf",
+                ..AttachmentFixture::new("a2", "acc-a")
+            },
+        );
+        write_stored_file(data.path(), "acc-a", "a2", b"%PDF");
+
+        let summary = bulk_download(
+            &db,
+            data.path(),
+            dest.path(),
+            AccountScope::AllEnabled,
+            &ids(&["a1", "a2"]),
+        )
+        .expect("download");
+
+        assert_eq!(summary.copied, 1);
+        assert_eq!(skipped(&summary), [("a1".to_string(), DownloadSkipReason::Unreadable)]);
+    }
+
+    #[test]
+    fn bulk_download_reports_copy_failed_when_the_destination_is_not_a_folder() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        insert_attachment_row(&db, &AttachmentFixture::new("a1", "acc-a"));
+        write_stored_file(data.path(), "acc-a", "a1", b"%PDF");
+        let not_a_dir = data.path().join("plain-file");
+        std::fs::write(&not_a_dir, b"x").expect("seed");
+
+        let summary =
+            bulk_download(&db, data.path(), &not_a_dir, AccountScope::AllEnabled, &ids(&["a1"])).expect("download");
+
+        assert_eq!(summary.copied, 0);
+        assert_eq!(skipped(&summary), [("a1".to_string(), DownloadSkipReason::CopyFailed)]);
+    }
+
+    #[test]
+    fn bulk_download_with_nothing_copied_returns_the_summary() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+
+        let summary =
+            bulk_download(&db, data.path(), dest.path(), AccountScope::AllEnabled, &ids(&["nope"])).expect("download");
+
+        assert_eq!(summary.copied, 0);
+        assert_eq!(summary.dest, dest.path().to_string_lossy());
+        assert_eq!(skipped(&summary), [("nope".to_string(), DownloadSkipReason::NotFound)]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bulk_download_quarantines_every_copied_file() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest = tempfile::tempdir().expect("dest dir");
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "march.pdf",
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                filename: "april.pdf",
+                ..AttachmentFixture::new("b1", "acc-b")
+            },
+        );
+        write_stored_file(data.path(), "acc-a", "a1", b"%PDF");
+        write_stored_file(data.path(), "acc-b", "b1", b"%PDF");
+
+        bulk_download(
+            &db,
+            data.path(),
+            dest.path(),
+            AccountScope::AllEnabled,
+            &ids(&["a1", "b1"]),
+        )
+        .expect("download");
+
+        for name in downloaded_names(dest.path()) {
+            assert!(
+                read_quarantine(&dest.path().join(&name)).is_some(),
+                "{name} is not quarantined"
+            );
+        }
+    }
+
+    #[test]
+    fn bulk_download_name_puts_the_account_first() {
+        assert_eq!(
+            bulk_download_name(Some("b@example.com"), Some("Sent invoices"), "april.pdf"),
+            "b@example.com_Sent_invoices_april.pdf"
+        );
+        assert_eq!(
+            bulk_download_name(Some("b@example.com"), None, "april.pdf"),
+            "b@example.com_april.pdf"
+        );
+        assert_eq!(bulk_download_name(Some("a/../b"), None, "x.pdf"), "a_.._b_x.pdf");
+    }
+
+    // --- Measurements (run by hand: `-- --ignored measure_ --nocapture`) ---
+
+    #[test]
+    #[ignore = "measurement, run by hand"]
+    fn measure_listing_50000_attachments() {
+        let db = two_accounts();
+        {
+            let conn = db.connection();
+            for account in ["acc-a", "acc-b"] {
+                conn.execute(
+                    "INSERT INTO attachment_rules (id, account_id, name, created_at, updated_at) VALUES (?1, ?2, 'Invoices', 0, 0)",
+                    rusqlite::params![format!("rule-{account}"), account],
+                )
+                .expect("rule");
+            }
+            let tx = conn.unchecked_transaction().expect("tx");
+            for i in 0..50_000 {
+                let account = if i % 2 == 0 { "acc-a" } else { "acc-b" };
+                tx.execute(
+                    "INSERT INTO emails (id, account_id, thread_id, subject, sender, sender_email, recipients_json, snippet, timestamp, created_at) \
+                     VALUES (?1, ?2, ?1, 's', 'S', 's@example.com', '[]', '', 0, 0)",
+                    rusqlite::params![format!("m{i}"), account],
+                )
+                .expect("email");
+                let tags = if i % 3 == 0 { r#"["invoice"]"# } else { r#"["receipt"]"# };
+                tx.execute(
+                    "INSERT INTO attachments (id, account_id, email_id, rule_id, gmail_attachment_id, filename, mime_type, file_size, file_path, tags_json, sender_email, subject, email_timestamp, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, '', 'f.pdf', 'application/pdf', 1, 'p', ?5, 's@example.com', 's', ?6, 0)",
+                    rusqlite::params![format!("att-{i:05}"), account, format!("m{i}"), format!("rule-{account}"), tags, i % 997],
+                )
+                .expect("attachment");
+            }
+            tx.commit().expect("commit");
+        }
+
+        for tag in [None, Some("invoice")] {
+            let start = std::time::Instant::now();
+            let page = get_attachments(&db, AccountScope::AllEnabled, tag, 50, 0).expect("list");
+            let list_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let start = std::time::Instant::now();
+            let total = count_attachments(&db, AccountScope::AllEnabled, tag).expect("count");
+            let count_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let start = std::time::Instant::now();
+            let all_ids = list_attachment_ids(&db, AccountScope::AllEnabled, tag).expect("ids");
+            let ids_ms = start.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "measure_listing tag={tag:?}: list {list_ms:.1} ms ({} rows), count {count_ms:.1} ms ({total}), ids {ids_ms:.1} ms ({})",
+                page.len(),
+                all_ids.len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "measurement, run by hand"]
+    fn measure_downloading_2000_files() {
+        let db = two_accounts();
+        let data = tempfile::tempdir().expect("data dir");
+        let dest_root = std::env::var_os("EMAILOPS_MEASURE_DEST").map(std::path::PathBuf::from);
+        let dest = match &dest_root {
+            Some(root) => tempfile::tempdir_in(root).expect("dest dir on the given volume"),
+            None => tempfile::tempdir().expect("dest dir"),
+        };
+        let bytes = vec![7u8; 200 * 1024];
+        let mut all = Vec::new();
+        for i in 0..2000 {
+            let id = format!("att-{i:04}");
+            let account = if i % 2 == 0 { "acc-a" } else { "acc-b" };
+            insert_attachment_row(
+                &db,
+                &AttachmentFixture {
+                    filename: "invoice.pdf",
+                    ..AttachmentFixture::new(&id, account)
+                },
+            );
+            write_stored_file(data.path(), account, &id, &bytes);
+            all.push(id);
+        }
+
+        let start = std::time::Instant::now();
+        let summary = bulk_download(&db, data.path(), dest.path(), AccountScope::AllEnabled, &all).expect("download");
+        println!(
+            "measure_downloading: {} files in {:.2} s to {}",
+            summary.copied,
+            start.elapsed().as_secs_f64(),
+            dest.path().display()
+        );
     }
 }

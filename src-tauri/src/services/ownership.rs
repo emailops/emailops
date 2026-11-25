@@ -12,7 +12,7 @@ use crate::db::Database;
 use crate::models::error::{AppError, Result};
 use crate::models::outbox::OutboxEntry;
 use crate::models::shared_docs::{DocFolder, SharedDoc};
-use crate::models::{AttachmentRule, Draft, Email};
+use crate::models::{Attachment, AttachmentRule, Draft, Email};
 
 fn not_found(kind: &str, id: &str) -> AppError {
     AppError::NotFound(format!("{kind} {id} not found"))
@@ -37,6 +37,19 @@ pub fn draft_in_account(db: &Database, account_id: &str, draft_id: &str) -> Resu
     let draft = db.get_draft(draft_id)?.ok_or_else(|| not_found("Draft", draft_id))?;
     owned_by(Some(draft.account_id.clone()), account_id, "Draft", draft_id)?;
     Ok(draft)
+}
+
+pub fn attachment_in_account(db: &Database, account_id: &str, attachment_id: &str) -> Result<Attachment> {
+    let attachment = db
+        .get_attachment(attachment_id)?
+        .ok_or_else(|| not_found("Attachment", attachment_id))?;
+    owned_by(
+        Some(attachment.account_id.clone()),
+        account_id,
+        "Attachment",
+        attachment_id,
+    )?;
+    Ok(attachment)
 }
 
 pub fn attachment_rule_in_account(db: &Database, account_id: &str, rule_id: &str) -> Result<AttachmentRule> {
@@ -135,6 +148,12 @@ mod tests {
             )
             .unwrap();
             conn.execute(
+                "INSERT INTO attachments (id, account_id, email_id, rule_id, gmail_attachment_id, filename, mime_type, file_size, file_path, sender_email, subject, email_timestamp, created_at)
+                 VALUES ('attachment-1', ?1, 'email-1', 'rule-1', '', 'f.pdf', 'application/pdf', 1, 'attachments/f.pdf', 's@example.com', 's', 0, 0)",
+                params![OWNER],
+            )
+            .unwrap();
+            conn.execute(
                 "INSERT INTO chat_conversations (id, account_id, title, created_at, updated_at) VALUES ('conv-1', ?1, 't', 0, 0)",
                 params![OWNER],
             )
@@ -168,8 +187,11 @@ mod tests {
     #[test]
     fn a_record_is_visible_only_to_its_own_account() {
         let db = db_with_records();
-        let checks: [(&str, &str, Check); 8] = [
+        let checks: [(&str, &str, Check); 9] = [
             ("email", "email-1", |db, a, id| email_in_account(db, a, id).map(|_| ())),
+            ("attachment", "attachment-1", |db, a, id| {
+                attachment_in_account(db, a, id).map(|_| ())
+            }),
             ("draft", "draft-1", |db, a, id| draft_in_account(db, a, id).map(|_| ())),
             ("attachment rule", "rule-1", |db, a, id| {
                 attachment_rule_in_account(db, a, id).map(|_| ())

@@ -20,6 +20,7 @@ import type {
   AttachmentRuleSuggestion,
   BackfillStatus,
   BlockedSender,
+  BulkDownloadSummary,
   Calendar,
   CalendarEvent,
   CalendarFeed,
@@ -1033,29 +1034,35 @@ export async function acceptAttachmentRuleSuggestion(accountId: string, suggesti
   return invoke('accept_attachment_rule_suggestion', { accountId, suggestionId });
 }
 
+/** `accountId` null = every enabled account ("All accounts"). */
 export async function getAttachments(
-  accountId: string,
+  accountId: string | null,
   tag?: string | null,
   limit?: number,
   offset?: number,
 ): Promise<Attachment[]> {
-  return invoke('get_attachments', { accountId, tag, limit, offset });
+  return invoke('get_attachments', { accountId: accountId ?? undefined, tag, limit, offset });
 }
 
 export async function getAttachmentsForEmail(accountId: string, emailId: string): Promise<Attachment[]> {
   return invoke('get_attachments_for_email', { accountId, emailId });
 }
 
-export async function countAttachments(accountId: string, tag?: string | null): Promise<number> {
-  return invoke('count_attachments', { accountId, tag });
+export async function countAttachments(accountId: string | null, tag?: string | null): Promise<number> {
+  return invoke('count_attachments', { accountId: accountId ?? undefined, tag });
+}
+
+/** Every attachment id the list shows for the account (null = all enabled) and tag, in list order. */
+export async function listAttachmentIds(accountId: string | null, tag?: string | null): Promise<string[]> {
+  return invoke('list_attachment_ids', { accountId: accountId ?? undefined, tag });
 }
 
 export async function getAttachment(accountId: string, attachmentId: string): Promise<Attachment> {
   return invoke('get_attachment', { accountId, attachmentId });
 }
 
-export async function getAttachmentTags(accountId: string): Promise<string[]> {
-  return invoke('get_attachment_tags', { accountId });
+export async function getAttachmentTags(accountId: string | null): Promise<string[]> {
+  return invoke('get_attachment_tags', { accountId: accountId ?? undefined });
 }
 
 export async function getAttachmentFilePath(accountId: string, attachmentId: string): Promise<string> {
@@ -1066,8 +1073,12 @@ export async function getAttachmentData(accountId: string, attachmentId: string)
   return invoke('get_attachment_data', { accountId, attachmentId });
 }
 
-export async function bulkDownloadAttachments(accountId: string, attachmentIds: string[]): Promise<string> {
-  return invoke('bulk_download_attachments', { accountId, attachmentIds });
+/** Copies to Downloads; `accountId` null accepts ids of every enabled account. */
+export async function bulkDownloadAttachments(
+  accountId: string | null,
+  attachmentIds: string[],
+): Promise<BulkDownloadSummary> {
+  return invoke('bulk_download_attachments', { accountId: accountId ?? undefined, attachmentIds });
 }
 
 /**

@@ -27,9 +27,25 @@
     "download": "Descargar {{count}}",
     "manageRules": "Gestionar reglas",
     "allTags": "Todas",
-    "downloadedLog": "Se descargaron {{count}} archivo(s) en {{dest}}",
     "downloadFailedLog": "Error de descarga: {{error}}",
-    "downloadedToast": "{{count}} archivo(s) descargado(s) en Descargas"
+    "downloadedSummaryToast_one": "{{copied}} de {{count}} archivo descargado",
+    "downloadedSummaryToast_other": "{{copied}} de {{count}} archivos descargados",
+    "downloadedSummaryToast_many": "{{copied}} de {{count}} archivos descargados",
+    "downloadedWithSkippedToast_one": "{{copied}} de {{total}} archivos descargados, {{count}} omitido",
+    "downloadedWithSkippedToast_other": "{{copied}} de {{total}} archivos descargados, {{count}} omitidos",
+    "downloadedWithSkippedToast_many": "{{copied}} de {{total}} archivos descargados, {{count}} omitidos",
+    "downloadSummaryLog_one": "{{copied}} de {{count}} adjunto descargado en Descargas",
+    "downloadSummaryLog_other": "{{copied}} de {{count}} adjuntos descargados en Descargas",
+    "downloadSummaryLog_many": "{{copied}} de {{count}} adjuntos descargados en Descargas",
+    "downloadSkippedLog_one": "{{copied}} de {{total}} adjuntos descargados; {{count}} omitido ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_other": "{{copied}} de {{total}} adjuntos descargados; {{count}} omitidos ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_many": "{{copied}} de {{total}} adjuntos descargados; {{count}} omitidos ({{reasons}}): {{ids}}"
+  },
+  "skipReason": {
+    "not_found": "no encontrado",
+    "file_missing": "falta el archivo",
+    "unreadable": "no se puede leer",
+    "copy_failed": "error al copiar"
   },
   "rules": {
     "title": "Reglas de adjuntos",

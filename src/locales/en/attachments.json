@@ -27,9 +27,25 @@
     "download": "Download {{count}}",
     "manageRules": "Manage Rules",
     "allTags": "All",
-    "downloadedLog": "Downloaded {{count}} file(s) to {{dest}}",
     "downloadFailedLog": "Download failed: {{error}}",
-    "downloadedToast": "Downloaded {{count}} file(s) to Downloads"
+    "downloadedSummaryToast_one": "Downloaded {{copied}} of {{count}} file",
+    "downloadedSummaryToast_other": "Downloaded {{copied}} of {{count}} files",
+    "downloadedSummaryToast_many": "Downloaded {{copied}} of {{count}} files",
+    "downloadedWithSkippedToast_one": "Downloaded {{copied}} of {{total}} files, {{count}} skipped",
+    "downloadedWithSkippedToast_other": "Downloaded {{copied}} of {{total}} files, {{count}} skipped",
+    "downloadedWithSkippedToast_many": "Downloaded {{copied}} of {{total}} files, {{count}} skipped",
+    "downloadSummaryLog_one": "Downloaded {{copied}} of {{count}} attachment to Downloads",
+    "downloadSummaryLog_other": "Downloaded {{copied}} of {{count}} attachments to Downloads",
+    "downloadSummaryLog_many": "Downloaded {{copied}} of {{count}} attachments to Downloads",
+    "downloadSkippedLog_one": "Downloaded {{copied}} of {{total}} attachments; {{count}} skipped ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_other": "Downloaded {{copied}} of {{total}} attachments; {{count}} skipped ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_many": "Downloaded {{copied}} of {{total}} attachments; {{count}} skipped ({{reasons}}): {{ids}}"
+  },
+  "skipReason": {
+    "not_found": "not found",
+    "file_missing": "file missing",
+    "unreadable": "unreadable",
+    "copy_failed": "copy failed"
   },
   "rules": {
     "title": "Attachment rules",

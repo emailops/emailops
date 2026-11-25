@@ -3,28 +3,23 @@ use std::sync::Arc;
 use base64::Engine;
 use tauri::{AppHandle, State};
 
-use crate::db::Database;
+use crate::db::{AccountScope, Database};
 use crate::models::error::AppError;
 use crate::models::{
-    Attachment, AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSuggestionStatus, EmailAttachmentMeta,
+    Attachment, AttachmentRule, AttachmentRuleSuggestion, AttachmentRuleSuggestionStatus, BulkDownloadSummary,
+    EmailAttachmentMeta,
 };
 use crate::services;
+use crate::services::ownership::attachment_in_account;
 use crate::AppState;
 
-/// Load an attachment and confirm it belongs to `account_id`. Returns
-/// `NotFound` when the attachment is missing OR owned by a different
-/// account, so the IPC surface never reveals existence across accounts.
-fn ensure_attachment_in_account(
-    db: &Arc<Database>,
-    account_id: &str,
-    attachment_id: &str,
-) -> Result<crate::models::Attachment, AppError> {
-    let att = services::attachments::get_attachment(db, attachment_id)?
-        .ok_or_else(|| AppError::NotFound(format!("Attachment {attachment_id} not found")))?;
-    if att.account_id != account_id {
-        return Err(AppError::NotFound(format!("Attachment {attachment_id} not found")));
+/// The attachments view reads one account, or every enabled account when the
+/// frontend sends no id ("All accounts").
+fn scope_of(account_id: Option<&str>) -> AccountScope<'_> {
+    match account_id {
+        Some(id) => AccountScope::Account(id),
+        None => AccountScope::AllEnabled,
     }
-    Ok(att)
 }
 
 /// Same idea for the email-attachment-meta table (covers both rule-matched
@@ -188,14 +183,14 @@ pub async fn accept_attachment_rule_suggestion(
 #[tauri::command]
 pub async fn get_attachments(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     tag: Option<String>,
     limit: Option<i32>,
     offset: Option<i32>,
 ) -> Result<Vec<Attachment>, AppError> {
     services::attachments::get_attachments(
         &state.db,
-        &account_id,
+        scope_of(account_id.as_deref()),
         tag.as_deref(),
         limit.unwrap_or(50),
         offset.unwrap_or(0),
@@ -205,10 +200,21 @@ pub async fn get_attachments(
 #[tauri::command]
 pub async fn count_attachments(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     tag: Option<String>,
 ) -> Result<i32, AppError> {
-    services::attachments::count_attachments(&state.db, &account_id, tag.as_deref())
+    services::attachments::count_attachments(&state.db, scope_of(account_id.as_deref()), tag.as_deref())
+}
+
+/// Every attachment id the list shows for this account (or all enabled
+/// accounts) and tag, so "select all" covers rows not loaded yet.
+#[tauri::command]
+pub async fn list_attachment_ids(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+    tag: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    services::attachments::list_attachment_ids(&state.db, scope_of(account_id.as_deref()), tag.as_deref())
 }
 
 #[tauri::command]
@@ -227,12 +233,15 @@ pub async fn get_attachment(
     account_id: String,
     attachment_id: String,
 ) -> Result<Attachment, AppError> {
-    ensure_attachment_in_account(&state.db, &account_id, &attachment_id)
+    attachment_in_account(&state.db, &account_id, &attachment_id)
 }
 
 #[tauri::command]
-pub async fn get_attachment_tags(state: State<'_, AppState>, account_id: String) -> Result<Vec<String>, AppError> {
-    services::attachments::get_tags(&state.db, &account_id)
+pub async fn get_attachment_tags(
+    state: State<'_, AppState>,
+    account_id: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    services::attachments::get_tags(&state.db, scope_of(account_id.as_deref()))
 }
 
 #[tauri::command]
@@ -241,63 +250,35 @@ pub async fn get_attachment_file_path(
     account_id: String,
     attachment_id: String,
 ) -> Result<String, AppError> {
-    let attachment = ensure_attachment_in_account(&state.db, &account_id, &attachment_id)?;
+    let attachment = attachment_in_account(&state.db, &account_id, &attachment_id)?;
     let abs_path = services::attachments::safe_attachment_path(&state.app_data_dir, &attachment.file_path)?;
     Ok(abs_path.to_string_lossy().to_string())
 }
 
-/// Copy selected attachments to the system Downloads folder.
-/// Returns the destination folder path.
+/// Copy selected attachments, of one account or of every enabled account, to
+/// the system Downloads folder. Returns what was copied and what was skipped.
 #[tauri::command]
 pub async fn bulk_download_attachments(
     state: State<'_, AppState>,
-    account_id: String,
+    account_id: Option<String>,
     attachment_ids: Vec<String>,
-) -> Result<String, AppError> {
+) -> Result<BulkDownloadSummary, AppError> {
     let downloads_dir =
         dirs::download_dir().ok_or_else(|| AppError::IoError("Could not determine Downloads folder".to_string()))?;
-
-    // Build a rule name lookup for prefixing filenames
-    let mut rule_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-
-    let mut copied = 0u32;
-    for id in &attachment_ids {
-        let attachment = ensure_attachment_in_account(&state.db, &account_id, id)?;
-        // Treat a missing file as "skip this row" but still surface a path
-        // escape as a hard error — that signals a tampered row, not a stale
-        // download.
-        let src = match services::attachments::safe_attachment_path(&state.app_data_dir, &attachment.file_path) {
-            Ok(p) => p,
-            Err(AppError::NotFound(_)) => continue,
-            Err(e) => return Err(e),
-        };
-
-        // Get rule name for prefix (cached)
-        let rule_name = rule_names
-            .entry(attachment.rule_id.clone())
-            .or_insert_with(|| {
-                state
-                    .db
-                    .get_attachment_rule(&attachment.rule_id)
-                    .ok()
-                    .flatten()
-                    .map(|r| r.name)
-                    .unwrap_or_default()
-            })
-            .clone();
-
-        // `RuleName_original.pdf`, sanitized to one path component, then
-        // deduped with (1), (2), etc.
-        let download_name = services::attachments::bulk_download_name(Some(&rule_name), &attachment.filename);
-        services::attachments::copy_attachment_to_downloads(&src, &downloads_dir, &download_name)?;
-        copied += 1;
-    }
-
-    if copied == 0 {
-        return Err(AppError::IoError("No files were copied".to_string()));
-    }
-
-    Ok(downloads_dir.to_string_lossy().to_string())
+    let db = Arc::clone(&state.db);
+    let app_data_dir = state.app_data_dir.clone();
+    // File copies block; keep them off the async workers.
+    tauri::async_runtime::spawn_blocking(move || {
+        services::attachments::bulk_download(
+            &db,
+            &app_data_dir,
+            &downloads_dir,
+            scope_of(account_id.as_deref()),
+            &attachment_ids,
+        )
+    })
+    .await
+    .map_err(|e| AppError::IoError(format!("Downloading attachments failed: {e}")))?
 }
 
 /// Save raw attachment bytes (base64, standard or URL-safe alphabet) into the
@@ -378,7 +359,7 @@ pub async fn get_attachment_data(
     account_id: String,
     attachment_id: String,
 ) -> Result<String, AppError> {
-    let attachment = ensure_attachment_in_account(&state.db, &account_id, &attachment_id)?;
+    let attachment = attachment_in_account(&state.db, &account_id, &attachment_id)?;
     let abs_path = services::attachments::safe_attachment_path(&state.app_data_dir, &attachment.file_path)?;
     let bytes =
         std::fs::read(&abs_path).map_err(|e| AppError::IoError(format!("Failed to read attachment file: {}", e)))?;
@@ -397,7 +378,7 @@ pub async fn open_attachment_externally(
     attachment_id: String,
     confirmed: bool,
 ) -> Result<(), AppError> {
-    let attachment = ensure_attachment_in_account(&state.db, &account_id, &attachment_id)?;
+    let attachment = attachment_in_account(&state.db, &account_id, &attachment_id)?;
     let abs_path = services::attachments::safe_attachment_path(&state.app_data_dir, &attachment.file_path)?;
     services::attachment_safety::open_attachment_file(
         &abs_path,

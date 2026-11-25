@@ -27,9 +27,25 @@
     "download": "{{count}} herunterladen",
     "manageRules": "Regeln verwalten",
     "allTags": "Alle",
-    "downloadedLog": "{{count}} Datei(en) heruntergeladen nach {{dest}}",
     "downloadFailedLog": "Download fehlgeschlagen: {{error}}",
-    "downloadedToast": "{{count}} Datei(en) in Downloads heruntergeladen"
+    "downloadedSummaryToast_one": "{{copied}} von {{count}} Datei heruntergeladen",
+    "downloadedSummaryToast_other": "{{copied}} von {{count}} Dateien heruntergeladen",
+    "downloadedSummaryToast_many": "{{copied}} von {{count}} Dateien heruntergeladen",
+    "downloadedWithSkippedToast_one": "{{copied}} von {{total}} Dateien heruntergeladen, {{count}} übersprungen",
+    "downloadedWithSkippedToast_other": "{{copied}} von {{total}} Dateien heruntergeladen, {{count}} übersprungen",
+    "downloadedWithSkippedToast_many": "{{copied}} von {{total}} Dateien heruntergeladen, {{count}} übersprungen",
+    "downloadSummaryLog_one": "{{copied}} von {{count}} Anhang in Downloads heruntergeladen",
+    "downloadSummaryLog_other": "{{copied}} von {{count}} Anhängen in Downloads heruntergeladen",
+    "downloadSummaryLog_many": "{{copied}} von {{count}} Anhängen in Downloads heruntergeladen",
+    "downloadSkippedLog_one": "{{copied}} von {{total}} Anhängen heruntergeladen; {{count}} übersprungen ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_other": "{{copied}} von {{total}} Anhängen heruntergeladen; {{count}} übersprungen ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_many": "{{copied}} von {{total}} Anhängen heruntergeladen; {{count}} übersprungen ({{reasons}}): {{ids}}"
+  },
+  "skipReason": {
+    "not_found": "nicht gefunden",
+    "file_missing": "Datei fehlt",
+    "unreadable": "nicht lesbar",
+    "copy_failed": "Kopieren fehlgeschlagen"
   },
   "rules": {
     "title": "Anhang-Regeln",
