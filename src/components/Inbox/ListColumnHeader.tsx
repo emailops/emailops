@@ -81,8 +81,8 @@ export function ListColumnHeader({
   };
 
   const toggles: { key: keyof ListColumns; label: string }[] = [
-    { key: 'size', label: t('inbox:listColumns.size') },
     { key: 'attachment', label: t('inbox:listColumns.attachment') },
+    { key: 'size', label: t('inbox:listColumns.size') },
   ];
 
   return (
@@ -102,7 +102,6 @@ export function ListColumnHeader({
             header('sender', t('inbox:listColumns.sender'), LIST_COLUMN_WIDTH.party)
           )}
           <div className="flex-1 min-w-0 flex">{header('subject', t('inbox:listColumns.subject'), 'max-w-full')}</div>
-          {columns.size && header('size', t('inbox:listColumns.size'), LIST_COLUMN_WIDTH.size, true)}
           {columns.attachment && (
             <span
               role="img"
@@ -114,6 +113,7 @@ export function ListColumnHeader({
               <PaperclipIcon className="w-3.5 h-3.5" />
             </span>
           )}
+          {columns.size && header('size', t('inbox:listColumns.size'), LIST_COLUMN_WIDTH.size, true)}
           {header('date', t('inbox:listColumns.date'), LIST_COLUMN_WIDTH.date, true)}
           {/* In the row's ⋮ menu column. */}
           <button

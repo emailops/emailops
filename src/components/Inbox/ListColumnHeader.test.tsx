@@ -72,6 +72,21 @@ describe('ListColumnHeader', () => {
     );
   });
 
+  it('puts Has attachment before Size, in the header and in the column picker', () => {
+    render({ columns: { size: true, attachment: true } });
+    const attachment = container.querySelector('[data-testid="list-column-attachment"]');
+    const size = sortButton('size');
+    expect(
+      attachment && size && attachment.compareDocumentPosition(size) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    click(container.querySelector('button[aria-label="Columns"]'));
+    const toggles = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].map(
+      (input) => input.closest('label')?.textContent,
+    );
+    expect(toggles).toEqual(['Has attachment', 'Size']);
+  });
+
   it('sorts by the clicked column', () => {
     const onSort = vi.fn();
     render({ columns: { size: true, attachment: false }, onSort });

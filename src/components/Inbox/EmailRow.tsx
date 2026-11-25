@@ -313,15 +313,6 @@ export function EmailRow({
             {otherTags.length > 0 && <TagChips tags={otherTags} compact nowrap />}
           </div>
           <SnoozeBadge email={email} />
-          {columns?.size && (
-            <span
-              data-testid="row-size"
-              className={`text-xs text-gray-500 flex-shrink-0 ${LIST_COLUMN_WIDTH.size} text-right tabular-nums`}
-              title={typeof email.sizeBytes === 'number' ? undefined : t('inbox:listColumns.sizeUnknown')}
-            >
-              {typeof email.sizeBytes === 'number' ? fmt.bytes(email.sizeBytes) : '—'}
-            </span>
-          )}
           {columns?.attachment && (
             <span
               data-testid="row-attachment"
@@ -333,6 +324,15 @@ export function EmailRow({
                   <PaperclipIcon className="w-3.5 h-3.5" />
                 </span>
               )}
+            </span>
+          )}
+          {columns?.size && (
+            <span
+              data-testid="row-size"
+              className={`text-xs text-gray-500 flex-shrink-0 ${LIST_COLUMN_WIDTH.size} text-right tabular-nums`}
+              title={typeof email.sizeBytes === 'number' ? undefined : t('inbox:listColumns.sizeUnknown')}
+            >
+              {typeof email.sizeBytes === 'number' ? fmt.bytes(email.sizeBytes) : '—'}
             </span>
           )}
           <span className={`text-xs text-gray-500 flex-shrink-0 ${LIST_COLUMN_WIDTH.date} text-right tabular-nums`}>

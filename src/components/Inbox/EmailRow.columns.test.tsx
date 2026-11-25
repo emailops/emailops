@@ -79,6 +79,15 @@ describe('EmailRow optional columns', () => {
     expect(cell('attachment')?.querySelector('svg')).toBeNull();
   });
 
+  it('puts the attachment cell before the size cell', () => {
+    render({ ...email, sizeBytes: 10, hasAttachments: true }, both);
+    const attachment = cell('attachment');
+    const size = cell('size');
+    expect(
+      attachment && size && attachment.compareDocumentPosition(size) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('leaves out the columns that are hidden', () => {
     render({ ...email, sizeBytes: 10, hasAttachments: true }, { size: false, attachment: false });
     expect(cell('size')).toBeNull();
