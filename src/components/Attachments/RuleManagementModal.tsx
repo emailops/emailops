@@ -41,6 +41,7 @@ interface RuleManagementModalProps {
     subjectPattern: string | null,
     filenamePattern: string | null,
     tags: string[],
+    keepLatestPerThread: boolean,
   ) => Promise<AttachmentRule>;
   onUpdateRule: (
     ruleId: string,
@@ -50,6 +51,7 @@ interface RuleManagementModalProps {
     filenamePattern: string | null,
     tags: string[],
     enabled: boolean,
+    keepLatestPerThread: boolean,
   ) => Promise<AttachmentRule>;
   onDeleteRule: (ruleId: string) => Promise<void>;
   /** Pending candidate rules mined from recurring document attachments. */
@@ -73,6 +75,8 @@ interface RuleFormState {
   subjectPattern: string;
   filenamePattern: string;
   tags: string[];
+  /** Hold only the newest copy of each file name in a thread. */
+  keepLatestPerThread: boolean;
   applyToExisting: boolean;
 }
 
@@ -83,6 +87,7 @@ const emptyForm = (accountId: string): RuleFormState => ({
   subjectPattern: '',
   filenamePattern: '',
   tags: [],
+  keepLatestPerThread: true,
   applyToExisting: true,
 });
 
@@ -153,6 +158,7 @@ export function RuleManagementModal({
           subjectPattern: prefill.subjectPattern,
           filenamePattern: '',
           tags: [],
+          keepLatestPerThread: true,
           applyToExisting: true,
         }
       : emptyForm(defaultAccountId),
@@ -270,6 +276,7 @@ export function RuleManagementModal({
       filenamePattern: suggestion.filenamePattern ?? '',
       // Left for the user: their own tag vocabulary beats a guessed one.
       tags: [],
+      keepLatestPerThread: true,
       applyToExisting: true,
     });
     setEditingRuleId(null);
@@ -306,6 +313,7 @@ export function RuleManagementModal({
       subjectPattern: rule.subjectPattern ?? '',
       filenamePattern: rule.filenamePattern ?? '',
       tags: rule.tags,
+      keepLatestPerThread: rule.keepLatestPerThread,
       applyToExisting: false,
     });
     setEditingRuleId(rule.id);
@@ -344,12 +352,21 @@ export function RuleManagementModal({
           filename,
           tags,
           existing?.enabled ?? true,
+          form.keepLatestPerThread,
         );
         // Editing drops attachments the new patterns no longer match; re-scan
         // in the background, with the same progress as a new rule.
         if (updated.enabled) void runApply(updated);
       } else {
-        const newRule = await onCreateRule(form.accountId, trimmedName, sender, subject, filename, tags);
+        const newRule = await onCreateRule(
+          form.accountId,
+          trimmedName,
+          sender,
+          subject,
+          filename,
+          tags,
+          form.keepLatestPerThread,
+        );
         if (reviewingSuggestionId) {
           // The rule exists now: a failed accept must not keep the form open
           // (saving again would create a second rule). The rule covers the
@@ -406,6 +423,7 @@ export function RuleManagementModal({
         rule.filenamePattern,
         rule.tags,
         !rule.enabled,
+        rule.keepLatestPerThread,
       );
       // Sync skipped the rule while it was off: collect what arrived meanwhile.
       if (updated.enabled && !rule.enabled) void runApply(updated);
@@ -551,6 +569,20 @@ export function RuleManagementModal({
                   existingTags={allTags}
                 />
                 <p className="text-xs text-gray-400 mt-0.5">{t('attachments:rules.tagsHelp')}</p>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-xs text-gray-700 select-none cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-testid="rule-keep-latest"
+                    checked={form.keepLatestPerThread}
+                    onChange={(e) => setForm({ ...form, keepLatestPerThread: e.target.checked })}
+                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  {t('attachments:rules.keepLatestLabel')}
+                </label>
+                <p className="text-xs text-gray-400 mt-0.5 ml-6">{t('attachments:rules.keepLatestHelp')}</p>
               </div>
 
               {!editingRuleId && (

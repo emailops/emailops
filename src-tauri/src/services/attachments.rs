@@ -720,6 +720,10 @@ pub async fn process_attachments_for_email(
             if db.attachment_exists(&email.id, &info.filename, &rule.id)? {
                 continue;
             }
+            // A keep-latest rule holds one copy of a file per thread, the newest.
+            if rule.keep_latest_per_thread && db.newer_copy_held(&rule.id, &email.id, &info.filename)? {
+                continue;
+            }
 
             // Get binary data: either from inline data or by fetching via API
             let bytes = if let Some(ref inline_b64) = info.inline_data {
@@ -754,6 +758,9 @@ pub async fn process_attachments_for_email(
 
             if store_collected_attachment(db, email, info, rule, &bytes, app_data_dir).await? {
                 count += 1;
+                if rule.keep_latest_per_thread {
+                    remove_superseded(db, &rule.id, Some(&info.filename), app_data_dir)?;
+                }
             }
         }
     }
@@ -829,6 +836,15 @@ pub(crate) async fn store_collected_attachment(
         remove_attachment_file(&absolute_path);
     }
     Ok(inserted)
+}
+
+/// Delete the attachments of a keep-latest rule that a newer copy in the same
+/// thread supersedes (only those named `filename` when given), files included.
+fn remove_superseded(db: &Database, rule_id: &str, filename: Option<&str>, app_data_dir: &Path) -> Result<()> {
+    for path in db.delete_superseded_attachments(rule_id, filename)? {
+        remove_attachment_file(&app_data_dir.join(path));
+    }
+    Ok(())
 }
 
 /// Remove a stored attachment file, logging (not failing on) an error: the
@@ -930,6 +946,7 @@ pub fn create_rule(
     subject_pattern: Option<&str>,
     filename_pattern: Option<&str>,
     tags: Vec<String>,
+    keep_latest_per_thread: bool,
 ) -> Result<AttachmentRule> {
     let has_sender = sender_email_pattern.is_some_and(|p| !p.is_empty());
     let has_subject = subject_pattern.is_some_and(|p| !p.is_empty());
@@ -950,6 +967,7 @@ pub fn create_rule(
         filename_pattern: filename_pattern.filter(|p| !p.is_empty()).map(String::from),
         tags,
         enabled: true,
+        keep_latest_per_thread,
         created_at: now,
         updated_at: now,
     };
@@ -968,6 +986,7 @@ pub fn update_rule(
     filename_pattern: Option<&str>,
     tags: Vec<String>,
     enabled: bool,
+    keep_latest_per_thread: bool,
     app_data_dir: &Path,
 ) -> Result<AttachmentRule> {
     let existing = crate::services::ownership::attachment_rule_in_account(db, account_id, rule_id)?;
@@ -990,6 +1009,7 @@ pub fn update_rule(
         filename_pattern: filename_pattern.filter(|p| !p.is_empty()).map(String::from),
         tags,
         enabled,
+        keep_latest_per_thread,
         created_at: existing.created_at,
         updated_at: chrono::Utc::now().timestamp(),
     };
@@ -1008,6 +1028,11 @@ pub fn update_rule(
         if let Some(path) = db.delete_attachment_by_id(&att.id)? {
             remove_attachment_file(&app_data_dir.join(&path));
         }
+    }
+
+    // Turned on (or kept on), the option drops the older copies held so far.
+    if rule.keep_latest_per_thread {
+        remove_superseded(db, &rule.id, None, app_data_dir)?;
     }
 
     // Update tags on remaining attachments
@@ -1598,6 +1623,11 @@ async fn apply_planned(
         });
     }
 
+    // Copies held from before the option was on go too.
+    if rule.keep_latest_per_thread {
+        remove_superseded(db, &rule.id, None, app_data_dir)?;
+    }
+
     let mut summary = format!(
         "Rule '{}': {} of {} emails had matching attachments; saved {} new attachments.",
         rule.name, emails_with_filename_match, scanned, total_attachments,
@@ -1726,6 +1756,7 @@ pub(crate) mod tests {
             filename_pattern: filename.map(String::from),
             tags: vec![],
             enabled: true,
+            keep_latest_per_thread: false,
             created_at: 0,
             updated_at: 0,
         }
@@ -1747,7 +1778,7 @@ pub(crate) mod tests {
 
     #[test]
     fn retro_plan_skips_emails_the_rule_does_not_match() {
-        let rule = make_rule_with_filename(Some("billing@acme.com"), None, None);
+        let rule = make_rule_with_filename(Some("billing@example.test"), None, None);
         let plan = plan_retroactive_apply(&rule, &rows(&[("e1", "other@x.com")]), &names(&[]), true);
         assert!(plan.is_empty());
     }
@@ -2033,6 +2064,7 @@ pub(crate) mod tests {
             None,
             None,
             vec!["self".into()],
+            false,
         )
         .expect("create rule");
 
@@ -2100,6 +2132,7 @@ pub(crate) mod tests {
             None,
             None,
             vec!["self".into()],
+            false,
         )
         .expect("create rule");
 
@@ -2266,6 +2299,7 @@ pub(crate) mod tests {
             None,
             Some("*.pdf"),
             vec!["aws".into(), "invoices".into()],
+            false,
         )
         .expect("create rule");
 
@@ -2316,6 +2350,7 @@ pub(crate) mod tests {
             None,
             None,
             vec![],
+            false,
         )
         .expect("create rule");
 
@@ -2383,6 +2418,7 @@ pub(crate) mod tests {
             Some("*invoice*"),
             Some("*.pdf"),
             vec!["facturas".into()],
+            false,
         )
         .expect("create rule");
 
@@ -2445,6 +2481,7 @@ pub(crate) mod tests {
             None,
             Some("github-*.pdf"),
             vec![],
+            false,
         )
         .expect("create rule");
 
@@ -2477,13 +2514,22 @@ pub(crate) mod tests {
             .expect("backfill done");
         let fake = FakeEmailProvider::new("me@example.com", "Me");
         for id in ["r1", "r2"] {
-            db.insert_email(&make_email(account_id, id, "billing@acme.com", "Invoice"))
+            db.insert_email(&make_email(account_id, id, "billing@example.test", "Invoice"))
                 .expect("insert email");
             recorded_pdf(&db, id, account_id, &format!("{id}.pdf"));
             fake.set_attachment_bytes(id, format!("att-{id}.pdf"), b"%PDF".to_vec());
         }
-        let rule =
-            create_rule(&db, account_id, "Acme", Some("billing@acme.com"), None, None, vec![]).expect("create rule");
+        let rule = create_rule(
+            &db,
+            account_id,
+            "Acme",
+            Some("billing@example.test"),
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("create rule");
 
         let seen = Mutex::new(Vec::new());
         apply_rule_with_provider(
@@ -2545,6 +2591,7 @@ pub(crate) mod tests {
             Some("*invoice*"),
             Some("*.pdf"),
             vec!["facturas".into()],
+            false,
         )
         .expect("create rule");
 
@@ -2582,6 +2629,7 @@ pub(crate) mod tests {
             None,
             None,
             vec![],
+            false,
         )
         .expect("create rule");
 
@@ -2677,19 +2725,28 @@ pub(crate) mod tests {
         assert!(second.is_cancelled());
     }
 
-    /// One email with a recorded, downloadable PDF from billing@acme.com, and
+    /// One email with a recorded, downloadable PDF from billing@example.test, and
     /// a rule collecting it.
     fn acme_invoice_setup(db: &Arc<Database>, account_id: &str) -> (AttachmentRule, FakeEmailProvider) {
         make_account(db, account_id, "gmail", "me@example.com");
         db.set_preference(&crate::services::emails::backfill_done_key(account_id), "1")
             .expect("backfill done");
-        db.insert_email(&make_email(account_id, "inv-1", "billing@acme.com", "Invoice"))
+        db.insert_email(&make_email(account_id, "inv-1", "billing@example.test", "Invoice"))
             .expect("insert email");
         recorded_pdf(db, "inv-1", account_id, "invoice-1.pdf");
         let fake = FakeEmailProvider::new("me@example.com", "Me");
         fake.set_attachment_bytes("inv-1", "att-invoice-1.pdf", b"%PDF".to_vec());
-        let rule =
-            create_rule(db, account_id, "Acme", Some("billing@acme.com"), None, None, vec![]).expect("create rule");
+        let rule = create_rule(
+            db,
+            account_id,
+            "Acme",
+            Some("billing@example.test"),
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("create rule");
         (rule, fake)
     }
 
@@ -2797,7 +2854,7 @@ pub(crate) mod tests {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         let tmp = tempfile::tempdir().expect("tmp dir");
         let (rule, fake) = acme_invoice_setup(&db, "acc-f");
-        db.insert_email(&make_email("acc-f", "inv-2", "billing@acme.com", "Invoice"))
+        db.insert_email(&make_email("acc-f", "inv-2", "billing@example.test", "Invoice"))
             .expect("insert email");
         recorded_pdf(&db, "inv-2", "acc-f", "invoice-2.pdf");
         // inv-1's bytes download; inv-2's do not exist on the provider.
@@ -2841,9 +2898,19 @@ pub(crate) mod tests {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         let tmp = tempfile::tempdir().expect("tmp dir");
         make_account(&db, "acc-del", "gmail", "me@example.com");
-        db.insert_email(&make_email("acc-del", "m1", "billing@acme.com", "Invoice"))
+        db.insert_email(&make_email("acc-del", "m1", "billing@example.test", "Invoice"))
             .expect("insert email");
-        let rule = create_rule(&db, "acc-del", "Acme", Some("billing@acme.com"), None, None, vec![]).expect("rule");
+        let rule = create_rule(
+            &db,
+            "acc-del",
+            "Acme",
+            Some("billing@example.test"),
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("rule");
         let relative = "attachments/acc-del/f.pdf";
         std::fs::create_dir_all(tmp.path().join("attachments/acc-del")).expect("mkdir");
         std::fs::write(tmp.path().join(relative), b"%PDF").expect("write");
@@ -2859,7 +2926,7 @@ pub(crate) mod tests {
             file_size: 4,
             file_path: relative.into(),
             tags: vec![],
-            sender_email: "billing@acme.com".into(),
+            sender_email: "billing@example.test".into(),
             subject: "Invoice".into(),
             email_timestamp: 0,
             created_at: 0,
@@ -2898,6 +2965,7 @@ pub(crate) mod tests {
             None,
             None,
             vec![],
+            false,
         )
         .expect("rule")
     }
@@ -3070,6 +3138,7 @@ pub(crate) mod tests {
             None,
             None,
             vec![],
+            false,
         )
         .expect("rule");
 
@@ -3111,6 +3180,7 @@ pub(crate) mod tests {
                 None,
                 vec![],
                 true,
+                false,
                 tmp.path(),
             )
             .map(|_| ()),
@@ -3152,6 +3222,7 @@ pub(crate) mod tests {
             Some("invoice-q1.pdf"),
             vec!["kept".into()],
             true,
+            false,
             tmp.path(),
         )
         .expect("update");
@@ -3177,9 +3248,19 @@ pub(crate) mod tests {
         let tmp = tempfile::tempdir().expect("tmp dir");
         make_account(&db, "acc-s", "imap", "me@example.com");
         // No backfill: the record is not trusted, so the message must be fetched.
-        db.insert_email(&make_email("acc-s", "m1", "billing@acme.com", "Invoice"))
+        db.insert_email(&make_email("acc-s", "m1", "billing@example.test", "Invoice"))
             .expect("insert email");
-        let rule = create_rule(&db, "acc-s", "Acme", Some("billing@acme.com"), None, None, vec![]).expect("rule");
+        let rule = create_rule(
+            &db,
+            "acc-s",
+            "Acme",
+            Some("billing@example.test"),
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("rule");
 
         let saved = apply_rule_with_provider(&db, &rule, "acc-s", None, tmp.path(), None, &|_| {}, &|| false)
             .await
@@ -3193,9 +3274,19 @@ pub(crate) mod tests {
         let db = Arc::new(Database::new_for_testing().expect("test db"));
         let tmp = tempfile::tempdir().expect("tmp dir");
         make_account(&db, "acc-p2", "gmail", "me@example.com");
-        db.insert_email(&make_email("acc-p2", "m1", "billing@acme.com", "Invoice"))
+        db.insert_email(&make_email("acc-p2", "m1", "billing@example.test", "Invoice"))
             .expect("insert email");
-        let rule = create_rule(&db, "acc-p2", "Acme", Some("billing@acme.com"), None, None, vec![]).expect("rule");
+        let rule = create_rule(
+            &db,
+            "acc-p2",
+            "Acme",
+            Some("billing@example.test"),
+            None,
+            None,
+            vec![],
+            false,
+        )
+        .expect("rule");
         let fake = FakeEmailProvider::new("me@example.com", "Me");
         fake.fail_message("m1");
 
@@ -3817,6 +3908,220 @@ pub(crate) mod tests {
             ..make_rule(None, None)
         })
         .expect("insert rule");
+    }
+
+    // ── keep only the latest copy of a file in a thread ──────────────────────
+
+    /// A message of `thread` sent at `timestamp` by the sender the rules below collect.
+    fn thread_email(db: &Database, id: &str, thread: &str, timestamp: i64) -> Email {
+        let mut email = make_email("acc-a", id, "billing@vendor.example", "Proposal");
+        email.thread_id = thread.into();
+        email.timestamp = timestamp;
+        db.insert_email(&email).expect("insert email");
+        email
+    }
+
+    fn vendor_rule(db: &Arc<Database>, keep_latest_per_thread: bool) -> AttachmentRule {
+        create_rule(
+            db,
+            "acc-a",
+            "Vendor",
+            Some("billing@vendor.example"),
+            None,
+            None,
+            vec![],
+            keep_latest_per_thread,
+        )
+        .expect("create rule")
+    }
+
+    /// Collects `filename` from `email` with `rule`; returns how many were saved.
+    async fn collect_file(db: &Database, email: &Email, filename: &str, rule: &AttachmentRule, dir: &Path) -> u32 {
+        use base64::Engine;
+        let infos = vec![AttachmentInfo {
+            attachment_id: String::new(),
+            filename: filename.into(),
+            mime_type: "application/pdf".into(),
+            size: 4,
+            inline_data: Some(base64::engine::general_purpose::STANDARD.encode(b"%PDF")),
+        }];
+        process_attachments_for_email(db, None, email, &infos, std::slice::from_ref(rule), dir, None)
+            .await
+            .expect("collect")
+    }
+
+    /// (email id, file name) of every attachment the rule holds, sorted.
+    fn held(db: &Database, rule: &AttachmentRule) -> Vec<(String, String)> {
+        let mut held: Vec<(String, String)> = db
+            .get_attachments_for_rule(&rule.id)
+            .expect("attachments")
+            .into_iter()
+            .map(|a| (a.email_id, a.filename))
+            .collect();
+        held.sort();
+        held
+    }
+
+    #[tokio::test]
+    async fn keep_latest_replaces_an_older_copy_of_a_file_in_the_thread_and_its_stored_file() {
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let rule = vendor_rule(&db, true);
+        let first = thread_email(&db, "m1", "t1", 100);
+        let second = thread_email(&db, "m2", "t1", 200);
+
+        collect_file(&db, &first, "proposal.pdf", &rule, dir.path()).await;
+        let older_file = db.get_attachments_for_rule(&rule.id).expect("attachments")[0]
+            .file_path
+            .clone();
+        collect_file(&db, &second, "proposal.pdf", &rule, dir.path()).await;
+
+        assert_eq!(held(&db, &rule), [("m2".to_string(), "proposal.pdf".to_string())]);
+        assert!(!dir.path().join(older_file).exists());
+    }
+
+    #[tokio::test]
+    async fn keep_latest_skips_an_older_copy_once_the_newer_one_is_held() {
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let rule = vendor_rule(&db, true);
+        let older = thread_email(&db, "m1", "t1", 100);
+        let newer = thread_email(&db, "m2", "t1", 200);
+
+        collect_file(&db, &newer, "proposal.pdf", &rule, dir.path()).await;
+        let saved = collect_file(&db, &older, "proposal.pdf", &rule, dir.path()).await;
+
+        assert_eq!(saved, 0);
+        assert_eq!(held(&db, &rule), [("m2".to_string(), "proposal.pdf".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn keep_latest_holds_one_of_two_copies_sent_at_the_same_time() {
+        // The same sent message filed under Sent and under a label folder.
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let rule = vendor_rule(&db, true);
+        let sent = thread_email(&db, "m1", "t1", 100);
+        let label_copy = thread_email(&db, "m1-label", "t1", 100);
+
+        collect_file(&db, &sent, "invoice.pdf", &rule, dir.path()).await;
+        collect_file(&db, &label_copy, "invoice.pdf", &rule, dir.path()).await;
+
+        assert_eq!(held(&db, &rule).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn keep_latest_keeps_files_with_another_name_or_in_another_thread() {
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let rule = vendor_rule(&db, true);
+        let first = thread_email(&db, "m1", "t1", 100);
+        let second = thread_email(&db, "m2", "t1", 200);
+        let other_thread = thread_email(&db, "m3", "t2", 300);
+
+        collect_file(&db, &first, "proposal.pdf", &rule, dir.path()).await;
+        collect_file(&db, &second, "annex.pdf", &rule, dir.path()).await;
+        collect_file(&db, &other_thread, "proposal.pdf", &rule, dir.path()).await;
+
+        assert_eq!(held(&db, &rule).len(), 3);
+    }
+
+    #[tokio::test]
+    async fn without_keep_latest_every_copy_is_held() {
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let rule = vendor_rule(&db, false);
+        let first = thread_email(&db, "m1", "t1", 100);
+        let second = thread_email(&db, "m2", "t1", 200);
+
+        collect_file(&db, &first, "proposal.pdf", &rule, dir.path()).await;
+        collect_file(&db, &second, "proposal.pdf", &rule, dir.path()).await;
+
+        assert_eq!(held(&db, &rule).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn turning_keep_latest_on_removes_the_older_copies_already_held() {
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let rule = vendor_rule(&db, false);
+        let first = thread_email(&db, "m1", "t1", 100);
+        let second = thread_email(&db, "m2", "t1", 200);
+        collect_file(&db, &first, "proposal.pdf", &rule, dir.path()).await;
+        collect_file(&db, &second, "proposal.pdf", &rule, dir.path()).await;
+
+        update_rule(
+            &db,
+            "acc-a",
+            &rule.id,
+            &rule.name,
+            rule.sender_email_pattern.as_deref(),
+            None,
+            None,
+            vec![],
+            true,
+            true,
+            dir.path(),
+        )
+        .expect("update rule");
+
+        assert_eq!(held(&db, &rule), [("m2".to_string(), "proposal.pdf".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn applying_a_keep_latest_rule_to_existing_mail_removes_older_copies_held_before() {
+        let db = two_accounts();
+        let dir = tempfile::tempdir().expect("tmp");
+        let off = vendor_rule(&db, false);
+        let first = thread_email(&db, "m1", "t1", 100);
+        let second = thread_email(&db, "m2", "t1", 200);
+        collect_file(&db, &first, "proposal.pdf", &off, dir.path()).await;
+        collect_file(&db, &second, "proposal.pdf", &off, dir.path()).await;
+        // As a rule stored before the option existed and switched on by its default.
+        db.connection()
+            .execute(
+                "UPDATE attachment_rules SET keep_latest_per_thread = 1 WHERE id = ?1",
+                rusqlite::params![off.id],
+            )
+            .expect("switch on");
+        let rule = db.get_attachment_rule(&off.id).expect("read").expect("rule");
+
+        apply_rule_with_provider(&db, &rule, "acc-a", None, dir.path(), None, &|_| {}, &|| false)
+            .await
+            .expect("apply");
+
+        assert_eq!(held(&db, &rule), [("m2".to_string(), "proposal.pdf".to_string())]);
+    }
+
+    #[test]
+    fn a_rule_stored_before_the_option_keeps_only_the_latest_copy() {
+        let db = two_accounts();
+        db.connection()
+            .execute(
+                "INSERT INTO attachment_rules (id, account_id, name, created_at, updated_at) VALUES ('old', 'acc-a', 'Old', 0, 0)",
+                [],
+            )
+            .expect("insert rule");
+
+        assert!(
+            db.get_attachment_rule("old")
+                .expect("read")
+                .expect("rule")
+                .keep_latest_per_thread
+        );
+    }
+
+    #[test]
+    fn a_rule_remembers_keep_latest_turned_off() {
+        let db = two_accounts();
+        let rule = vendor_rule(&db, false);
+
+        assert!(
+            !db.get_attachment_rule(&rule.id)
+                .expect("read")
+                .expect("rule")
+                .keep_latest_per_thread
+        );
     }
 
     #[test]

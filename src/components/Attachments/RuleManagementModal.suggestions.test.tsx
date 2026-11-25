@@ -69,6 +69,7 @@ function makeRule(name: string): AttachmentRule {
     filenamePattern: 'Invoice_*.pdf',
     tags: [],
     enabled: true,
+    keepLatestPerThread: true,
     createdAt: 0,
     updatedAt: 0,
   };
@@ -254,6 +255,7 @@ describe('RuleManagementModal suggestions', () => {
       null,
       'Invoice_*.pdf',
       [],
+      true,
     );
     expect(api.applyRuleRetroactively).toHaveBeenCalledWith('rule-1', 'acc-1', expect.any(String));
     expect(handlers.onAcceptSuggestion).toHaveBeenCalledWith('sug-1');
@@ -548,7 +550,9 @@ describe('RuleManagementModal suggestions', () => {
   it('unticking "apply to existing emails" creates the rule without scanning', async () => {
     render([SUGGESTION]);
     await click(button('attachments:suggestions.review'));
-    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const checkbox = Array.from(container.querySelectorAll('label'))
+      .find((l) => l.textContent?.includes('attachments:rules.applyToExistingLabel'))
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
     await act(async () => {
       checkbox?.click();
     });
@@ -712,6 +716,44 @@ describe('RuleManagementModal account', () => {
     expect(container.querySelector('[data-testid="rule-account-select"]')).toBeNull();
     await fillAndCreate();
     expect(handlers.onCreateRule.mock.calls[0][0]).toBe('acc-1');
+  });
+});
+
+describe('RuleManagementModal keep latest version', () => {
+  const keepLatest = () => container.querySelector<HTMLInputElement>('[data-testid="rule-keep-latest"]');
+
+  it('a new rule keeps only the latest version of each file in a thread unless unchecked', async () => {
+    render([]);
+    await click(button('attachments:list.createRule'));
+    expect(keepLatest()?.checked).toBe(true);
+
+    await fillAndCreate();
+    expect((handlers.onCreateRule.mock.calls[0] as unknown[])[6]).toBe(true);
+
+    await click(button('attachments:list.createRule'));
+    await act(async () => keepLatest()?.click());
+    await fillAndCreate();
+    expect((handlers.onCreateRule.mock.calls[1] as unknown[])[6]).toBe(false);
+  });
+
+  it('editing a rule shows its setting and saves the change', async () => {
+    render([], [{ ...makeRule('Acme'), keepLatestPerThread: false }]);
+    await click(button('common:actions.edit'));
+    expect(keepLatest()?.checked).toBe(false);
+
+    await act(async () => keepLatest()?.click());
+    await click(button('attachments:rules.updateRule'));
+
+    expect((handlers.onUpdateRule.mock.calls[0] as unknown[])[7]).toBe(true);
+  });
+
+  it('turning a rule off or on keeps its setting', async () => {
+    render([], [{ ...makeRule('Acme'), keepLatestPerThread: true }]);
+
+    await click(button('attachments:rules.disable'));
+
+    expect((handlers.onUpdateRule.mock.calls[0] as unknown[])[6]).toBe(false);
+    expect((handlers.onUpdateRule.mock.calls[0] as unknown[])[7]).toBe(true);
   });
 });
 

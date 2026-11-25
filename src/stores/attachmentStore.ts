@@ -86,6 +86,7 @@ interface AttachmentStore {
     subjectPattern: string | null,
     filenamePattern: string | null,
     tags: string[],
+    keepLatestPerThread: boolean,
   ) => Promise<AttachmentRule>;
   updateRule: (
     accountId: string,
@@ -96,6 +97,7 @@ interface AttachmentStore {
     filenamePattern: string | null,
     tags: string[],
     enabled: boolean,
+    keepLatestPerThread: boolean,
   ) => Promise<AttachmentRule>;
   deleteRule: (ruleId: string, accountId: string) => Promise<void>;
 
@@ -260,7 +262,15 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
     }
   },
 
-  createRule: async (accountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags) => {
+  createRule: async (
+    accountId,
+    name,
+    senderEmailPattern,
+    subjectPattern,
+    filenamePattern,
+    tags,
+    keepLatestPerThread,
+  ) => {
     const rule = await api.createAttachmentRule(
       accountId,
       name,
@@ -268,12 +278,23 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       subjectPattern,
       filenamePattern,
       tags,
+      keepLatestPerThread,
     );
     set((state) => ({ rules: [rule, ...state.rules] }));
     return rule;
   },
 
-  updateRule: async (accountId, ruleId, name, senderEmailPattern, subjectPattern, filenamePattern, tags, enabled) => {
+  updateRule: async (
+    accountId,
+    ruleId,
+    name,
+    senderEmailPattern,
+    subjectPattern,
+    filenamePattern,
+    tags,
+    enabled,
+    keepLatestPerThread,
+  ) => {
     const rule = await api.updateAttachmentRule(
       accountId,
       ruleId,
@@ -283,6 +304,7 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       filenamePattern,
       tags,
       enabled,
+      keepLatestPerThread,
     );
     set((state) => ({
       rules: state.rules.map((r) => (r.id === ruleId ? rule : r)),

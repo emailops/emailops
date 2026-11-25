@@ -195,9 +195,18 @@ export function useAttachments() {
       subjectPattern: string | null,
       filenamePattern: string | null,
       tags: string[],
+      keepLatestPerThread: boolean,
     ): Promise<AttachmentRule> => {
       if (!rulesAccountId) throw new Error('No active account');
-      const rule = await createRule(accountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags);
+      const rule = await createRule(
+        accountId,
+        name,
+        senderEmailPattern,
+        subjectPattern,
+        filenamePattern,
+        tags,
+        keepLatestPerThread,
+      );
       addLog('success', 'attachments', `Created rule: ${name}`);
       // A suggestion the new rule covers must leave the list.
       loadSuggestionsLogged(rulesAccountId, refreshSuggestions);
@@ -215,6 +224,7 @@ export function useAttachments() {
       filenamePattern: string | null,
       tags: string[],
       enabled: boolean,
+      keepLatestPerThread: boolean,
     ): Promise<AttachmentRule> => {
       if (!rulesAccountId) throw new Error('No account is selected');
       const rule = await updateRule(
@@ -226,6 +236,7 @@ export function useAttachments() {
         filenamePattern,
         tags,
         enabled,
+        keepLatestPerThread,
       );
       addLog('info', 'attachments', `Updated rule "${name}"`);
       // The backend dropped attachments the new patterns no longer match; the

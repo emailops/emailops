@@ -106,7 +106,9 @@
     "applyDoneNew_many": "{{count}} neu",
     "accountHeader": "Konto: {{email}}",
     "allAccountsHeader": "Alle Konten",
-    "account": "Konto"
+    "account": "Konto",
+    "keepLatestLabel": "Nur die neueste Version jeder Datei eines Verlaufs behalten",
+    "keepLatestHelp": "Eine Datei mit demselben Namen, die in derselben Unterhaltung erneut gesendet wird, ersetzt die frühere Kopie."
   },
   "suggestions": {
     "title": "Vorgeschlagene Regeln",

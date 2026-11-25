@@ -364,6 +364,8 @@ export interface AttachmentRule {
   filenamePattern: string | null;
   tags: string[];
   enabled: boolean;
+  /** Hold only the newest copy of each file name in a thread. */
+  keepLatestPerThread: boolean;
   createdAt: number;
   updatedAt: number;
 }

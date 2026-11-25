@@ -486,6 +486,9 @@ pub struct AttachmentRule {
     pub filename_pattern: Option<String>,
     pub tags: Vec<String>,
     pub enabled: bool,
+    /// Hold only the newest copy of each file name in a thread: an older
+    /// copy is not collected, or removed once a newer one is.
+    pub keep_latest_per_thread: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }

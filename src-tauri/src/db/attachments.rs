@@ -55,8 +55,8 @@ impl Database {
         let conn = self.connection();
         let tags_json = serde_json::to_string(&rule.tags)?;
         conn.execute(
-            "INSERT INTO attachment_rules (id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO attachment_rules (id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at, keep_latest_per_thread)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 rule.id,
                 rule.account_id,
@@ -68,6 +68,7 @@ impl Database {
                 rule.enabled as i32,
                 rule.created_at,
                 rule.updated_at,
+                rule.keep_latest_per_thread,
             ],
         )?;
         Ok(())
@@ -77,7 +78,7 @@ impl Database {
         let conn = self.connection();
         let tags_json = serde_json::to_string(&rule.tags)?;
         conn.execute(
-            "UPDATE attachment_rules SET name = ?1, sender_email_pattern = ?2, subject_pattern = ?3, filename_pattern = ?4, tags_json = ?5, enabled = ?6, updated_at = ?7
+            "UPDATE attachment_rules SET name = ?1, sender_email_pattern = ?2, subject_pattern = ?3, filename_pattern = ?4, tags_json = ?5, enabled = ?6, updated_at = ?7, keep_latest_per_thread = ?10
              WHERE id = ?8 AND account_id = ?9",
             params![
                 rule.name,
@@ -89,6 +90,7 @@ impl Database {
                 rule.updated_at,
                 rule.id,
                 rule.account_id,
+                rule.keep_latest_per_thread,
             ],
         )?;
         Ok(())
@@ -169,7 +171,7 @@ impl Database {
     pub fn get_attachment_rules(&self, account_id: &str) -> Result<Vec<AttachmentRule>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
-            "SELECT id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at
+            "SELECT id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at, keep_latest_per_thread
              FROM attachment_rules WHERE account_id = ?1 AND enabled = 1
              ORDER BY created_at DESC",
         )?;
@@ -183,7 +185,7 @@ impl Database {
     pub fn get_all_attachment_rules(&self, account_id: &str) -> Result<Vec<AttachmentRule>> {
         let conn = self.reader();
         let mut stmt = conn.prepare(
-            "SELECT id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at
+            "SELECT id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at, keep_latest_per_thread
              FROM attachment_rules WHERE account_id = ?1
              ORDER BY created_at DESC",
         )?;
@@ -197,7 +199,7 @@ impl Database {
     pub fn get_attachment_rule(&self, rule_id: &str) -> Result<Option<AttachmentRule>> {
         let conn = self.reader();
         let result = conn.query_row(
-            "SELECT id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at
+            "SELECT id, account_id, name, sender_email_pattern, subject_pattern, filename_pattern, tags_json, enabled, created_at, updated_at, keep_latest_per_thread
              FROM attachment_rules WHERE id = ?1",
             params![rule_id],
             row_to_attachment_rule,
@@ -269,6 +271,56 @@ impl Database {
             ],
         )?;
         Ok(inserted > 0)
+    }
+
+    /// Whether `rule_id` already holds `filename` from a message of `email_id`'s
+    /// thread sent at the same time or later: the copy a keep-latest rule
+    /// keeps instead of this one (the same message filed twice included).
+    pub fn newer_copy_held(&self, rule_id: &str, email_id: &str, filename: &str) -> Result<bool> {
+        let conn = self.reader();
+        Ok(conn.query_row(
+            "SELECT EXISTS (
+               SELECT 1 FROM emails e
+               JOIN emails other ON other.account_id = e.account_id AND other.thread_id = e.thread_id
+               JOIN attachments a ON a.email_id = other.id
+               WHERE e.id = ?2 AND e.thread_id != ''
+                 AND a.rule_id = ?1 AND a.filename = ?3 AND a.email_id != ?2
+                 AND a.email_timestamp >= e.timestamp)",
+            params![rule_id, email_id, filename],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Delete the attachments of `rule_id` that a newer copy of the same file
+    /// name in the same thread supersedes (of copies sent at the same time,
+    /// one stays), only those named `filename` when given. Returns the stored
+    /// files of the deleted rows, for the caller to remove.
+    pub fn delete_superseded_attachments(&self, rule_id: &str, filename: Option<&str>) -> Result<Vec<String>> {
+        let conn = self.connection();
+        let tx = conn.unchecked_transaction()?;
+        let superseded: Vec<(String, String)> = {
+            let mut stmt = tx.prepare(
+                "SELECT a.id, a.file_path FROM attachments a
+                 JOIN emails e ON e.id = a.email_id
+                 WHERE a.rule_id = ?1 AND (?2 IS NULL OR a.filename = ?2) AND e.thread_id != ''
+                   AND EXISTS (
+                     SELECT 1 FROM attachments b
+                     JOIN emails eb ON eb.id = b.email_id
+                     WHERE b.rule_id = a.rule_id AND b.filename = a.filename AND b.id != a.id
+                       AND eb.account_id = e.account_id AND eb.thread_id = e.thread_id
+                       AND (b.email_timestamp > a.email_timestamp
+                            OR (b.email_timestamp = a.email_timestamp AND b.id > a.id)))",
+            )?;
+            let rows = stmt
+                .query_map(params![rule_id, filename], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (id, _) in &superseded {
+            tx.execute("DELETE FROM attachments WHERE id = ?1", params![id])?;
+        }
+        tx.commit()?;
+        Ok(superseded.into_iter().map(|(_, path)| path).collect())
     }
 
     pub fn attachment_exists(&self, email_id: &str, filename: &str, rule_id: &str) -> Result<bool> {
@@ -628,6 +680,7 @@ fn row_to_attachment_rule(row: &rusqlite::Row) -> rusqlite::Result<AttachmentRul
         filename_pattern: row.get(5)?,
         tags,
         enabled: enabled != 0,
+        keep_latest_per_thread: row.get(10)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
     })

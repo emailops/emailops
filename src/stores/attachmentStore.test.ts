@@ -31,7 +31,7 @@ function makeSuggestion(id: string, overrides: Partial<AttachmentRuleSuggestion>
     id,
     accountId: 'acc-1',
     name: 'Acme · invoice',
-    senderEmailPattern: 'billing@acme.com',
+    senderEmailPattern: 'billing@example.test',
     filenamePattern: 'Invoice_*.pdf',
     tags: ['invoice', 'acme'],
     emailCount: 4,
@@ -320,11 +320,12 @@ describe('rules', () => {
     id,
     accountId: 'acc-1',
     name,
-    senderEmailPattern: 'billing@acme.com',
+    senderEmailPattern: 'billing@example.test',
     subjectPattern: null,
     filenamePattern: null,
     tags: [],
     enabled: true,
+    keepLatestPerThread: true,
     createdAt: 0,
     updatedAt: 0,
   });
@@ -365,7 +366,7 @@ describe('rules', () => {
     useAttachmentStore.setState({ rules: [rule('old')] });
     vi.mocked(api.createAttachmentRule).mockResolvedValueOnce(rule('new'));
 
-    await useAttachmentStore.getState().createRule('acc-1', 'Acme', 'billing@acme.com', null, null, []);
+    await useAttachmentStore.getState().createRule('acc-1', 'Acme', 'billing@example.test', null, null, [], true);
 
     expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['new', 'old']);
   });
@@ -376,7 +377,7 @@ describe('rules', () => {
 
     await useAttachmentStore
       .getState()
-      .updateRule('acct-1', 'r1', 'New name', 'billing@acme.com', null, null, [], true);
+      .updateRule('acct-1', 'r1', 'New name', 'billing@example.test', null, null, [], true, true);
 
     expect(useAttachmentStore.getState().rules.map((r) => r.name)).toEqual(['New name']);
   });

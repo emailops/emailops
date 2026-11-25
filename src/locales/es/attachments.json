@@ -106,7 +106,9 @@
     "applyDoneNew_many": "{{count}} nuevos",
     "accountHeader": "Cuenta: {{email}}",
     "allAccountsHeader": "Todas las cuentas",
-    "account": "Cuenta"
+    "account": "Cuenta",
+    "keepLatestLabel": "Conservar solo la última versión de cada archivo en un hilo",
+    "keepLatestHelp": "Un archivo con el mismo nombre enviado de nuevo en la misma conversación sustituye a la copia anterior."
   },
   "suggestions": {
     "title": "Reglas sugeridas",

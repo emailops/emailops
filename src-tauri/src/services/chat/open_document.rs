@@ -924,6 +924,7 @@ mod tests {
             None,
             None,
             vec![],
+            false,
         )
         .unwrap();
         let relative = format!("attachments/{account_id}/statement.pdf");

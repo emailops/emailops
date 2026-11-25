@@ -106,7 +106,9 @@
     "applyDoneNew_many": "{{count}} new",
     "accountHeader": "Account: {{email}}",
     "allAccountsHeader": "All accounts",
-    "account": "Account"
+    "account": "Account",
+    "keepLatestLabel": "Keep only the latest version of each file in a thread",
+    "keepLatestHelp": "A file with the same name sent again in the same conversation replaces the earlier copy."
   },
   "suggestions": {
     "title": "Suggested rules",

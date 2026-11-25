@@ -4969,3 +4969,24 @@ path and a race between two accounts' rule responses; listing every account's ru
 once (decided after the first production smoke, 25/11/2026) has none of that. *Rules that
 span accounts* — a rule reads its own account's mail and stores into that account; one
 per account keeps ownership checks and retroactive scans as they are.
+
+## 2026-11-25 — Attachment rules keep only the latest copy of a file in a thread, by default
+
+**Decision:** An attachment rule has `keep_latest_per_thread` (migration V045, `NOT NULL
+DEFAULT 1`, so the rules that already exist get it on too). With it on, the rule holds one
+copy of each file name per thread (`emails.account_id` + `thread_id`): a copy older than
+one it already holds is not collected (checked before the download), a newer copy replaces
+the older ones, and of copies sent at the same time one stays (the same message filed
+under Sent and a label folder). The older rows and their stored files are deleted when the
+newer copy is stored, when the rule is saved with the option on, and at the end of an apply
+to existing mail, which also clears copies held from before the option existed. "Same
+file" means the same file name; the content is not compared.
+**Context:** Invoices and proposals go back and forth in long threads; every reply that
+carries the document again added one more row to the Attachments view, and a sent message
+also filed under a label folder was collected twice. V044 is `email_size` on
+`feature/list-size-attachment-columns`, already applied to the developer's production DB,
+so this migration is V045 and must merge after that branch, or be renumbered.
+**Rejected:** *Comparing file content (a hash)* — a revised document keeps its name but
+not its bytes, which is the case the option is for. *A view-level filter that hides older
+copies* — counts, "select all" and the bulk download would still see them. *Off by
+default* — the developer asked for it on; one copy per thread is what the view is for.

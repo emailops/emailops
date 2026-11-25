@@ -106,7 +106,9 @@
     "applyDoneNew_many": "{{count}} nouvelles",
     "accountHeader": "Compte : {{email}}",
     "allAccountsHeader": "Tous les comptes",
-    "account": "Compte"
+    "account": "Compte",
+    "keepLatestLabel": "Ne garder que la dernière version de chaque fichier d'un fil",
+    "keepLatestHelp": "Un fichier du même nom renvoyé dans la même conversation remplace la copie précédente."
   },
   "suggestions": {
     "title": "Règles suggérées",

@@ -187,7 +187,7 @@ describe('useAttachments', () => {
 
   it('creating a rule re-mines, so a suggestion it covers leaves the list', async () => {
     await act(async () => {
-      await hook.createRule('acc-1', 'Acme', 'billing@example.test', null, null, []);
+      await hook.createRule('acc-1', 'Acme', 'billing@example.test', null, null, [], true);
     });
 
     expect(api.refreshAttachmentRuleSuggestions).toHaveBeenCalledWith('acc-1');
@@ -353,10 +353,11 @@ describe('useAttachments in All accounts', () => {
     await mountAll();
 
     await act(async () => {
-      await hook.createRule('acc-2', 'Sent invoices', 'b@example.com', null, '*invoice*', ['invoice']);
+      await hook.createRule('acc-2', 'Sent invoices', 'b@example.com', null, '*invoice*', ['invoice'], false);
     });
 
     expect(vi.mocked(api.createAttachmentRule).mock.calls[0][0]).toBe('acc-2');
+    expect(vi.mocked(api.createAttachmentRule).mock.calls[0][6]).toBe(false);
     expect(api.refreshAttachmentRuleSuggestions).toHaveBeenLastCalledWith(null);
   });
 
@@ -371,10 +372,11 @@ describe('useAttachments in All accounts', () => {
 
     // The dismissal first: editing or deleting a rule re-mines the suggestions.
     await act(async () => hook.dismissSuggestion('sb'));
-    await act(async () => hook.updateRule('rb', 'B', 'b@example.com', null, null, [], true));
+    await act(async () => hook.updateRule('rb', 'B', 'b@example.com', null, null, [], true, false));
     await act(async () => hook.deleteRule('rb'));
 
     expect(vi.mocked(api.updateAttachmentRule).mock.calls[0][0]).toBe('acc-2');
+    expect(vi.mocked(api.updateAttachmentRule).mock.calls[0][8]).toBe(false);
     expect(api.deleteAttachmentRule).toHaveBeenCalledWith('rb', 'acc-2');
     expect(api.dismissAttachmentRuleSuggestion).toHaveBeenCalledWith('acc-2', 'sb');
   });

@@ -961,6 +961,7 @@ export async function createAttachmentRule(
   subjectPattern?: string | null,
   filenamePattern?: string | null,
   tags?: string[],
+  keepLatestPerThread = true,
 ): Promise<AttachmentRule> {
   return invoke('create_attachment_rule', {
     accountId,
@@ -969,6 +970,7 @@ export async function createAttachmentRule(
     subjectPattern,
     filenamePattern,
     tags: tags ?? [],
+    keepLatestPerThread,
   });
 }
 
@@ -981,6 +983,7 @@ export async function updateAttachmentRule(
   filenamePattern?: string | null,
   tags?: string[],
   enabled?: boolean,
+  keepLatestPerThread = true,
 ): Promise<AttachmentRule> {
   return invoke('update_attachment_rule', {
     accountId,
@@ -991,6 +994,7 @@ export async function updateAttachmentRule(
     filenamePattern,
     tags: tags ?? [],
     enabled: enabled ?? true,
+    keepLatestPerThread,
   });
 }
 

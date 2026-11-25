@@ -50,6 +50,7 @@ pub async fn create_attachment_rule(
     subject_pattern: Option<String>,
     filename_pattern: Option<String>,
     tags: Vec<String>,
+    keep_latest_per_thread: bool,
 ) -> Result<AttachmentRule, AppError> {
     services::attachments::create_rule(
         &state.db,
@@ -59,6 +60,7 @@ pub async fn create_attachment_rule(
         subject_pattern.as_deref(),
         filename_pattern.as_deref(),
         tags,
+        keep_latest_per_thread,
     )
 }
 
@@ -73,6 +75,7 @@ pub async fn update_attachment_rule(
     filename_pattern: Option<String>,
     tags: Vec<String>,
     enabled: bool,
+    keep_latest_per_thread: bool,
 ) -> Result<AttachmentRule, AppError> {
     // A scan still collecting for the old patterns would keep files the edit
     // is about to drop.
@@ -87,6 +90,7 @@ pub async fn update_attachment_rule(
         filename_pattern.as_deref(),
         tags,
         enabled,
+        keep_latest_per_thread,
         &state.app_data_dir,
     )
 }
