@@ -3,11 +3,14 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AttachmentRuleSuggestion } from '@/types';
-import { selectSuggestionCount, useAttachmentStore } from './attachmentStore';
+import type { Attachment, AttachmentRuleSuggestion } from '@/types';
+import { isAllChecked, selectSuggestionCount, useAttachmentStore } from './attachmentStore';
 
 vi.mock('@/lib/api', () => ({
   getAttachmentTags: vi.fn(async () => []),
+  getAttachments: vi.fn(async () => []),
+  countAttachments: vi.fn(async () => 0),
+  listAttachmentIds: vi.fn(async () => []),
   listAttachmentRules: vi.fn(async () => []),
   createAttachmentRule: vi.fn(),
   updateAttachmentRule: vi.fn(),
@@ -21,13 +24,14 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { ALL_ACCOUNTS_ID } from './accountStore';
 
 function makeSuggestion(id: string, overrides: Partial<AttachmentRuleSuggestion> = {}): AttachmentRuleSuggestion {
   return {
     id,
     accountId: 'acc-1',
     name: 'Acme · invoice',
-    senderEmailPattern: 'billing@acme.com',
+    senderEmailPattern: 'billing@example.test',
     filenamePattern: 'Invoice_*.pdf',
     tags: ['invoice', 'acme'],
     emailCount: 4,
@@ -156,6 +160,22 @@ describe('dismissed suggestions', () => {
     expect(api.restoreAttachmentRuleSuggestion).toHaveBeenCalledWith('acc-1', 'd3');
     expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['d3']);
     expect(useAttachmentStore.getState().dismissedSuggestions).toEqual([]);
+  });
+
+  it("restoring in All accounts keeps the other accounts' suggestions", async () => {
+    useAttachmentStore.setState({
+      suggestions: [makeSuggestion('a1'), makeSuggestion('b1', { accountId: 'acc-2' })],
+      suggestionsAccountId: ALL_ACCOUNTS_ID,
+    });
+    vi.mocked(api.restoreAttachmentRuleSuggestion).mockResolvedValueOnce([
+      makeSuggestion('b1', { accountId: 'acc-2' }),
+      makeSuggestion('b2', { accountId: 'acc-2' }),
+    ]);
+
+    await useAttachmentStore.getState().restoreSuggestion('acc-2', 'b2');
+
+    expect(useAttachmentStore.getState().suggestions.map((s) => s.id)).toEqual(['a1', 'b1', 'b2']);
+    expect(useAttachmentStore.getState().suggestionsAccountId).toBe(ALL_ACCOUNTS_ID);
   });
 });
 
@@ -300,17 +320,18 @@ describe('rules', () => {
     id,
     accountId: 'acc-1',
     name,
-    senderEmailPattern: 'billing@acme.com',
+    senderEmailPattern: 'billing@example.test',
     subjectPattern: null,
     filenamePattern: null,
     tags: [],
     enabled: true,
+    keepLatestPerThread: true,
     createdAt: 0,
     updatedAt: 0,
   });
 
   beforeEach(() => {
-    useAttachmentStore.setState({ rules: [], isLoadingRules: false });
+    useAttachmentStore.setState({ rules: [], rulesAccountId: null, isLoadingRules: false });
   });
 
   it('loads the account rules', async () => {
@@ -320,6 +341,16 @@ describe('rules', () => {
 
     expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['r1']);
     expect(useAttachmentStore.getState().isLoadingRules).toBe(false);
+  });
+
+  it('in All accounts asks for the rules and suggestions of every enabled account', async () => {
+    await useAttachmentStore.getState().fetchRules(ALL_ACCOUNTS_ID);
+    await useAttachmentStore.getState().fetchSuggestions(ALL_ACCOUNTS_ID);
+    await useAttachmentStore.getState().fetchDismissedSuggestions(ALL_ACCOUNTS_ID);
+
+    expect(api.listAttachmentRules).toHaveBeenCalledWith(null);
+    expect(api.listAttachmentRuleSuggestions).toHaveBeenCalledWith(null);
+    expect(api.listDismissedAttachmentRuleSuggestions).toHaveBeenCalledWith(null);
   });
 
   it('a failed rules load surfaces the error and stops loading', async () => {
@@ -335,7 +366,7 @@ describe('rules', () => {
     useAttachmentStore.setState({ rules: [rule('old')] });
     vi.mocked(api.createAttachmentRule).mockResolvedValueOnce(rule('new'));
 
-    await useAttachmentStore.getState().createRule('acc-1', 'Acme', 'billing@acme.com', null, null, []);
+    await useAttachmentStore.getState().createRule('acc-1', 'Acme', 'billing@example.test', null, null, [], true);
 
     expect(useAttachmentStore.getState().rules.map((r) => r.id)).toEqual(['new', 'old']);
   });
@@ -346,9 +377,36 @@ describe('rules', () => {
 
     await useAttachmentStore
       .getState()
-      .updateRule('acct-1', 'r1', 'New name', 'billing@acme.com', null, null, [], true);
+      .updateRule('acct-1', 'r1', 'New name', 'billing@example.test', null, null, [], true, true);
 
     expect(useAttachmentStore.getState().rules.map((r) => r.name)).toEqual(['New name']);
+  });
+
+  it('drops a slower rules response for an account the user already left', async () => {
+    const slow = deferred<ReturnType<typeof rule>[]>();
+    vi.mocked(api.listAttachmentRules)
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValueOnce([{ ...rule('rb'), accountId: 'acc-2' }]);
+
+    const first = useAttachmentStore.getState().fetchRules('acc-1');
+    await useAttachmentStore.getState().fetchRules('acc-2');
+    slow.resolve([rule('ra')]);
+    await first;
+
+    const state = useAttachmentStore.getState();
+    expect(state.rules.map((r) => r.id)).toEqual(['rb']);
+    expect(state.rulesAccountId).toBe('acc-2');
+    expect(state.isLoadingRules).toBe(false);
+  });
+
+  it("clears the previous account's rules while the new ones load", async () => {
+    useAttachmentStore.setState({ rules: [rule('ra')], rulesAccountId: 'acc-1' });
+    vi.mocked(api.listAttachmentRules).mockReturnValueOnce(new Promise(() => {}));
+
+    void useAttachmentStore.getState().fetchRules('acc-2');
+
+    expect(useAttachmentStore.getState().rules).toEqual([]);
+    expect(useAttachmentStore.getState().isLoadingRules).toBe(true);
   });
 
   it('a deleted rule leaves the list', async () => {
@@ -408,5 +466,264 @@ describe('tag filter', () => {
     await useAttachmentStore.getState().fetchTags('acc-1');
 
     expect(useAttachmentStore.getState().selectedTag).toBe('invoice');
+  });
+
+  it('keeps the selected tag when the new scope spells it differently, under the new spelling', async () => {
+    useAttachmentStore.setState({ selectedTag: 'Invoice' });
+    vi.mocked(api.getAttachmentTags).mockResolvedValueOnce(['acme', 'invoice']);
+
+    await useAttachmentStore.getState().fetchTags(null);
+
+    expect(useAttachmentStore.getState().selectedTag).toBe('invoice');
+  });
+
+  it('a failed tag load rejects and keeps the current tags', async () => {
+    useAttachmentStore.setState({ selectedTag: 'invoice', availableTags: ['invoice'] });
+    vi.mocked(api.getAttachmentTags).mockRejectedValueOnce(new Error('db locked'));
+
+    await expect(useAttachmentStore.getState().fetchTags('acc-1')).rejects.toThrow('db locked');
+    expect(useAttachmentStore.getState().availableTags).toEqual(['invoice']);
+    expect(useAttachmentStore.getState().selectedTag).toBe('invoice');
+  });
+});
+
+describe('isAllChecked', () => {
+  it.each([
+    { checked: 0, total: 0, want: false },
+    { checked: 0, total: 3, want: false },
+    { checked: 2, total: 3, want: false },
+    { checked: 3, total: 3, want: true },
+  ])('$checked checked of $total → $want', ({ checked, total, want }) => {
+    const ids = new Set(Array.from({ length: checked }, (_, i) => `a${i}`));
+    expect(isAllChecked(ids, total)).toBe(want);
+  });
+});
+
+describe('attachment list', () => {
+  const ACCOUNT_KEY = 'account:acc-1';
+
+  const attachment = (id: string): Attachment => ({
+    id,
+    accountId: 'acc-1',
+    emailId: `email-${id}`,
+    ruleId: 'r1',
+    ruleName: 'Invoices',
+    gmailAttachmentId: '',
+    filename: `${id}.pdf`,
+    mimeType: 'application/pdf',
+    fileSize: 1,
+    filePath: `attachments/acc-1/${id}`,
+    tags: ['invoice'],
+    senderEmail: 'billing@vendor.example',
+    subject: 'Invoice',
+    emailTimestamp: 0,
+    createdAt: 0,
+  });
+  const page = (from: number, n: number) => Array.from({ length: n }, (_, i) => attachment(`a${from + i}`));
+
+  beforeEach(() => {
+    useAttachmentStore.getState().reset();
+    vi.mocked(api.getAttachments).mockReset();
+    vi.mocked(api.countAttachments).mockReset();
+    vi.mocked(api.listAttachmentIds).mockReset();
+  });
+
+  async function load(rows: Attachment[], total: number, tag: string | null = 'invoice', scopeKey = ACCOUNT_KEY) {
+    vi.mocked(api.getAttachments).mockResolvedValueOnce(rows);
+    vi.mocked(api.countAttachments).mockResolvedValueOnce(total);
+    await useAttachmentStore.getState().fetchAttachments('acc-1', tag, scopeKey);
+  }
+
+  describe('select all', () => {
+    it('marks every attachment of the filter, not only the loaded page', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.listAttachmentIds).mockResolvedValueOnce(page(0, 120).map((a) => a.id));
+
+      await useAttachmentStore.getState().toggleSelectAll();
+
+      const { checkedIds, totalCount } = useAttachmentStore.getState();
+      expect(api.listAttachmentIds).toHaveBeenCalledWith('acc-1', 'invoice');
+      expect(checkedIds.size).toBe(120);
+      expect(isAllChecked(checkedIds, totalCount)).toBe(true);
+    });
+
+    it('a second click clears the selection without asking the backend', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.listAttachmentIds).mockResolvedValueOnce(page(0, 120).map((a) => a.id));
+      await useAttachmentStore.getState().toggleSelectAll();
+
+      await useAttachmentStore.getState().toggleSelectAll();
+
+      expect(useAttachmentStore.getState().checkedIds.size).toBe(0);
+      expect(api.listAttachmentIds).toHaveBeenCalledTimes(1);
+    });
+
+    it('unchecking one row leaves the box unchecked', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.listAttachmentIds).mockResolvedValueOnce(page(0, 120).map((a) => a.id));
+      await useAttachmentStore.getState().toggleSelectAll();
+
+      useAttachmentStore.getState().toggleChecked('a7');
+
+      const { checkedIds, totalCount } = useAttachmentStore.getState();
+      expect(checkedIds.size).toBe(119);
+      expect(isAllChecked(checkedIds, totalCount)).toBe(false);
+    });
+
+    it('drops the ids when the filter changed while they loaded', async () => {
+      await load(page(0, 50), 120);
+      const ids = deferred<string[]>();
+      vi.mocked(api.listAttachmentIds).mockReturnValueOnce(ids.promise);
+
+      const selecting = useAttachmentStore.getState().toggleSelectAll();
+      await load(page(0, 3), 3, 'receipt');
+      ids.resolve(page(0, 120).map((a) => a.id));
+      await selecting;
+
+      expect(useAttachmentStore.getState().checkedIds.size).toBe(0);
+      expect(useAttachmentStore.getState().isSelectingAll).toBe(false);
+    });
+
+    it('keeps the ids when a background refresh of the same list lands meanwhile', async () => {
+      await load(page(0, 50), 120);
+      const ids = deferred<string[]>();
+      vi.mocked(api.listAttachmentIds).mockReturnValueOnce(ids.promise);
+
+      const selecting = useAttachmentStore.getState().toggleSelectAll();
+      await load(page(0, 50), 121);
+      ids.resolve(page(0, 121).map((a) => a.id));
+      await selecting;
+
+      expect(useAttachmentStore.getState().checkedIds.size).toBe(121);
+    });
+
+    it('a failure stops waiting and shows the list error', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.listAttachmentIds).mockRejectedValueOnce(new Error('db locked'));
+
+      await useAttachmentStore.getState().toggleSelectAll();
+
+      expect(useAttachmentStore.getState().isSelectingAll).toBe(false);
+      expect(useAttachmentStore.getState().listError).toContain('db locked');
+    });
+  });
+
+  describe('refresh', () => {
+    it('a refresh of the same list keeps the selection, the viewer and every loaded row', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.getAttachments).mockResolvedValueOnce(page(50, 30));
+      await useAttachmentStore.getState().loadMoreAttachments();
+      useAttachmentStore.getState().toggleChecked('a3');
+      useAttachmentStore.getState().selectAttachment(attachment('a3'));
+
+      const fresh = deferred<Attachment[]>();
+      vi.mocked(api.getAttachments).mockReturnValueOnce(fresh.promise);
+      vi.mocked(api.countAttachments).mockResolvedValueOnce(81);
+      const refreshing = useAttachmentStore.getState().fetchAttachments('acc-1', 'invoice', ACCOUNT_KEY);
+
+      expect(useAttachmentStore.getState().attachments).toHaveLength(80);
+      fresh.resolve([attachment('new'), ...page(0, 80)]);
+      await refreshing;
+
+      const state = useAttachmentStore.getState();
+      expect(api.getAttachments).toHaveBeenLastCalledWith('acc-1', 'invoice', 80, 0);
+      expect(state.attachments).toHaveLength(81);
+      expect(state.checkedIds.has('a3')).toBe(true);
+      expect(state.selectedAttachment?.id).toBe('a3');
+    });
+
+    it('another tag starts a new list: rows, selection and viewer are cleared', async () => {
+      await load(page(0, 50), 120);
+      useAttachmentStore.getState().toggleChecked('a3');
+      useAttachmentStore.getState().selectAttachment(attachment('a3'));
+      vi.mocked(api.getAttachments).mockReturnValueOnce(new Promise(() => {}));
+      vi.mocked(api.countAttachments).mockReturnValueOnce(new Promise(() => {}));
+
+      void useAttachmentStore.getState().fetchAttachments('acc-1', 'receipt', ACCOUNT_KEY);
+
+      const state = useAttachmentStore.getState();
+      expect(state.attachments).toEqual([]);
+      expect(state.checkedIds.size).toBe(0);
+      expect(state.selectedAttachment).toBeNull();
+    });
+
+    it('another scope starts a new list too', async () => {
+      await load(page(0, 50), 120);
+      useAttachmentStore.getState().toggleChecked('a3');
+
+      await load(page(0, 2), 2, 'invoice', 'all:acc-1,acc-2');
+
+      expect(useAttachmentStore.getState().checkedIds.size).toBe(0);
+    });
+
+    it('a failed load shows the list error, and the next good load clears it', async () => {
+      vi.mocked(api.getAttachments).mockRejectedValueOnce(new Error('db locked'));
+      vi.mocked(api.countAttachments).mockResolvedValueOnce(0);
+      await useAttachmentStore.getState().fetchAttachments('acc-1', null, ACCOUNT_KEY);
+      expect(useAttachmentStore.getState().listError).toContain('db locked');
+
+      await load(page(0, 2), 2, null);
+
+      expect(useAttachmentStore.getState().listError).toBeNull();
+    });
+  });
+
+  describe('load more', () => {
+    it('appends the next page', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.getAttachments).mockResolvedValueOnce(page(50, 50));
+
+      await useAttachmentStore.getState().loadMoreAttachments();
+
+      expect(api.getAttachments).toHaveBeenLastCalledWith('acc-1', 'invoice', 50, 50);
+      expect(useAttachmentStore.getState().attachments).toHaveLength(100);
+      expect(useAttachmentStore.getState().hasMore).toBe(true);
+    });
+
+    it('drops a page of a list the user already left', async () => {
+      await load(page(0, 50), 120);
+      const more = deferred<Attachment[]>();
+      vi.mocked(api.getAttachments).mockReturnValueOnce(more.promise);
+
+      const loading = useAttachmentStore.getState().loadMoreAttachments();
+      await load(page(0, 3), 3, 'receipt');
+      more.resolve(page(50, 50));
+      await loading;
+
+      expect(useAttachmentStore.getState().attachments).toHaveLength(3);
+      expect(useAttachmentStore.getState().isLoadingMore).toBe(false);
+    });
+
+    it('does not repeat a row that shifted into the next page', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.getAttachments).mockResolvedValueOnce([attachment('a49'), ...page(50, 49)]);
+
+      await useAttachmentStore.getState().loadMoreAttachments();
+
+      const ids = useAttachmentStore.getState().attachments.map((a) => a.id);
+      expect(ids).toHaveLength(99);
+      expect(new Set(ids).size).toBe(99);
+    });
+
+    it('a short page ends the list even if the count promised more', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.getAttachments).mockResolvedValueOnce(page(50, 10));
+
+      await useAttachmentStore.getState().loadMoreAttachments();
+
+      expect(useAttachmentStore.getState().hasMore).toBe(false);
+    });
+
+    it('a failure keeps the rows, leaves the list error alone and rejects', async () => {
+      await load(page(0, 50), 120);
+      vi.mocked(api.getAttachments).mockRejectedValueOnce(new Error('offline'));
+
+      await expect(useAttachmentStore.getState().loadMoreAttachments()).rejects.toThrow('offline');
+
+      const state = useAttachmentStore.getState();
+      expect(state.attachments).toHaveLength(50);
+      expect(state.listError).toBeNull();
+      expect(state.isLoadingMore).toBe(false);
+    });
   });
 });

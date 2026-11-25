@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import * as api from '@/lib/api';
+import { sameTag } from '@/lib/attachmentTags';
 import { errorText } from '@/lib/errors';
 import type { Attachment, AttachmentRule, AttachmentRuleSuggestion } from '@/types';
+import { toQueryAccountId } from './accountStore';
 
 const PAGE_SIZE = 50;
 
@@ -27,12 +29,14 @@ export interface RuleApplyProgress {
 }
 
 interface AttachmentStore {
-  // Rules
+  // Rules of the account in `rulesAccountId`, or of every enabled account when
+  // it is ALL_ACCOUNTS_ID ("All accounts"). Each rule carries its account.
   rules: AttachmentRule[];
+  rulesAccountId: string | null;
   isLoadingRules: boolean;
 
   // Candidate rules mined from recurring document attachments, for the
-  // account in `suggestionsAccountId`.
+  // account in `suggestionsAccountId` (ALL_ACCOUNTS_ID: every enabled one).
   suggestions: AttachmentRuleSuggestion[];
   suggestionsAccountId: string | null;
   /** A re-mine is running (the modal says it is looking). */
@@ -52,18 +56,28 @@ interface AttachmentStore {
   isLoadingMore: boolean;
   hasMore: boolean;
   totalCount: number;
+  /** What the list shows: the account sent to the backend (null = all enabled) and the tag. */
+  listQuery: { accountId: string | null; tag: string | null } | null;
+  /** Scope key + tag of the list shown; a fetch with the same key is a refresh. */
+  listKey: string | null;
+  /** Loading the list (or every id for "select all") failed; shown in the list with Retry. */
+  listError: string | null;
+  /** "Select all" is fetching every id of the filter. */
+  isSelectingAll: boolean;
 
   // Filters
   selectedTag: string | null;
   availableTags: string[];
 
-  // Error
+  // Rules and suggestions error
   error: string | null;
 
   // Race condition prevention
   currentFetchId: number;
 
   // Rule actions
+  // Rule and suggestion loads take an account id or ALL_ACCOUNTS_ID; the
+  // actions on one rule or suggestion take its own account.
   fetchRules: (accountId: string) => Promise<void>;
   createRule: (
     accountId: string,
@@ -72,6 +86,7 @@ interface AttachmentStore {
     subjectPattern: string | null,
     filenamePattern: string | null,
     tags: string[],
+    keepLatestPerThread: boolean,
   ) => Promise<AttachmentRule>;
   updateRule: (
     accountId: string,
@@ -82,6 +97,7 @@ interface AttachmentStore {
     filenamePattern: string | null,
     tags: string[],
     enabled: boolean,
+    keepLatestPerThread: boolean,
   ) => Promise<AttachmentRule>;
   deleteRule: (ruleId: string, accountId: string) => Promise<void>;
 
@@ -101,22 +117,32 @@ interface AttachmentStore {
   failRuleApply: (ruleId: string, runId: string) => void;
   dropRuleApply: (ruleId: string, runId: string) => void;
 
-  // Attachment actions
-  fetchAttachments: (accountId: string, tag?: string | null) => Promise<void>;
-  loadMoreAttachments: (accountId: string) => Promise<void>;
+  // Attachment actions. `accountId` null = every enabled account; `scopeKey`
+  // names the scope (which accounts), so enabling one starts a new list.
+  fetchAttachments: (accountId: string | null, tag: string | null, scopeKey: string) => Promise<void>;
+  /** Rejects on failure; the rows already loaded stay. */
+  loadMoreAttachments: () => Promise<void>;
   selectAttachment: (attachment: Attachment | null) => void;
   toggleChecked: (id: string) => void;
-  toggleCheckAll: () => void;
+  /** Clears the selection when everything is checked, else checks every id of the filter. */
+  toggleSelectAll: () => Promise<void>;
   clearChecked: () => void;
 
   // Tag actions
   setSelectedTag: (tag: string | null) => void;
-  fetchTags: (accountId: string) => Promise<void>;
+  /** Rejects on failure. */
+  fetchTags: (accountId: string | null) => Promise<void>;
 
   // Utility
   clearError: () => void;
   reset: () => void;
 }
+
+/** Every attachment of the filter is checked. Counts only, so an id that left the list still counts. */
+export const isAllChecked = (checkedIds: Set<string>, totalCount: number): boolean =>
+  totalCount > 0 && checkedIds.size >= totalCount;
+
+const listKeyOf = (scopeKey: string, tag: string | null) => `${scopeKey}|${tag ?? ''}`;
 
 /** Pending suggestion count, shown as a badge next to the rules entry points. */
 export const selectSuggestionCount = (state: Pick<AttachmentStore, 'suggestions'>): number => state.suggestions.length;
@@ -128,6 +154,9 @@ const withoutSuggestion = (suggestions: AttachmentRuleSuggestion[], id: string) 
 // account the user already switched away from never overwrites the list.
 let suggestionsLoadId = 0;
 
+// Same guard for the rules list.
+let rulesLoadId = 0;
+
 // Suggestions the user accepted or dismissed in this session. A load that was
 // already in flight when they did must not bring them back.
 const resolvedSuggestionIds = new Set<string>();
@@ -138,7 +167,7 @@ async function loadSuggestions(
   set: (partial: Partial<AttachmentStore>) => void,
   get: () => AttachmentStore,
   accountId: string,
-  load: (accountId: string) => Promise<AttachmentRuleSuggestion[]>,
+  load: (accountId: string | null) => Promise<AttachmentRuleSuggestion[]>,
 ) {
   const loadId = ++suggestionsLoadId;
   // Another account's suggestions must not linger (badge, Review) while
@@ -148,7 +177,7 @@ async function loadSuggestions(
   }
   set({ suggestionsLoading: true });
   try {
-    const suggestions = await load(accountId);
+    const suggestions = await load(toQueryAccountId(accountId));
     if (loadId === suggestionsLoadId) {
       set({
         suggestions: suggestions.filter((s) => !resolvedSuggestionIds.has(s.id)),
@@ -195,6 +224,7 @@ function forRun(
 
 export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   rules: [],
+  rulesAccountId: null,
   isLoadingRules: false,
   suggestions: [],
   suggestionsAccountId: null,
@@ -208,22 +238,39 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   isLoadingMore: false,
   hasMore: false,
   totalCount: 0,
+  listQuery: null,
+  listKey: null,
+  listError: null,
+  isSelectingAll: false,
   selectedTag: null,
   availableTags: [],
   error: null,
   currentFetchId: 0,
 
   fetchRules: async (accountId) => {
+    const loadId = ++rulesLoadId;
+    // Another account's rules must not show (or be edited) while these load.
+    if (get().rulesAccountId !== accountId) set({ rules: [], rulesAccountId: accountId });
     set({ isLoadingRules: true });
     try {
-      const rules = await api.listAttachmentRules(accountId);
-      set({ rules, isLoadingRules: false });
+      const rules = await api.listAttachmentRules(toQueryAccountId(accountId));
+      if (loadId === rulesLoadId) set({ rules });
     } catch (error) {
-      set({ error: errorText(error), isLoadingRules: false });
+      if (loadId === rulesLoadId) set({ error: errorText(error) });
+    } finally {
+      if (loadId === rulesLoadId) set({ isLoadingRules: false });
     }
   },
 
-  createRule: async (accountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags) => {
+  createRule: async (
+    accountId,
+    name,
+    senderEmailPattern,
+    subjectPattern,
+    filenamePattern,
+    tags,
+    keepLatestPerThread,
+  ) => {
     const rule = await api.createAttachmentRule(
       accountId,
       name,
@@ -231,12 +278,23 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       subjectPattern,
       filenamePattern,
       tags,
+      keepLatestPerThread,
     );
     set((state) => ({ rules: [rule, ...state.rules] }));
     return rule;
   },
 
-  updateRule: async (accountId, ruleId, name, senderEmailPattern, subjectPattern, filenamePattern, tags, enabled) => {
+  updateRule: async (
+    accountId,
+    ruleId,
+    name,
+    senderEmailPattern,
+    subjectPattern,
+    filenamePattern,
+    tags,
+    enabled,
+    keepLatestPerThread,
+  ) => {
     const rule = await api.updateAttachmentRule(
       accountId,
       ruleId,
@@ -246,6 +304,7 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       filenamePattern,
       tags,
       enabled,
+      keepLatestPerThread,
     );
     set((state) => ({
       rules: state.rules.map((r) => (r.id === ruleId ? rule : r)),
@@ -279,7 +338,7 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
 
   fetchDismissedSuggestions: async (accountId) => {
     try {
-      const dismissed = await api.listDismissedAttachmentRuleSuggestions(accountId);
+      const dismissed = await api.listDismissedAttachmentRuleSuggestions(toQueryAccountId(accountId));
       if (get().suggestionsAccountId === accountId || get().suggestionsAccountId === null) {
         set({ dismissedSuggestions: dismissed });
       }
@@ -298,11 +357,15 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       throw error;
     }
     resolvedSuggestionIds.delete(suggestionId);
-    // The restore re-mined: this list is newer than any load in flight.
+    // The restore re-mined `accountId`: its list is newer than any load in
+    // flight. In "All accounts" the other accounts' suggestions stay.
     suggestionsLoadId++;
     set((state) => ({
-      suggestions: pending.filter((s) => !resolvedSuggestionIds.has(s.id)),
-      suggestionsAccountId: accountId,
+      suggestions: [
+        ...state.suggestions.filter((s) => s.accountId !== accountId),
+        ...pending.filter((s) => !resolvedSuggestionIds.has(s.id)),
+      ],
+      suggestionsAccountId: state.suggestionsAccountId ?? accountId,
       suggestionsLoading: false,
       dismissedSuggestions: withoutSuggestion(state.dismissedSuggestions, suggestionId),
     }));
@@ -339,13 +402,32 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   dropRuleApply: (ruleId, runId) =>
     set((state) => ({ ruleApplies: forRun(state.ruleApplies, ruleId, runId, () => null) })),
 
-  fetchAttachments: async (accountId, tag) => {
+  fetchAttachments: async (accountId, tag, scopeKey) => {
+    const key = listKeyOf(scopeKey, tag);
     const fetchId = get().currentFetchId + 1;
-    set({ currentFetchId: fetchId, isLoading: true, attachments: [], selectedAttachment: null, checkedIds: new Set() });
+    const isRefresh = get().listKey === key;
+    // A background refresh keeps the rows, the selection and the viewer until
+    // the new rows arrive, and reloads every row already scrolled in.
+    const limit = isRefresh ? Math.max(PAGE_SIZE, get().attachments.length) : PAGE_SIZE;
+    if (isRefresh) {
+      set({ currentFetchId: fetchId });
+    } else {
+      set({
+        currentFetchId: fetchId,
+        listKey: key,
+        listQuery: { accountId, tag },
+        isLoading: true,
+        attachments: [],
+        selectedAttachment: null,
+        checkedIds: new Set(),
+        totalCount: 0,
+        hasMore: false,
+      });
+    }
 
     try {
       const [attachments, totalCount] = await Promise.all([
-        api.getAttachments(accountId, tag, PAGE_SIZE, 0),
+        api.getAttachments(accountId, tag, limit, 0),
         api.countAttachments(accountId, tag),
       ]);
 
@@ -353,31 +435,35 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
         set({
           attachments,
           totalCount,
-          hasMore: attachments.length < totalCount,
+          hasMore: attachments.length === limit && attachments.length < totalCount,
           isLoading: false,
+          listError: null,
         });
       }
     } catch (error) {
       if (get().currentFetchId === fetchId) {
-        set({ error: errorText(error), isLoading: false });
+        set({ listError: errorText(error), isLoading: false });
       }
     }
   },
 
-  loadMoreAttachments: async (accountId) => {
-    const { attachments, hasMore, isLoadingMore, selectedTag } = get();
-    if (!hasMore || isLoadingMore) return;
+  loadMoreAttachments: async () => {
+    const { attachments, hasMore, isLoadingMore, listQuery, currentFetchId } = get();
+    if (!hasMore || isLoadingMore || !listQuery) return;
 
     set({ isLoadingMore: true });
     try {
-      const more = await api.getAttachments(accountId, selectedTag, PAGE_SIZE, attachments.length);
-      set((state) => ({
-        attachments: [...state.attachments, ...more],
-        hasMore: state.attachments.length + more.length < state.totalCount,
-        isLoadingMore: false,
-      }));
-    } catch (error) {
-      set({ error: errorText(error), isLoadingMore: false });
+      const more = await api.getAttachments(listQuery.accountId, listQuery.tag, PAGE_SIZE, attachments.length);
+      if (get().currentFetchId !== currentFetchId) return;
+      set((state) => {
+        // A row that arrived since the first page shifts the rest down one:
+        // its neighbour comes back on this page.
+        const loaded = new Set(state.attachments.map((a) => a.id));
+        const next = [...state.attachments, ...more.filter((a) => !loaded.has(a.id))];
+        return { attachments: next, hasMore: more.length === PAGE_SIZE && next.length < state.totalCount };
+      });
+    } finally {
+      set({ isLoadingMore: false });
     }
   },
 
@@ -391,31 +477,40 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       return { checkedIds: next };
     }),
 
-  toggleCheckAll: () =>
-    set((state) => {
-      if (state.checkedIds.size === state.attachments.length) {
-        return { checkedIds: new Set() };
-      }
-      return { checkedIds: new Set(state.attachments.map((a) => a.id)) };
-    }),
+  toggleSelectAll: async () => {
+    const { checkedIds, totalCount, listKey, listQuery, isSelectingAll } = get();
+    if (isAllChecked(checkedIds, totalCount)) {
+      set({ checkedIds: new Set() });
+      return;
+    }
+    if (!listQuery || isSelectingAll) return;
+
+    set({ isSelectingAll: true });
+    try {
+      const ids = await api.listAttachmentIds(listQuery.accountId, listQuery.tag);
+      // A refresh of the same list may land meanwhile; only a new list drops the ids.
+      if (get().listKey === listKey) set({ checkedIds: new Set(ids) });
+    } catch (error) {
+      if (get().listKey === listKey) set({ listError: errorText(error) });
+    } finally {
+      set({ isSelectingAll: false });
+    }
+  },
 
   clearChecked: () => set({ checkedIds: new Set() }),
 
   setSelectedTag: (tag) => set({ selectedTag: tag }),
 
   fetchTags: async (accountId) => {
-    try {
-      const tags = await api.getAttachmentTags(accountId);
-      // A tag picked on another account, or whose last attachment went with a
-      // deleted rule, would keep filtering the list to nothing with no chip
-      // lit to show why: fall back to "All".
-      set((state) => ({
-        availableTags: tags,
-        selectedTag: state.selectedTag !== null && tags.includes(state.selectedTag) ? state.selectedTag : null,
-      }));
-    } catch (error) {
-      console.error('Failed to fetch tags:', error);
-    }
+    const tags = await api.getAttachmentTags(accountId);
+    // A tag picked on another account, or whose last attachment went with a
+    // deleted rule, would keep filtering the list to nothing with no chip lit
+    // to show why: fall back to "All". The same tag spelled differently in
+    // the new scope stays selected, under the spelling its chip shows.
+    set((state) => ({
+      availableTags: tags,
+      selectedTag: state.selectedTag === null ? null : (tags.find((t) => sameTag(t, state.selectedTag ?? '')) ?? null),
+    }));
   },
 
   clearError: () => set({ error: null }),
@@ -429,6 +524,10 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       isLoadingMore: false,
       hasMore: false,
       totalCount: 0,
+      listQuery: null,
+      listKey: null,
+      listError: null,
+      isSelectingAll: false,
       error: null,
     }),
 }));

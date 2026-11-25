@@ -320,6 +320,25 @@ même si l'expéditeur écrit plus tard depuis une autre adresse ; **Annuler**, 
 **Suggestions ignorées**, la fait revenir. Les e-mails de votre propre adresse
 ou de collègues de votre propre entreprise ne sont jamais suggérés.
 
+<!-- claim:feat-attachments-view-10 -->
+Avec **Tous les comptes** sélectionné dans la barre latérale, la vue réunit dans une seule liste les
+pièces jointes de tous les comptes activés, et chaque ligne indique son compte. **Tout
+sélectionner** coche toutes les pièces jointes du filtre en cours, pas seulement les lignes déjà
+chargées. Si les fichiers que vous téléchargez viennent de plusieurs comptes, chaque nom de fichier
+commence par l'adresse de son compte. Chaque règle appartient à un compte et collecte le courrier
+de ce compte. Avec **Tous les comptes** sélectionné, **Gérer les règles** affiche les règles et
+suggestions de tous les comptes activés, chacune avec son compte, et une nouvelle règle va dans le
+compte que vous choisissez : celui de l'e-mail si vous l'ouvrez depuis **Créer une règle de pièce
+jointe** dans le menu d'un e-mail, sinon le premier compte activé. Les étiquettes sont communes à
+tous les comptes : le champ d'étiquettes d'une règle propose celles de tous les comptes. Le champ
+d'expéditeur suggère, pendant la saisie, les expéditeurs du compte de la règle, votre propre adresse
+comprise. **Ne
+garder que la dernière version de chaque fichier d'un fil**, activée par défaut, conserve une seule
+copie d'un document qui fait des allers-retours : un fichier du même nom renvoyé dans la même
+conversation remplace la copie précédente. Pour collecter les
+factures que vous envoyez, créez la règle dans le compte d'envoi, avec votre propre adresse comme
+expéditeur et un motif de nom de fichier comme `*facture*`.
+
 ## EO Docs {#eo-docs}
 
 <!-- claim:feat-eo-docs-1 -->

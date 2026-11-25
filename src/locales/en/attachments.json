@@ -2,7 +2,10 @@
   "list": {
     "empty": "No attachments collected yet",
     "createRulesHint": "Create rules to automatically collect attachments from matching emails",
-    "createRule": "Create a Rule"
+    "createRule": "Create a Rule",
+    "loadError": "Could not load the attachments.",
+    "retry": "Retry",
+    "emptyForTag": "No attachments with the tag “{{tag}}”"
   },
   "viewer": {
     "selectAttachment": "Select an attachment to preview",
@@ -17,7 +20,8 @@
     "download": "Download",
     "zoomOut": "Zoom out",
     "zoomIn": "Zoom in",
-    "fitWidth": "Fit to width"
+    "fitWidth": "Fit to width",
+    "account": "Account: {{email}}"
   },
   "toolbar": {
     "title": "Attachments",
@@ -27,9 +31,25 @@
     "download": "Download {{count}}",
     "manageRules": "Manage Rules",
     "allTags": "All",
-    "downloadedLog": "Downloaded {{count}} file(s) to {{dest}}",
     "downloadFailedLog": "Download failed: {{error}}",
-    "downloadedToast": "Downloaded {{count}} file(s) to Downloads"
+    "downloadedSummaryToast_one": "Downloaded {{copied}} of {{count}} file",
+    "downloadedSummaryToast_other": "Downloaded {{copied}} of {{count}} files",
+    "downloadedSummaryToast_many": "Downloaded {{copied}} of {{count}} files",
+    "downloadedWithSkippedToast_one": "Downloaded {{copied}} of {{total}} files, {{count}} skipped",
+    "downloadedWithSkippedToast_other": "Downloaded {{copied}} of {{total}} files, {{count}} skipped",
+    "downloadedWithSkippedToast_many": "Downloaded {{copied}} of {{total}} files, {{count}} skipped",
+    "downloadSummaryLog_one": "Downloaded {{copied}} of {{count}} attachment to Downloads",
+    "downloadSummaryLog_other": "Downloaded {{copied}} of {{count}} attachments to Downloads",
+    "downloadSummaryLog_many": "Downloaded {{copied}} of {{count}} attachments to Downloads",
+    "downloadSkippedLog_one": "Downloaded {{copied}} of {{total}} attachments; {{count}} skipped ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_other": "Downloaded {{copied}} of {{total}} attachments; {{count}} skipped ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_many": "Downloaded {{copied}} of {{total}} attachments; {{count}} skipped ({{reasons}}): {{ids}}"
+  },
+  "skipReason": {
+    "not_found": "not found",
+    "file_missing": "file missing",
+    "unreadable": "unreadable",
+    "copy_failed": "copy failed"
   },
   "rules": {
     "title": "Attachment rules",
@@ -83,7 +103,12 @@
     "applyDone_many": "Done: {{count}} attachments in this rule",
     "applyDoneNew_one": "{{count}} new",
     "applyDoneNew_other": "{{count}} new",
-    "applyDoneNew_many": "{{count}} new"
+    "applyDoneNew_many": "{{count}} new",
+    "accountHeader": "Account: {{email}}",
+    "allAccountsHeader": "All accounts",
+    "account": "Account",
+    "keepLatestLabel": "Keep only the latest version of each file in a thread",
+    "keepLatestHelp": "A file with the same name sent again in the same conversation replaces the earlier copy."
   },
   "suggestions": {
     "title": "Suggested rules",

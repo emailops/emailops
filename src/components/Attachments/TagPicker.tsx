@@ -1,5 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { sameTag } from '@/lib/attachmentTags';
 
 interface TagPickerProps {
   value: string[];
@@ -9,8 +10,6 @@ interface TagPickerProps {
   /** Id for the text input, so a `<label htmlFor>` can name it. */
   inputId?: string;
 }
-
-const sameTag = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'accent' }) === 0;
 
 /**
  * Tag field for attachment rules: selected tags as removable chips, and a

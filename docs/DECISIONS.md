@@ -5078,3 +5078,57 @@ wrote.
 added would disappear on one click. Making Polish keep the HTML — the most complete answer but
 much more work (markup through a small local model, sanitizing what comes back); it can be
 its own issue later.
+
+## 2026-11-25 — Attachments "All accounts" reads through AccountScope, not a frontend fan-out
+
+**Decision:** With "All accounts" selected, the Attachments view lists the attachments of
+every enabled account in one list. The frontend sends no account id (`toQueryAccountId`)
+and the backend reads with `AccountScope::AllEnabled`, joining `accounts` on
+`enabled = 1` as the outbox does. The list, its count, the tag chips, "select all"
+(`list_attachment_ids`) and the bulk download all take that scope. Each rule and rule
+suggestion belongs to one account and only reads that account's mail. In "All accounts"
+the rules modal lists the rules and suggestions of every enabled account (the list
+commands take the same optional account and read one account at a time through
+`AccountScope::account_ids`), each with its account chip, and the suggestion badge counts
+them all; every change goes to the item's own account. A new rule's form has an account
+field, preset to the account of the email the modal was opened from or else the effective
+account. With one account selected the modal shows that account's rules and names it in
+its header. Tags, though, are common to every account: the rule
+form's tag picker offers the tags of every account's rules and attachments, enabled or
+not (`get_attachment_tag_vocabulary`), so the same tag can be picked in any account and
+"All accounts" shows one chip for it. A download whose files span several accounts
+prefixes each file name with its account's address.
+**Context:** People who send invoices from several accounts want them in one list to
+download together. The calendar's "All accounts" (2026-10-26) fans out in the frontend
+because each account calls its own provider and can fail or need re-auth on its own;
+attachments are local SQLite reads with none of that, and the list pages with one offset
+over one date order.
+**Rejected:** *A per-account fan-out in the frontend* — a cursor per account, merging N
+lists and fetching N×50 rows to show 50, with counts and tags summed by hand.
+*`account_id: Option<String>` down to `db/`* — a forgotten `None` would read every
+account without showing in the code; `Option` stays at the command boundary.
+*A rules modal on one account with a picker to switch it* — it costs a remount, a reset
+path and a race between two accounts' rule responses; listing every account's rules at
+once (decided after the first production smoke, 25/11/2026) has none of that. *Rules that
+span accounts* — a rule reads its own account's mail and stores into that account; one
+per account keeps ownership checks and retroactive scans as they are.
+
+## 2026-11-25 — Attachment rules keep only the latest copy of a file in a thread, by default
+
+**Decision:** An attachment rule has `keep_latest_per_thread` (migration V045, `NOT NULL
+DEFAULT 1`, so the rules that already exist get it on too). With it on, the rule holds one
+copy of each file name per thread (`emails.account_id` + `thread_id`): a copy older than
+one it already holds is not collected (checked before the download), a newer copy replaces
+the older ones, and of copies sent at the same time one stays (the same message filed
+under Sent and a label folder). The older rows and their stored files are deleted when the
+newer copy is stored, when the rule is saved with the option on, and at the end of an apply
+to existing mail, which also clears copies held from before the option existed. "Same
+file" means the same file name; the content is not compared.
+**Context:** Invoices and proposals go back and forth in long threads; every reply that
+carries the document again added one more row to the Attachments view, and a sent message
+also filed under a label folder was collected twice. The migration is V045, after
+`email_size` (V044).
+**Rejected:** *Comparing file content (a hash)* — a revised document keeps its name but
+not its bytes, which is the case the option is for. *A view-level filter that hides older
+copies* — counts, "select all" and the bulk download would still see them. *Off by
+default* — the developer asked for it on; one copy per thread is what the view is for.

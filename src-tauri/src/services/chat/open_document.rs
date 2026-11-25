@@ -924,6 +924,7 @@ mod tests {
             None,
             None,
             vec![],
+            false,
         )
         .unwrap();
         let relative = format!("attachments/{account_id}/statement.pdf");
@@ -934,6 +935,7 @@ mod tests {
             account_id: account_id.into(),
             email_id: "msg-1".into(),
             rule_id: rule.id,
+            rule_name: None,
             gmail_attachment_id: String::new(),
             filename: "statement.pdf".into(),
             mime_type: "application/pdf".into(),

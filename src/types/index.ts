@@ -424,6 +424,8 @@ export interface AttachmentRule {
   filenamePattern: string | null;
   tags: string[];
   enabled: boolean;
+  /** Hold only the newest copy of each file name in a thread. */
+  keepLatestPerThread: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -450,6 +452,8 @@ export interface Attachment {
   accountId: string;
   emailId: string;
   ruleId: string;
+  /** Name of the rule that saved it; null only if the rule row is gone. */
+  ruleName: string | null;
   gmailAttachmentId: string;
   filename: string;
   mimeType: string;
@@ -460,6 +464,21 @@ export interface Attachment {
   subject: string;
   emailTimestamp: number;
   createdAt: number;
+}
+
+/** Why one attachment of a bulk download was not copied. */
+export type DownloadSkipReason = 'not_found' | 'file_missing' | 'unreadable' | 'copy_failed';
+
+export interface SkippedDownload {
+  attachmentId: string;
+  reason: DownloadSkipReason;
+}
+
+/** What a bulk download copied into `dest`, and what it skipped and why. */
+export interface BulkDownloadSummary {
+  dest: string;
+  copied: number;
+  skipped: SkippedDownload[];
 }
 
 export interface AiConfig {

@@ -50,6 +50,23 @@ pub enum AccountScope<'a> {
     AllEnabled,
 }
 
+impl AccountScope<'_> {
+    /// The accounts the scope covers: its one account, or every enabled
+    /// account in sidebar order — for per-account data (attachment rules and
+    /// their suggestions) read one account at a time.
+    pub fn account_ids(&self, db: &Database) -> Result<Vec<String>> {
+        match self {
+            AccountScope::Account(id) => Ok(vec![id.to_string()]),
+            AccountScope::AllEnabled => Ok(db
+                .list_accounts()?
+                .into_iter()
+                .filter(|a| a.enabled)
+                .map(|a| a.id)
+                .collect()),
+        }
+    }
+}
+
 /// SQL list of the mailboxes that hold the user's live mail outside custom
 /// folders: the inbox, Sent and the Archive (`mailbox IN live_mailboxes_sql!()`).
 /// Archived mail left only the Inbox view; every sender/domain/tag filter and

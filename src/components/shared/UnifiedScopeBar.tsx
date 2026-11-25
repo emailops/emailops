@@ -11,7 +11,8 @@ interface UnifiedScopeBarProps {
  *  [`AccountScopeChip`] only while the unified ("All accounts") entry is
  *  selected, and nothing at all otherwise — callers can mount it
  *  unconditionally above any per-account pane (tasks, memory, contacts,
- *  drafts, attachments). Chat renders its own chip with a chat-specific hint. */
+ *  drafts). Chat renders its own chip with a chat-specific hint; attachments
+ *  list every enabled account and name the account on each row instead. */
 export function UnifiedScopeBar({ accountId }: UnifiedScopeBarProps) {
   const { t } = useTranslation(['common']);
   const isUnified = useAccountStore((s) => isUnifiedMode(s.activeAccountId));

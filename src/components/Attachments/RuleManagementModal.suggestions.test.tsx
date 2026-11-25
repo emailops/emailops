@@ -32,11 +32,15 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@/lib/api', () => ({
   applyRuleRetroactively: vi.fn(async () => {}),
   countAttachmentsForRule: vi.fn(async () => 0),
+  getAttachmentTagVocabulary: vi.fn(async () => ['invoice']),
+  // The account picker is the shared Select: native on macOS.
+  currentPlatform: vi.fn(() => 'macos'),
+  autocompleteSenders: vi.fn(async () => []),
 }));
 
 import * as api from '@/lib/api';
 import { useAttachmentStore } from '@/stores/attachmentStore';
-import { RuleManagementModal } from './RuleManagementModal';
+import { type RuleAccount, RuleManagementModal } from './RuleManagementModal';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,7 +48,7 @@ const SUGGESTION: AttachmentRuleSuggestion = {
   id: 'sug-1',
   accountId: 'acc-1',
   name: 'Acme · invoice',
-  senderEmailPattern: 'billing@acme.com',
+  senderEmailPattern: 'billing@example.test',
   filenamePattern: 'Invoice_*.pdf',
   tags: ['invoice', 'acme'],
   emailCount: 4,
@@ -61,11 +65,12 @@ function makeRule(name: string): AttachmentRule {
     id: 'rule-1',
     accountId: 'acc-1',
     name,
-    senderEmailPattern: 'billing@acme.com',
+    senderEmailPattern: 'billing@example.test',
     subjectPattern: null,
     filenamePattern: 'Invoice_*.pdf',
     tags: [],
     enabled: true,
+    keepLatestPerThread: true,
     createdAt: 0,
     updatedAt: 0,
   };
@@ -76,7 +81,7 @@ let root: Root;
 
 const handlers = {
   onClose: vi.fn(),
-  onCreateRule: vi.fn(async (name: string) => makeRule(name)),
+  onCreateRule: vi.fn(async (_accountId: string, name: string) => makeRule(name)),
   onUpdateRule: vi.fn(async (_id: string, name: string) => makeRule(name)),
   onDeleteRule: vi.fn(async () => {}),
   onRefreshSuggestions: vi.fn(),
@@ -85,20 +90,43 @@ const handlers = {
   onRestoreSuggestion: vi.fn(async () => {}),
 };
 
+/** Fills the open form's name and sender, then creates the rule. */
+async function fillAndCreate() {
+  const [nameInput, senderInput] = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="text"]'));
+  await act(async () => {
+    for (const [el, v] of [
+      [nameInput, 'Manual'],
+      [senderInput, 'sender@example.test'],
+    ] as const) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(el, v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  await click(button('attachments:rules.createRule'));
+}
+
+const ONE_ACCOUNT: RuleAccount[] = [{ id: 'acc-1', email: 'b@example.com', colorClass: 'bg-blue-500' }];
+
 function render(
   suggestions: AttachmentRuleSuggestion[],
   rules: AttachmentRule[] = [],
-  extra: { dismissed?: AttachmentRuleSuggestion[]; loading?: boolean } = {},
+  extra: {
+    dismissed?: AttachmentRuleSuggestion[];
+    loading?: boolean;
+    accounts?: RuleAccount[];
+    defaultAccountId?: string;
+  } = {},
 ) {
   act(() => {
     root.render(
       <RuleManagementModal
         rules={rules}
-        accountId="acc-1"
+        accounts={extra.accounts ?? ONE_ACCOUNT}
+        defaultAccountId={extra.defaultAccountId ?? 'acc-1'}
         suggestions={suggestions}
         suggestionsLoading={extra.loading ?? false}
         dismissedSuggestions={extra.dismissed ?? []}
-        existingTags={['invoice']}
         {...handlers}
       />,
     );
@@ -138,8 +166,9 @@ beforeEach(() => {
   // test may leave unconsumed so no test depends on the order they run in.
   vi.mocked(api.applyRuleRetroactively).mockReset().mockResolvedValue(undefined);
   vi.mocked(api.countAttachmentsForRule).mockReset().mockResolvedValue(0);
+  vi.mocked(api.getAttachmentTagVocabulary).mockReset().mockResolvedValue(['invoice']);
   for (const h of Object.values(handlers)) h.mockReset();
-  handlers.onCreateRule.mockImplementation(async (name: string) => makeRule(name));
+  handlers.onCreateRule.mockImplementation(async (_accountId: string, name: string) => makeRule(name));
   handlers.onUpdateRule.mockImplementation(async (_id: string, name: string) => makeRule(name));
   handlers.onDeleteRule.mockResolvedValue(undefined);
   handlers.onDismissSuggestion.mockResolvedValue(undefined);
@@ -186,7 +215,7 @@ describe('RuleManagementModal suggestions', () => {
     render([SUGGESTION]);
 
     expect(container.textContent).toContain('Acme · invoice');
-    expect(container.textContent).toContain('billing@acme.com');
+    expect(container.textContent).toContain('billing@example.test');
     expect(container.textContent).toContain('Invoice_*.pdf');
     expect(container.textContent).toContain('Invoice_0042.pdf');
   });
@@ -211,7 +240,7 @@ describe('RuleManagementModal suggestions', () => {
     await click(button('attachments:suggestions.review'));
 
     // Tags stay empty: the user picks their own.
-    expect(inputValues()).toEqual(['Acme · invoice', 'billing@acme.com', '', 'Invoice_*.pdf', '']);
+    expect(inputValues()).toEqual(['Acme · invoice', 'billing@example.test', '', 'Invoice_*.pdf', '']);
   });
 
   it('creating the reviewed rule applies it to existing mail and accepts the suggestion', async () => {
@@ -220,7 +249,15 @@ describe('RuleManagementModal suggestions', () => {
 
     await click(button('attachments:rules.createRule'));
 
-    expect(handlers.onCreateRule).toHaveBeenCalledWith('Acme · invoice', 'billing@acme.com', null, 'Invoice_*.pdf', []);
+    expect(handlers.onCreateRule).toHaveBeenCalledWith(
+      'acc-1',
+      'Acme · invoice',
+      'billing@example.test',
+      null,
+      'Invoice_*.pdf',
+      [],
+      true,
+    );
     expect(api.applyRuleRetroactively).toHaveBeenCalledWith('rule-1', 'acc-1', expect.any(String));
     expect(handlers.onAcceptSuggestion).toHaveBeenCalledWith('sug-1');
   });
@@ -514,7 +551,9 @@ describe('RuleManagementModal suggestions', () => {
   it('unticking "apply to existing emails" creates the rule without scanning', async () => {
     render([SUGGESTION]);
     await click(button('attachments:suggestions.review'));
-    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    const checkbox = Array.from(container.querySelectorAll('label'))
+      .find((l) => l.textContent?.includes('attachments:rules.applyToExistingLabel'))
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
     await act(async () => {
       checkbox?.click();
     });
@@ -625,5 +664,176 @@ describe('RuleManagementModal suggestions', () => {
 
     expect(container.textContent).toContain('facturas');
     expect(container.textContent).toContain('acme');
+  });
+});
+
+describe('RuleManagementModal tags', () => {
+  /** Opens a new rule's form and its tag list, after the tags load. */
+  async function openTagList(): Promise<string[]> {
+    await act(async () => {});
+    await click(button('attachments:list.createRule'));
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="attachments:rules.tagsPlaceholder"]');
+    if (!input) throw new Error('no tag input');
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+    });
+    return Array.from(container.querySelectorAll('[role="option"]')).map((o) => o.textContent ?? '');
+  }
+
+  it('offers the tags of every account, not only this one', async () => {
+    vi.mocked(api.getAttachmentTagVocabulary).mockResolvedValue(['factura', 'receipt']);
+    render([], [{ ...makeRule('Acme'), tags: ['acme'] }]);
+
+    expect(await openTagList()).toEqual(['acme', 'factura', 'receipt']);
+  });
+
+  it("offers one spelling of a tag this account's rules spell differently", async () => {
+    vi.mocked(api.getAttachmentTagVocabulary).mockResolvedValue(['Invoice']);
+    render([], [{ ...makeRule('Acme'), tags: ['invoice'] }]);
+
+    expect(await openTagList()).toEqual(['Invoice']);
+  });
+
+  it("logs a failed load and still offers this account's rule tags", async () => {
+    vi.mocked(api.getAttachmentTagVocabulary).mockRejectedValue(new Error('db locked'));
+    render([], [{ ...makeRule('Acme'), tags: ['acme'] }]);
+
+    expect(await openTagList()).toEqual(['acme']);
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('db locked'));
+  });
+});
+
+describe('RuleManagementModal account', () => {
+  it('names the account its rules belong to in the header', () => {
+    render([]);
+    expect(container.textContent).toContain('attachments:rules.accountHeader{"email":"b@example.com"}');
+  });
+
+  it('with one account offers no account to pick and creates the rule there', async () => {
+    render([]);
+    await click(button('attachments:list.createRule'));
+
+    expect(container.querySelector('[data-testid="rule-account-select"]')).toBeNull();
+    await fillAndCreate();
+    expect(handlers.onCreateRule.mock.calls[0][0]).toBe('acc-1');
+  });
+});
+
+describe('RuleManagementModal keep latest version', () => {
+  const keepLatest = () => container.querySelector<HTMLInputElement>('[data-testid="rule-keep-latest"]');
+
+  it('a new rule keeps only the latest version of each file in a thread unless unchecked', async () => {
+    render([]);
+    await click(button('attachments:list.createRule'));
+    expect(keepLatest()?.checked).toBe(true);
+
+    await fillAndCreate();
+    expect((handlers.onCreateRule.mock.calls[0] as unknown[])[6]).toBe(true);
+
+    await click(button('attachments:list.createRule'));
+    await act(async () => keepLatest()?.click());
+    await fillAndCreate();
+    expect((handlers.onCreateRule.mock.calls[1] as unknown[])[6]).toBe(false);
+  });
+
+  it('editing a rule shows its setting and saves the change', async () => {
+    render([], [{ ...makeRule('Acme'), keepLatestPerThread: false }]);
+    await click(button('common:actions.edit'));
+    expect(keepLatest()?.checked).toBe(false);
+
+    await act(async () => keepLatest()?.click());
+    await click(button('attachments:rules.updateRule'));
+
+    expect((handlers.onUpdateRule.mock.calls[0] as unknown[])[7]).toBe(true);
+  });
+
+  it('turning a rule off or on keeps its setting', async () => {
+    render([], [{ ...makeRule('Acme'), keepLatestPerThread: true }]);
+
+    await click(button('attachments:rules.disable'));
+
+    expect((handlers.onUpdateRule.mock.calls[0] as unknown[])[6]).toBe(false);
+    expect((handlers.onUpdateRule.mock.calls[0] as unknown[])[7]).toBe(true);
+  });
+});
+
+describe('RuleManagementModal in All accounts', () => {
+  const ACCOUNTS: RuleAccount[] = [
+    { id: 'acc-1', email: 'a@example.com', colorClass: 'bg-blue-500' },
+    { id: 'acc-2', email: 'b@example.com', colorClass: 'bg-emerald-500' },
+  ];
+  const ruleOf = (id: string, accountId: string, name: string): AttachmentRule => ({
+    ...makeRule(name),
+    id,
+    accountId,
+  });
+
+  function accountSelect(): HTMLSelectElement {
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="rule-account-select"]');
+    if (!select) throw new Error('no account select');
+    return select;
+  }
+
+  it('says it lists every account and names the account of each rule', () => {
+    render([], [ruleOf('ra', 'acc-1', 'A'), ruleOf('rb', 'acc-2', 'B')], { accounts: ACCOUNTS });
+
+    expect(container.textContent).toContain('attachments:rules.allAccountsHeader');
+    const chips = Array.from(container.querySelectorAll('[data-testid="rule-account-chip"]')).map((c) => c.textContent);
+    expect(chips).toEqual(['a@example.com', 'b@example.com']);
+  });
+
+  it('names the account of each suggestion', () => {
+    render([{ ...SUGGESTION, accountId: 'acc-2' }], [], { accounts: ACCOUNTS });
+
+    const chips = Array.from(container.querySelectorAll('[data-testid="rule-account-chip"]')).map((c) => c.textContent);
+    expect(chips).toEqual(['b@example.com']);
+  });
+
+  it('creates a new rule in the default account unless another is picked', async () => {
+    render([], [], { accounts: ACCOUNTS, defaultAccountId: 'acc-2' });
+    await click(button('attachments:list.createRule'));
+    expect(accountSelect().value).toBe('acc-2');
+
+    await act(async () => {
+      accountSelect().value = 'acc-1';
+      accountSelect().dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await fillAndCreate();
+
+    expect(handlers.onCreateRule.mock.calls[0][0]).toBe('acc-1');
+  });
+
+  it("reviewing a suggestion creates the rule in the suggestion's account", async () => {
+    render([{ ...SUGGESTION, accountId: 'acc-2' }], [], { accounts: ACCOUNTS });
+    await click(button('attachments:suggestions.review'));
+    await click(button('attachments:rules.createRule'));
+
+    expect(handlers.onCreateRule.mock.calls[0][0]).toBe('acc-2');
+  });
+
+  it('suggests senders of the account the new rule goes to', async () => {
+    render([], [], { accounts: ACCOUNTS, defaultAccountId: 'acc-2' });
+    await click(button('attachments:list.createRule'));
+    const sender = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="text"]'))[1];
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(sender, 'bill');
+      sender.setSelectionRange(4, 4);
+      sender.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    expect(api.autocompleteSenders).toHaveBeenLastCalledWith('acc-2', 'bill', 8);
+  });
+
+  it('scans existing mail and counts files in the account of the rule', async () => {
+    render([], [ruleOf('rb', 'acc-2', 'B')], { accounts: ACCOUNTS });
+
+    await click(button('attachments:rules.applyToExisting'));
+    await click(button('common:actions.delete'));
+
+    expect(vi.mocked(api.applyRuleRetroactively).mock.calls[0].slice(0, 2)).toEqual(['rb', 'acc-2']);
+    expect(api.countAttachmentsForRule).toHaveBeenCalledWith('acc-2', 'rb');
   });
 });

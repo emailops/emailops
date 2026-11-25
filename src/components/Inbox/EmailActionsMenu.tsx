@@ -15,6 +15,8 @@ import { useSenderStore } from '@/stores/senderStore';
 import type { Email } from '@/types';
 
 export interface RulePrefill {
+  /** Account of the email: the rule is created there. */
+  accountId: string;
   senderEmail: string;
   subject: string;
   senderName: string;
@@ -410,6 +412,7 @@ export function EmailActionsMenu({
                   onClick={(e) => {
                     e.stopPropagation();
                     onCreateAttachmentRule?.({
+                      accountId: email.accountId,
                       senderEmail: email.senderEmail,
                       subject: email.subject,
                       senderName: email.sender,
@@ -432,6 +435,7 @@ export function EmailActionsMenu({
                   onClick={(e) => {
                     e.stopPropagation();
                     onCreateClassificationRule?.({
+                      accountId: email.accountId,
                       senderEmail: email.senderEmail,
                       subject: email.subject,
                       senderName: email.sender,

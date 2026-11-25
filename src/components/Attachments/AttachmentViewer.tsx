@@ -14,7 +14,10 @@ import { PdfViewer } from './PdfViewer';
 
 interface AttachmentViewerProps {
   attachment: Attachment | null;
-  onViewEmail?: (emailId: string) => void;
+  /** Opens the email in the attachment's own account. */
+  onViewEmail?: (accountId: string, emailId: string) => void;
+  /** In "All accounts", the address of the attachment's account. */
+  accountLabel?: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -23,7 +26,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerProps) {
+export function AttachmentViewer({ attachment, onViewEmail, accountLabel }: AttachmentViewerProps) {
   const { t } = useTranslation(['attachments']);
   const fmt = useFormatters();
   const addLog = useLogStore((s) => s.addLog);
@@ -116,6 +119,9 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
               <span>{t('attachments:viewer.fromSender', { email: attachment.senderEmail })}</span>
               <span>{fmt.dateTime(attachment.emailTimestamp)}</span>
             </div>
+            {accountLabel && (
+              <p className="mt-1 text-xs text-gray-500">{t('attachments:viewer.account', { email: accountLabel })}</p>
+            )}
             {attachment.tags.length > 0 && (
               <div className="flex gap-1.5 mt-2">
                 {attachment.tags.map((tag) => (
@@ -132,7 +138,7 @@ export function AttachmentViewer({ attachment, onViewEmail }: AttachmentViewerPr
           <div className="flex items-center gap-2 flex-shrink-0">
             {onViewEmail && (
               <button
-                onClick={() => onViewEmail(attachment.emailId)}
+                onClick={() => onViewEmail(attachment.accountId, attachment.emailId)}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

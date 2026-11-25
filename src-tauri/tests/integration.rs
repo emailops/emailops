@@ -5888,6 +5888,7 @@ async fn a_headless_sync_applies_attachment_rules_to_new_mail() {
         None,
         Some("*.pdf"),
         vec!["acme".into()],
+        false,
     )
     .unwrap();
 
@@ -5945,6 +5946,7 @@ async fn a_retried_download_is_collected_by_attachment_rules() {
         None,
         None,
         vec![],
+        false,
     )
     .unwrap();
 
@@ -5998,6 +6000,7 @@ async fn a_sync_applies_attachment_rules_in_filed_folders_and_sent_not_spam_or_t
         None,
         None,
         vec![],
+        false,
     )
     .unwrap();
 
@@ -6061,6 +6064,7 @@ async fn a_manual_sent_resync_applies_attachment_rules() {
         None,
         Some("*.pdf"),
         vec![],
+        false,
     )
     .unwrap();
 
@@ -6565,6 +6569,7 @@ async fn a_dangerous_attachment_collected_by_a_rule_is_refused_until_confirmed()
         None,
         Some("*.html"),
         vec!["statements".into()],
+        false,
     )
     .unwrap();
     let provider = FakeEmailProvider::new("dg@example.com", "Dg");

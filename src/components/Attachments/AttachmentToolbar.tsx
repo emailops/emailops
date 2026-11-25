@@ -1,17 +1,58 @@
+import type { TFunction } from 'i18next';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useLogStore } from '@/stores/logStore';
 import { useToastStore } from '@/stores/toastStore';
+import type { BulkDownloadSummary, DownloadSkipReason } from '@/types';
+
+/** Skipped ids named in the log; the rest are only counted. */
+const MAX_LOGGED_SKIPPED_IDS = 20;
+
+/**
+ * One Logs entry per bulk download: success when everything was copied,
+ * otherwise an error with the count per reason and the first skipped ids.
+ * Ids only — never paths or file names.
+ */
+function downloadLogEntry(
+  summary: BulkDownloadSummary,
+  t: TFunction<['common', 'attachments']>,
+): { level: 'success' | 'error'; message: string } {
+  const total = summary.copied + summary.skipped.length;
+  if (summary.skipped.length === 0) {
+    return {
+      level: 'success',
+      message: t('attachments:toolbar.downloadSummaryLog', { count: total, copied: summary.copied }),
+    };
+  }
+  const perReason = new Map<DownloadSkipReason, number>();
+  for (const { reason } of summary.skipped) perReason.set(reason, (perReason.get(reason) ?? 0) + 1);
+  const reasons = Array.from(perReason, ([reason, n]) => `${t(`attachments:skipReason.${reason}`)}: ${n}`).join(', ');
+  const named = summary.skipped.slice(0, MAX_LOGGED_SKIPPED_IDS).map((s) => s.attachmentId);
+  const ids = summary.skipped.length > named.length ? `${named.join(', ')}, …` : named.join(', ');
+  return {
+    level: 'error',
+    message: t('attachments:toolbar.downloadSkippedLog', {
+      count: summary.skipped.length,
+      copied: summary.copied,
+      total,
+      reasons,
+      ids,
+    }),
+  };
+}
 
 interface AttachmentToolbarProps {
-  accountId: string | null;
+  /** Account the list reads; null = every enabled account ("All accounts"). */
+  queryAccountId: string | null;
   totalCount: number;
   selectedTag: string | null;
   availableTags: string[];
   checkedCount: number;
   allChecked: boolean;
+  /** Every id of the filter is loading for "select all". */
+  isSelectingAll: boolean;
   onSetSelectedTag: (tag: string | null) => void;
   onToggleCheckAll: () => void;
   onClearChecked: () => void;
@@ -22,12 +63,13 @@ interface AttachmentToolbarProps {
 }
 
 export function AttachmentToolbar({
-  accountId,
+  queryAccountId,
   totalCount,
   selectedTag,
   availableTags,
   checkedCount,
   allChecked,
+  isSelectingAll,
   onSetSelectedTag,
   onToggleCheckAll,
   onClearChecked,
@@ -41,19 +83,30 @@ export function AttachmentToolbar({
   const [isDownloading, setIsDownloading] = useState(false);
 
   const handleBulkDownload = async () => {
-    if (checkedCount === 0 || !accountId) return;
+    if (checkedCount === 0) return;
     setIsDownloading(true);
     try {
-      const dest = await api.bulkDownloadAttachments(accountId, Array.from(checkedIds));
-      addLog('success', 'attachments', t('attachments:toolbar.downloadedLog', { count: checkedCount, dest }));
+      const summary = await api.bulkDownloadAttachments(queryAccountId, Array.from(checkedIds));
+      const { level, message } = downloadLogEntry(summary, t);
+      addLog(level, 'attachments', message);
+      const total = summary.copied + summary.skipped.length;
       addToast({
-        message: t('attachments:toolbar.downloadedToast', { count: checkedCount }),
-        actionLabel: t('attachments:download.showInFinder'),
-        onAction: () => {
-          void api.revealInFinder(dest).catch((err) => {
-            addLog('error', 'attachments', `Failed to open Downloads folder: ${errorText(err)}`);
-          });
-        },
+        message:
+          summary.skipped.length > 0
+            ? t('attachments:toolbar.downloadedWithSkippedToast', {
+                count: summary.skipped.length,
+                copied: summary.copied,
+                total,
+              })
+            : t('attachments:toolbar.downloadedSummaryToast', { count: total, copied: summary.copied }),
+        ...(summary.copied > 0 && {
+          actionLabel: t('attachments:download.showInFinder'),
+          onAction: () => {
+            void api.revealInFinder(summary.dest).catch((err) => {
+              addLog('error', 'attachments', `Failed to open Downloads folder: ${errorText(err)}`);
+            });
+          },
+        }),
       });
       onClearChecked();
     } catch (err) {
@@ -79,6 +132,7 @@ export function AttachmentToolbar({
               <input
                 type="checkbox"
                 checked={allChecked}
+                disabled={isSelectingAll}
                 onChange={onToggleCheckAll}
                 className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               />

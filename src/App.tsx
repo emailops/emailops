@@ -62,6 +62,7 @@ import { sanitizeAvailableUpdate, type UpdateAvailablePayload } from '@/lib/appU
 import { DEFAULT_CATEGORIES, VALID_CATEGORIES } from '@/lib/categories';
 import { deriveChatContext } from '@/lib/chatContext';
 import { type ChatToolEffectPayload, handleChatToolEffect } from '@/lib/chatToolEffects';
+import { accountColorClass } from '@/lib/colors';
 import { fitColumns, LIST_COLUMN, parseWidth, readingAreaRoom, SIDEBAR_COLUMN } from '@/lib/columnResize';
 import { plainTextToHtml, plainTextToParagraphsHtml } from '@/lib/composeHtml';
 import { newMessageAccountId } from '@/lib/composeSender';
@@ -92,6 +93,7 @@ import {
   useAccountStore,
 } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
+import { isAllChecked } from '@/stores/attachmentStore';
 import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -128,6 +130,7 @@ import { type UpdateToastHost, useUpdateStore } from '@/stores/updateStore';
 import { useViewContextStore } from '@/stores/viewContextStore';
 import type {
   ActiveFilter,
+  Attachment,
   CalendarEvent,
   ChatPhaseEvent,
   ChatRenamedEvent,
@@ -577,6 +580,9 @@ function AppInner() {
 
   const {
     rules: attachmentRules,
+    rulesAccountId: attachmentRulesAccountId,
+    newRuleAccountId: attachmentNewRuleAccountId,
+    setRuleAccountFromEmail: setAttachmentRuleAccountFromEmail,
     attachments,
     selectedAttachment,
     isLoading: isLoadingAttachments,
@@ -586,13 +592,16 @@ function AppInner() {
     selectedTag,
     availableTags,
     checkedIds,
+    listError: attachmentListError,
+    isSelectingAll: isSelectingAllAttachments,
+    retry: retryAttachments,
     createRule: createAttachmentRule,
     updateRule: updateAttachmentRule,
     deleteRule: deleteAttachmentRule,
     loadMore: loadMoreAttachments,
     selectAttachment,
     toggleChecked,
-    toggleCheckAll,
+    toggleSelectAll,
     clearChecked,
     setSelectedTag,
     suggestions: attachmentRuleSuggestions,
@@ -604,13 +613,24 @@ function AppInner() {
     acceptSuggestion: acceptAttachmentRuleSuggestion,
   } = useAttachments();
 
-  const ruleNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const rule of attachmentRules) {
-      map[rule.id] = rule.name;
-    }
-    return map;
-  }, [attachmentRules]);
+  // "All accounts" mixes accounts in the attachments list: each row and the
+  // viewer name the account they belong to. The rules modal lists the rules of
+  // every enabled account there, else those of one account.
+  const accountEmailById = useMemo(() => new Map(accounts.map((a) => [a.id, a.email])), [accounts]);
+  const attachmentRuleAccounts = useMemo(
+    () =>
+      accounts
+        .filter((a) => (isUnified ? a.enabled : a.id === attachmentRulesAccountId))
+        .map((a) => ({ id: a.id, email: a.email, colorClass: accountColorClass(accounts, a.id) })),
+    [accounts, isUnified, attachmentRulesAccountId],
+  );
+  const getAttachmentAccountBadge = useMemo(() => {
+    if (!isUnified) return undefined;
+    return (attachment: Attachment) => ({
+      colorClass: accountColorClass(accounts, attachment.accountId),
+      label: accountEmailById.get(attachment.accountId) ?? attachment.accountId,
+    });
+  }, [isUnified, accounts, accountEmailById]);
 
   const handleChangeLayout = setInboxLayout;
 
@@ -1433,28 +1453,32 @@ function AppInner() {
 
   const navigateToEmail = useEmailStore((s) => s.navigateToEmail);
   const handleViewAttachmentEmail = useCallback(
-    async (emailId: string) => {
-      // Attachments are scoped to the effective account (first enabled in
-      // unified mode), so the email always belongs to that account.
-      if (!effectiveAccountId) return;
+    async (accountId: string, emailId: string) => {
+      // The email lives in the attachment's own account, which in "All
+      // accounts" may not be the effective one; the sidebar stays unified.
       clearActiveFilter();
       clearSearchQuery();
       setViewMode('inbox');
-      navigateToEmail(effectiveAccountId, emailId);
+      navigateToEmail(accountId, emailId);
     },
-    [effectiveAccountId, clearActiveFilter, clearSearchQuery, navigateToEmail],
+    [clearActiveFilter, clearSearchQuery, navigateToEmail],
   );
 
-  const handleCreateAttachmentRule = useCallback((prefill: RulePrefill) => {
-    // Build a sensible rule name from the sender
-    const name = prefill.senderName || prefill.senderEmail.split('@')[0];
-    setRulePrefill({
-      name: `${name} attachments`,
-      senderEmailPattern: prefill.senderEmail,
-      subjectPattern: prefill.subject ? `*${prefill.subject}*` : '',
-    });
-    setIsRuleModalOpen(true);
-  }, []);
+  const handleCreateAttachmentRule = useCallback(
+    (prefill: RulePrefill) => {
+      // Build a sensible rule name from the sender
+      const name = prefill.senderName || prefill.senderEmail.split('@')[0];
+      setRulePrefill({
+        name: `${name} attachments`,
+        senderEmailPattern: prefill.senderEmail,
+        subjectPattern: prefill.subject ? `*${prefill.subject}*` : '',
+      });
+      // The rule belongs to the email's account, not the effective one.
+      setAttachmentRuleAccountFromEmail(prefill.accountId);
+      setIsRuleModalOpen(true);
+    },
+    [setAttachmentRuleAccountFromEmail],
+  );
 
   const handleChatAboutThread = useCallback(
     async (email: Email) => {
@@ -1981,16 +2005,16 @@ function AppInner() {
             </>
           ) : (
             <div className="flex flex-col flex-1">
-              <UnifiedScopeBar accountId={effectiveAccountId} />
               <AttachmentToolbar
-                accountId={effectiveAccountId}
+                queryAccountId={queryAccountId}
                 totalCount={attachmentTotalCount}
                 selectedTag={selectedTag}
                 availableTags={availableTags}
                 checkedCount={checkedIds.size}
-                allChecked={attachments.length > 0 && checkedIds.size === attachments.length}
+                allChecked={isAllChecked(checkedIds, attachmentTotalCount)}
+                isSelectingAll={isSelectingAllAttachments}
                 onSetSelectedTag={setSelectedTag}
-                onToggleCheckAll={toggleCheckAll}
+                onToggleCheckAll={toggleSelectAll}
                 onClearChecked={clearChecked}
                 checkedIds={checkedIds}
                 onOpenRules={() => setIsRuleModalOpen(true)}
@@ -2000,17 +2024,26 @@ function AppInner() {
                 <AttachmentList
                   attachments={attachments}
                   selectedAttachment={selectedAttachment}
-                  ruleNames={ruleNames}
+                  selectedTag={selectedTag}
+                  getAccountBadge={getAttachmentAccountBadge}
                   checkedIds={checkedIds}
                   isLoading={isLoadingAttachments}
                   isLoadingMore={isLoadingMoreAttachments}
                   hasMore={hasMoreAttachments}
+                  listError={attachmentListError}
+                  onRetry={retryAttachments}
                   onSelectAttachment={selectAttachment}
                   onToggleChecked={toggleChecked}
                   onLoadMore={loadMoreAttachments}
                   onOpenRules={() => setIsRuleModalOpen(true)}
                 />
-                <AttachmentViewer attachment={selectedAttachment} onViewEmail={handleViewAttachmentEmail} />
+                <AttachmentViewer
+                  attachment={selectedAttachment}
+                  onViewEmail={handleViewAttachmentEmail}
+                  accountLabel={
+                    isUnified && selectedAttachment ? accountEmailById.get(selectedAttachment.accountId) : undefined
+                  }
+                />
               </div>
             </div>
           )}
@@ -2137,14 +2170,16 @@ function AppInner() {
         <AddImapAccountModal onSuccess={handleImapAccountAdded} onCancel={() => setIsAddImapAccountOpen(false)} />
       )}
 
-      {isRuleModalOpen && effectiveAccountId && (
+      {isRuleModalOpen && attachmentRulesAccountId && attachmentNewRuleAccountId && (
         <RuleManagementModal
           rules={attachmentRules}
-          accountId={effectiveAccountId}
+          accounts={attachmentRuleAccounts}
+          defaultAccountId={attachmentNewRuleAccountId}
           prefill={rulePrefill}
           onClose={() => {
             setIsRuleModalOpen(false);
             setRulePrefill(null);
+            setAttachmentRuleAccountFromEmail(null);
           }}
           onCreateRule={createAttachmentRule}
           onUpdateRule={updateAttachmentRule}
@@ -2156,7 +2191,6 @@ function AppInner() {
           onRefreshSuggestions={refreshAttachmentRuleSuggestions}
           onDismissSuggestion={dismissAttachmentRuleSuggestion}
           onAcceptSuggestion={acceptAttachmentRuleSuggestion}
-          existingTags={availableTags}
         />
       )}
 

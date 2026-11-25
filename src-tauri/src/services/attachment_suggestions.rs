@@ -920,6 +920,7 @@ mod executor_tests {
             filename_pattern: None,
             tags: vec![],
             enabled: true,
+            keep_latest_per_thread: true,
             created_at: NOW,
             updated_at: NOW,
         })
@@ -1099,6 +1100,7 @@ mod tests {
             filename_pattern: filename.map(Into::into),
             tags: vec![],
             enabled: true,
+            keep_latest_per_thread: true,
             created_at: 0,
             updated_at: 0,
         }

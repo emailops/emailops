@@ -496,6 +496,7 @@ mod tests {
             filename_pattern: Some("*.pdf".into()),
             tags: vec![],
             enabled: true,
+            keep_latest_per_thread: false,
             created_at: 0,
             updated_at: 0,
         };

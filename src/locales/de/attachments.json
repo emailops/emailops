@@ -2,7 +2,10 @@
   "list": {
     "empty": "Noch keine Anhänge gesammelt",
     "createRulesHint": "Erstelle Regeln, um Anhänge aus passenden E-Mails automatisch zu sammeln",
-    "createRule": "Regel erstellen"
+    "createRule": "Regel erstellen",
+    "loadError": "Die Anhänge konnten nicht geladen werden.",
+    "retry": "Erneut versuchen",
+    "emptyForTag": "Keine Anhänge mit dem Tag „{{tag}}“"
   },
   "viewer": {
     "selectAttachment": "Wähle einen Anhang zur Vorschau aus",
@@ -17,7 +20,8 @@
     "download": "Herunterladen",
     "zoomOut": "Verkleinern",
     "zoomIn": "Vergrößern",
-    "fitWidth": "An Breite anpassen"
+    "fitWidth": "An Breite anpassen",
+    "account": "Konto: {{email}}"
   },
   "toolbar": {
     "title": "Anhänge",
@@ -27,9 +31,25 @@
     "download": "{{count}} herunterladen",
     "manageRules": "Regeln verwalten",
     "allTags": "Alle",
-    "downloadedLog": "{{count}} Datei(en) heruntergeladen nach {{dest}}",
     "downloadFailedLog": "Download fehlgeschlagen: {{error}}",
-    "downloadedToast": "{{count}} Datei(en) in Downloads heruntergeladen"
+    "downloadedSummaryToast_one": "{{copied}} von {{count}} Datei heruntergeladen",
+    "downloadedSummaryToast_other": "{{copied}} von {{count}} Dateien heruntergeladen",
+    "downloadedSummaryToast_many": "{{copied}} von {{count}} Dateien heruntergeladen",
+    "downloadedWithSkippedToast_one": "{{copied}} von {{total}} Dateien heruntergeladen, {{count}} übersprungen",
+    "downloadedWithSkippedToast_other": "{{copied}} von {{total}} Dateien heruntergeladen, {{count}} übersprungen",
+    "downloadedWithSkippedToast_many": "{{copied}} von {{total}} Dateien heruntergeladen, {{count}} übersprungen",
+    "downloadSummaryLog_one": "{{copied}} von {{count}} Anhang in Downloads heruntergeladen",
+    "downloadSummaryLog_other": "{{copied}} von {{count}} Anhängen in Downloads heruntergeladen",
+    "downloadSummaryLog_many": "{{copied}} von {{count}} Anhängen in Downloads heruntergeladen",
+    "downloadSkippedLog_one": "{{copied}} von {{total}} Anhängen heruntergeladen; {{count}} übersprungen ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_other": "{{copied}} von {{total}} Anhängen heruntergeladen; {{count}} übersprungen ({{reasons}}): {{ids}}",
+    "downloadSkippedLog_many": "{{copied}} von {{total}} Anhängen heruntergeladen; {{count}} übersprungen ({{reasons}}): {{ids}}"
+  },
+  "skipReason": {
+    "not_found": "nicht gefunden",
+    "file_missing": "Datei fehlt",
+    "unreadable": "nicht lesbar",
+    "copy_failed": "Kopieren fehlgeschlagen"
   },
   "rules": {
     "title": "Anhang-Regeln",
@@ -83,7 +103,12 @@
     "applyDone_many": "Fertig: {{count}} Anhänge in dieser Regel",
     "applyDoneNew_one": "{{count}} neu",
     "applyDoneNew_other": "{{count}} neu",
-    "applyDoneNew_many": "{{count}} neu"
+    "applyDoneNew_many": "{{count}} neu",
+    "accountHeader": "Konto: {{email}}",
+    "allAccountsHeader": "Alle Konten",
+    "account": "Konto",
+    "keepLatestLabel": "Nur die neueste Version jeder Datei eines Verlaufs behalten",
+    "keepLatestHelp": "Eine Datei mit demselben Namen, die in derselben Unterhaltung erneut gesendet wird, ersetzt die frühere Kopie."
   },
   "suggestions": {
     "title": "Vorgeschlagene Regeln",

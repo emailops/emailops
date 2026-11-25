@@ -11,8 +11,8 @@ interface AccountScopeChipProps {
 }
 
 /** Slim centered bar at the top of a single-account pane, shown in unified
- *  ("All accounts") mode: some views (chat, tasks, memory, contacts, drafts,
- *  attachments) are hard-scoped to ONE account, and this makes that scope
+ *  ("All accounts") mode: some views (chat, tasks, memory, contacts, drafts)
+ *  are hard-scoped to ONE account, and this makes that scope
  *  visible at a glance. The color dot matches the account's indicator color
  *  in the unified inbox rows. */
 export function AccountScopeChip({ accountId, email, hint }: AccountScopeChipProps) {

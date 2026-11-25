@@ -496,6 +496,9 @@ pub struct AttachmentRule {
     pub filename_pattern: Option<String>,
     pub tags: Vec<String>,
     pub enabled: bool,
+    /// Hold only the newest copy of each file name in a thread: an older
+    /// copy is not collected, or removed once a newer one is.
+    pub keep_latest_per_thread: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -554,6 +557,9 @@ pub struct Attachment {
     pub account_id: String,
     pub email_id: String,
     pub rule_id: String,
+    /// Name of the rule that saved it, read with the attachment so a list of
+    /// several accounts needs no rule lookup. Ignored on insert.
+    pub rule_name: Option<String>,
     pub gmail_attachment_id: String,
     pub filename: String,
     pub mime_type: String,
@@ -564,6 +570,39 @@ pub struct Attachment {
     pub subject: String,
     pub email_timestamp: i64,
     pub created_at: i64,
+}
+
+/// Why one attachment of a bulk download was not copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadSkipReason {
+    /// No such attachment in the scope: missing, of another account, or of a
+    /// disabled account. One reason for all three, so ids never leak across
+    /// accounts.
+    NotFound,
+    /// The row exists but its stored file is gone.
+    FileMissing,
+    /// The stored path cannot be read safely (outside the data folder, or an
+    /// I/O error resolving it).
+    Unreadable,
+    /// Copying into the destination folder failed.
+    CopyFailed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedDownload {
+    pub attachment_id: String,
+    pub reason: DownloadSkipReason,
+}
+
+/// What a bulk download copied, and what it skipped and why.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkDownloadSummary {
+    pub dest: String,
+    pub copied: u32,
+    pub skipped: Vec<SkippedDownload>,
 }
 
 // Email classification tags

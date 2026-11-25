@@ -1,10 +1,17 @@
 import { useFormatters } from '@/hooks/useFormatters';
 import type { Attachment } from '@/types';
+import { AccountChip } from './AccountChip';
+
+/** Account of the row in "All accounts": its colour dot and address. */
+export interface AttachmentAccountBadge {
+  colorClass: string;
+  label: string;
+}
 
 interface AttachmentRowProps {
   attachment: Attachment;
-  ruleName?: string;
   ruleColor?: string;
+  accountBadge?: AttachmentAccountBadge;
   isSelected: boolean;
   isChecked: boolean;
   onToggleChecked: () => void;
@@ -40,14 +47,15 @@ function formatFileSize(bytes: number): string {
 
 export function AttachmentRow({
   attachment,
-  ruleName,
   ruleColor: color,
+  accountBadge,
   isSelected,
   isChecked,
   onToggleChecked,
   onClick,
 }: AttachmentRowProps) {
   const fmt = useFormatters();
+  const ruleName = attachment.ruleName;
   const date = new Date(attachment.emailTimestamp * 1000);
   const isThisYear = date.getFullYear() === new Date().getFullYear();
   const formattedDate = fmt.date(
@@ -85,8 +93,15 @@ export function AttachmentRow({
           </div>
           <span className="text-[11px] text-gray-400 flex-shrink-0">{formattedDate}</span>
         </div>
-        {/* Line 2: file size  tags */}
-        <div className="flex items-center gap-1.5 mt-0.5">
+        {/* Line 2: account (All accounts only)  file size  tags */}
+        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+          {accountBadge && (
+            <AccountChip
+              label={accountBadge.label}
+              colorClass={accountBadge.colorClass}
+              testId="attachment-account-chip"
+            />
+          )}
           <span className="text-[11px] text-gray-400">{formatFileSize(attachment.fileSize)}</span>
           {attachment.tags.map((tag) => (
             <span

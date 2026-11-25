@@ -29,12 +29,13 @@ function render(suggestionCount: number) {
   act(() => {
     root.render(
       <AttachmentToolbar
-        accountId="acc-1"
+        queryAccountId="acc-1"
         totalCount={0}
         selectedTag={null}
         availableTags={[]}
         checkedCount={0}
         allChecked={false}
+        isSelectingAll={false}
         onSetSelectedTag={vi.fn()}
         onToggleCheckAll={vi.fn()}
         onClearChecked={vi.fn()}

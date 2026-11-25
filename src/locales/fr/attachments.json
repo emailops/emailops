@@ -2,7 +2,10 @@
   "list": {
     "empty": "Aucune pièce jointe collectée pour le moment",
     "createRulesHint": "Créez des règles pour collecter automatiquement les pièces jointes des e-mails correspondants",
-    "createRule": "Créer une règle"
+    "createRule": "Créer une règle",
+    "loadError": "Impossible de charger les pièces jointes.",
+    "retry": "Réessayer",
+    "emptyForTag": "Aucune pièce jointe avec l’étiquette « {{tag}} »"
   },
   "viewer": {
     "selectAttachment": "Sélectionnez une pièce jointe à prévisualiser",
@@ -17,7 +20,8 @@
     "download": "Télécharger",
     "zoomOut": "Zoom arrière",
     "zoomIn": "Zoom avant",
-    "fitWidth": "Ajuster à la largeur"
+    "fitWidth": "Ajuster à la largeur",
+    "account": "Compte : {{email}}"
   },
   "toolbar": {
     "title": "Pièces jointes",
@@ -27,9 +31,25 @@
     "download": "Télécharger {{count}}",
     "manageRules": "Gérer les règles",
     "allTags": "Toutes",
-    "downloadedLog": "{{count}} fichier(s) téléchargé(s) vers {{dest}}",
     "downloadFailedLog": "Échec du téléchargement : {{error}}",
-    "downloadedToast": "{{count}} fichier(s) téléchargé(s) dans Téléchargements"
+    "downloadedSummaryToast_one": "{{copied}} sur {{count}} fichier téléchargé",
+    "downloadedSummaryToast_other": "{{copied}} sur {{count}} fichiers téléchargés",
+    "downloadedSummaryToast_many": "{{copied}} sur {{count}} fichiers téléchargés",
+    "downloadedWithSkippedToast_one": "{{copied}} sur {{total}} fichiers téléchargés, {{count}} ignoré",
+    "downloadedWithSkippedToast_other": "{{copied}} sur {{total}} fichiers téléchargés, {{count}} ignorés",
+    "downloadedWithSkippedToast_many": "{{copied}} sur {{total}} fichiers téléchargés, {{count}} ignorés",
+    "downloadSummaryLog_one": "{{copied}} sur {{count}} pièce jointe téléchargée dans Téléchargements",
+    "downloadSummaryLog_other": "{{copied}} sur {{count}} pièces jointes téléchargées dans Téléchargements",
+    "downloadSummaryLog_many": "{{copied}} sur {{count}} pièces jointes téléchargées dans Téléchargements",
+    "downloadSkippedLog_one": "{{copied}} sur {{total}} pièces jointes téléchargées ; {{count}} ignorée ({{reasons}}) : {{ids}}",
+    "downloadSkippedLog_other": "{{copied}} sur {{total}} pièces jointes téléchargées ; {{count}} ignorées ({{reasons}}) : {{ids}}",
+    "downloadSkippedLog_many": "{{copied}} sur {{total}} pièces jointes téléchargées ; {{count}} ignorées ({{reasons}}) : {{ids}}"
+  },
+  "skipReason": {
+    "not_found": "introuvable",
+    "file_missing": "fichier manquant",
+    "unreadable": "illisible",
+    "copy_failed": "échec de la copie"
   },
   "rules": {
     "title": "Règles de pièces jointes",
@@ -83,7 +103,12 @@
     "applyDone_many": "Terminé : {{count}} pièces jointes dans cette règle",
     "applyDoneNew_one": "{{count}} nouvelle",
     "applyDoneNew_other": "{{count}} nouvelles",
-    "applyDoneNew_many": "{{count}} nouvelles"
+    "applyDoneNew_many": "{{count}} nouvelles",
+    "accountHeader": "Compte : {{email}}",
+    "allAccountsHeader": "Tous les comptes",
+    "account": "Compte",
+    "keepLatestLabel": "Ne garder que la dernière version de chaque fichier d'un fil",
+    "keepLatestHelp": "Un fichier du même nom renvoyé dans la même conversation remplace la copie précédente."
   },
   "suggestions": {
     "title": "Règles suggérées",

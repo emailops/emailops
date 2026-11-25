@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { AttachmentRuleSuggestion } from '@/types';
 
@@ -13,6 +13,8 @@ interface RuleSuggestionListProps {
   onDismiss: (suggestionId: string) => Promise<boolean>;
   /** Undo a dismissal; resolves to whether it succeeded. */
   onRestore: (suggestionId: string) => Promise<boolean>;
+  /** In "All accounts", the chip of the account a suggestion belongs to. */
+  accountChip?: (accountId: string) => ReactNode;
 }
 
 /**
@@ -28,6 +30,7 @@ export function RuleSuggestionList({
   onReview,
   onDismiss,
   onRestore,
+  accountChip,
 }: RuleSuggestionListProps) {
   const { t, i18n } = useTranslation(['attachments']);
   // Requests in flight, per suggestion id: a second click must not send a second request.
@@ -89,7 +92,10 @@ export function RuleSuggestionList({
         <div key={s.id} className="border border-amber-200 bg-amber-50/40 rounded-lg p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 text-xs text-gray-500 space-y-0.5">
-              <div className="text-sm font-medium text-gray-900">{s.name}</div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-medium text-gray-900">{s.name}</span>
+                {accountChip?.(s.accountId)}
+              </div>
               <div>
                 {t('attachments:rules.rowSender')}{' '}
                 <code className="bg-gray-100 px-1 py-0.5 rounded">{s.senderEmailPattern}</code>
