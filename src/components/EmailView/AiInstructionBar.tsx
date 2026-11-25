@@ -1,57 +1,105 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { InlineError } from '@/components/common/InlineError';
 
 interface AiInstructionBarProps {
   /** Called with the trimmed instruction ('' when the box is empty). */
   onGenerate: (instructions: string) => void;
+  /** Edit the draft already written as the instruction says ('' when empty). */
+  onPolish: (instructions: string) => void;
+  /** A draft or polish is running: both actions and the box are locked. */
   isGenerating: boolean;
-  /** A draft is already in the composer: the button offers to regenerate. */
+  /** A draft is already in the composer: Generate offers to regenerate and
+   *  Polish has something to work on. */
   hasDraft: boolean;
+  /** The composer holds what a draft needs (a new email: recipients and a
+   *  subject). Default true. */
+  canGenerate?: boolean;
+  /** Tooltip of the Generate button: what it uses, and needs. */
+  generateTitle?: string;
+  /** Why the last request failed, shown under the bar. */
+  error?: string | null;
 }
 
 /**
- * Free-text steer for the AI reply draft ("accept, but propose Thursday").
- * Sits above the reply editor; Enter or the button (re)generates the draft
- * with the instruction passed to `generate_draft`.
+ * Instructions for the AI, kept apart from the email: the text here is never
+ * sent nor saved with the draft. **Generate** writes the draft following them
+ * (Enter does too); **Polish** edits the draft already written, keeping its
+ * facts and meaning. The box keeps its text after a failure, for a retry.
  */
-export function AiInstructionBar({ onGenerate, isGenerating, hasDraft }: AiInstructionBarProps) {
+export function AiInstructionBar({
+  onGenerate,
+  onPolish,
+  isGenerating,
+  hasDraft,
+  canGenerate = true,
+  generateTitle,
+  error,
+}: AiInstructionBarProps) {
   const { t } = useTranslation(['compose']);
   const [instruction, setInstruction] = useState('');
+  // Which action is running, so its button says so.
+  const [running, setRunning] = useState<'generate' | 'polish'>('generate');
 
-  const submit = () => {
-    if (isGenerating) return;
+  const generate = () => {
+    if (isGenerating || !canGenerate) return;
+    setRunning('generate');
     onGenerate(instruction.trim());
   };
+  const polish = () => {
+    if (isGenerating || !hasDraft) return;
+    setRunning('polish');
+    onPolish(instruction.trim());
+  };
+
+  const buttonClass =
+    'shrink-0 rounded px-3 py-1 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60';
 
   return (
-    <div className="mb-2 flex items-center gap-2">
-      <input
-        type="text"
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        disabled={isGenerating}
-        placeholder={t('compose:aiDraft.instructionPlaceholder')}
-        aria-label={t('compose:aiDraft.instructionPlaceholder')}
-        className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:border-purple-500 focus:outline-none disabled:bg-gray-50"
-      />
-      <button
-        type="button"
-        onClick={submit}
-        disabled={isGenerating}
-        className="shrink-0 rounded bg-purple-600 px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {isGenerating
-          ? t('compose:aiDraft.generating')
-          : hasDraft
-            ? t('compose:aiDraft.regenerate')
-            : t('compose:aiDraft.generate')}
-      </button>
+    <div className="mb-2">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              generate();
+            }
+          }}
+          disabled={isGenerating}
+          placeholder={t('compose:aiDraft.instructionPlaceholder')}
+          aria-label={t('compose:aiDraft.instructionPlaceholder')}
+          data-testid="ai-instructions"
+          className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:border-purple-500 focus:outline-none disabled:bg-gray-50"
+        />
+        <button
+          type="button"
+          onClick={generate}
+          disabled={isGenerating || !canGenerate}
+          title={generateTitle}
+          data-testid="ai-generate"
+          className={`${buttonClass} bg-purple-600 text-white hover:bg-purple-700`}
+        >
+          {isGenerating && running === 'generate'
+            ? t('compose:aiDraft.generating')
+            : hasDraft
+              ? t('compose:aiDraft.regenerate')
+              : t('compose:aiDraft.generate')}
+        </button>
+        <button
+          type="button"
+          onClick={polish}
+          disabled={isGenerating || !hasDraft}
+          title={hasDraft ? t('compose:aiDraft.polishTitle') : t('compose:aiDraft.polishNeedsDraft')}
+          data-testid="ai-polish"
+          className={`${buttonClass} border border-purple-300 bg-white text-purple-700 hover:bg-purple-50`}
+        >
+          {isGenerating && running === 'polish' ? t('compose:aiDraft.polishing') : t('compose:aiDraft.polish')}
+        </button>
+      </div>
+      <InlineError message={error} className="mt-2" />
     </div>
   );
 }

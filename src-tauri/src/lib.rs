@@ -190,6 +190,7 @@ macro_rules! app_commands {
             commands::emails::send_new_email,
             commands::emails::generate_draft,
             commands::emails::generate_new_draft,
+            commands::emails::polish_draft,
             commands::translation::detect_email_language,
             commands::translation::translate_email,
             commands::translation::translate_compose_text,

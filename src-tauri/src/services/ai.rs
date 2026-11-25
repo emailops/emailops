@@ -1488,6 +1488,22 @@ impl AiService {
         operation: &str,
         options: Option<CompletionOptions>,
     ) -> Result<String> {
+        Ok(self
+            .complete_with_prefix_result(prefix, suffix, operation, options)
+            .await?
+            .text)
+    }
+
+    /// [`complete_with_prefix`](Self::complete_with_prefix), returning the
+    /// whole result: a caller that must not use a reply cut off by
+    /// `max_tokens` reads `truncated`.
+    pub async fn complete_with_prefix_result(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        operation: &str,
+        options: Option<CompletionOptions>,
+    ) -> Result<CompletionResult> {
         let mut opts = options.unwrap_or_default();
         // Apply thinking preference from config if not explicitly set
         if opts.think.is_none() {
@@ -1517,7 +1533,7 @@ impl AiService {
             latency_ms,
             error: None,
         });
-        Ok(result.text)
+        Ok(result)
     }
 
     pub async fn embed(&self, text: &str) -> Result<Vec<f32>> {

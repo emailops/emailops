@@ -17,6 +17,8 @@
 #   messages in them are the voice samples the prompt shows.
 # prompt_template: the user's reply template (Settings → AI drafts); omitted =
 #   the default one.
+# draft: kind new — what the compose window already holds, background for
+#   Generate; kind polish — the draft Polish edits (as a new message).
 #
 # Run: make eval-draft-cases ARGS="--repeat 3"
 #      (add --case <id-substring> to run a subset, --model <name> to switch)
@@ -556,3 +558,57 @@
   to: [bruno@example.net]
   subject: Presupuesto de la migración
   instructions: Dile a Bruno que el presupuesto llegará el viernes y que incluye la fase de pruebas.
+
+# Instructions for AI are never part of the email: Generate and Polish follow
+# them, and the draft must not carry them (forbidden: the instruction itself).
+- id: new_body_is_background_en
+  kind: new
+  expect_language: en
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  to: [carla@example.com]
+  subject: Proposal follow-up
+  draft: |
+    proposal went out on 3 March, offer a 20 minute call on Tuesday
+  instructions: Keep it short and friendly.
+  required: ["tuesday", "20"]
+  forbidden: ["keep it short and friendly"]
+
+- id: polish_keeps_facts_en
+  kind: polish
+  expect_language: en
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  draft: |
+    hi ana
+
+    thursday at 10:00 works for me, the workshop is 2 hours in room B and the fee is 450 EUR like we said. can you send the agenda before wednesday?
+
+    thanks
+  instructions: Make it more formal.
+  required: ["thursday", "10:00", "450", "room b", "agenda", "wednesday"]
+  forbidden: ["make it more formal"]
+
+- id: polish_keeps_the_drafts_language_es
+  kind: polish
+  expect_language: es
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  draft: |
+    hola bruno
+
+    el presupuesto de la migracion llega el viernes, incluye la fase de pruebas y son 3 semanas de trabajo. me confirmas si lo presentais en el comite?
+
+    un saludo
+  instructions: Make it warmer and fix the spelling.
+  required: ["viernes", "pruebas", "semanas", "comit"]
+  forbidden: ["make it warmer"]
+
+- id: polish_without_instructions_en
+  kind: polish
+  expect_language: en
+  account: { email: ulises@example.com, name: Ulises Ortega }
+  signature:
+    html: "<p>Ulises Ortega<br>Consultant · Example Labs</p>"
+  draft: |
+    Hi Carla, i reviewed teh contract, clause 7 needs a change on the payment terms (30 days not 60). Can we talk monday at 16:00?
+    Best regards,
+  required: ["clause 7", "30", "60", "monday", "16:00"]
+  expect_signed: false

@@ -9,7 +9,7 @@ import { useShortcutHint } from '@/hooks/useShortcutHint';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment, OutgoingMessage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { findThreadReplyDraft } from '@/lib/composeDraft';
-import { createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
+import { AI_DRAFT_TIMEOUT_MS, createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import { formatShortcut } from '@/lib/platform';
 import type { PaneCommand } from '@/lib/shortcutPlan';
@@ -176,6 +176,8 @@ export function EmailView({
   // every time a draft is requested.
   const draftTrackerRef = useRef(createDraftRequestTracker());
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  // Why the last AI request failed, shown in the reply panel.
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [draftSources, setDraftSources] = useState<DraftSource[]>([]);
   const [aiDraftsEnabled, setAiDraftsEnabled] = useState(true);
 
@@ -189,16 +191,22 @@ export function EmailView({
   const applyDraftOutcomeRef = useRef<(outcome: DraftOutcome) => void>(() => {});
   applyDraftOutcomeRef.current = (outcome) => {
     setIsGeneratingDraft(false);
+    // A failure or a timeout leaves the reply as the user left it.
     if (outcome.kind === 'failed') {
-      setDraftSources([]);
+      setDraftError(t('compose:aiDraft.failed', { error: outcome.event.error }));
       addLog('error', 'ai', `AI draft failed: ${outcome.event.error}`);
+      return;
+    }
+    if (outcome.kind === 'timedOut') {
+      setDraftError(t('compose:aiDraft.timedOut'));
+      addLog('error', 'ai', 'AI draft timed out; the reply keeps its text');
       return;
     }
     const { body, sources } = outcome.event;
     setDraftSources(sources ?? []);
-    // Prepend the AI body above anything the user has already typed,
-    // so the suggested reply sits at the top of the textbox.
-    setReplyBody((existing) => prependDraftBody(body, existing));
+    // The new draft (generated or polished) takes the place of the reply's
+    // text, above the signature.
+    setReplyBody(body);
     addLog('success', 'ai', `AI draft ready (${sources?.length ?? 0} sources)`);
   };
 
@@ -224,30 +232,56 @@ export function EmailView({
     };
   }, [addLog]);
 
-  // AI Draft always opens in reply-all so the suggested body lands in a
-  // compose with every thread participant prefilled. A new request replaces
-  // whatever the composer holds; `instructions` steers the reply.
-  const requestAiDraft = async (instructions?: string) => {
-    const target = threadEmails[threadEmails.length - 1];
-    if (!target) return;
-    // A reply already open keeps who it is addressed to.
-    if (!isReplyOpen || replyMode === 'forward') setReplyMode('reply-all');
-    dropForward();
-    setReplyBody('');
-    setDraftSources([]);
-    setIsReplyOpen(true);
+  /** Start an AI request for the reply (`start` returns its id) and wait for
+   *  its outcome, at most `AI_DRAFT_TIMEOUT_MS`. The reply keeps its text
+   *  until a draft arrives. */
+  const requestReplyAi = async (what: string, start: () => Promise<string>) => {
+    setDraftError(null);
     setIsGeneratingDraft(true);
-    addLog('info', 'ai', instructions ? 'Requesting AI draft with instructions…' : 'Requesting AI draft…');
-    draftTrackerRef.current.begin();
+    addLog('info', 'ai', `Requesting ${what}…`);
+    const token = draftTrackerRef.current.begin();
+    setTimeout(() => {
+      const expired = draftTrackerRef.current.expire(token);
+      if (expired) applyDraftOutcomeRef.current(expired);
+    }, AI_DRAFT_TIMEOUT_MS);
     try {
-      const requestId = await api.generateDraft(target.accountId, target.id, instructions || null);
+      const requestId = await start();
       const early = draftTrackerRef.current.resolve(requestId);
       if (early) applyDraftOutcomeRef.current(early);
     } catch (err) {
       setIsGeneratingDraft(false);
       draftTrackerRef.current.cancel();
-      addLog('error', 'ai', `Failed to start AI draft: ${err}`);
+      setDraftError(t('compose:aiDraft.failed', { error: errorText(err) }));
+      addLog('error', 'ai', `Failed to start ${what}: ${errorText(err)}`);
     }
+  };
+
+  // AI Draft always opens in reply-all so the suggested body lands in a
+  // compose with every thread participant prefilled. The draft replaces what
+  // the composer holds when it arrives; `instructions` steers the reply.
+  const requestAiDraft = async (instructions?: string) => {
+    const target = threadEmails[threadEmails.length - 1];
+    if (!target) return;
+    // A reply already open keeps who it is addressed to, and its text until
+    // the draft arrives. A forward's body is someone else's message: the
+    // reply it turns into starts empty.
+    if (!isReplyOpen || replyMode === 'forward') {
+      setReplyMode('reply-all');
+      setReplyBody('');
+    }
+    dropForward();
+    setIsReplyOpen(true);
+    await requestReplyAi(instructions ? 'AI draft with instructions' : 'AI draft', () =>
+      api.generateDraft(target.accountId, target.id, instructions || null),
+    );
+  };
+
+  // Polish the reply's own text (`draft`, signature left out) as the
+  // instructions say; the result replaces it.
+  const requestAiPolish = async (instructions: string, draft: string) => {
+    const target = threadEmails[threadEmails.length - 1];
+    if (!target || !draft.trim()) return;
+    await requestReplyAi('AI polish', () => api.polishDraft(target.accountId, 'reply', draft, instructions || null));
   };
 
   const handleOpenAttachment = useCallback(
@@ -374,6 +408,7 @@ export function EmailView({
       setReplyBody('');
       setDraftSources([]);
       setIsGeneratingDraft(false);
+      setDraftError(null);
       draftTrackerRef.current.cancel();
       return;
     }
@@ -385,6 +420,7 @@ export function EmailView({
     setThreadExpanded(false);
     setDraftSources([]);
     setIsGeneratingDraft(false);
+    setDraftError(null);
     draftTrackerRef.current.cancel();
     setThreadSearchOpen(false);
     setThreadSearchQuery('');
@@ -414,6 +450,7 @@ export function EmailView({
     setIsReplyOpen(true);
     setDraftSources([]);
     setIsGeneratingDraft(false);
+    setDraftError(null);
     draftTrackerRef.current.cancel();
     dropForward();
     consumePendingChatDraft();
@@ -849,7 +886,11 @@ export function EmailView({
               attachmentsLoading={forwardFilesLoading}
               isLoadingDraft={isGeneratingDraft}
               draftSources={draftSources}
+              draftError={draftError}
               onGenerateDraft={aiDraftsEnabled ? (instructions) => void requestAiDraft(instructions) : undefined}
+              onPolishDraft={
+                aiDraftsEnabled ? (instructions, draft) => void requestAiPolish(instructions, draft) : undefined
+              }
               onCancel={() => {
                 dropForward();
                 setIsReplyOpen(false);
@@ -857,6 +898,7 @@ export function EmailView({
                 setReplyBody('');
                 setDraftSources([]);
                 setIsGeneratingDraft(false);
+                setDraftError(null);
                 draftTrackerRef.current.cancel();
               }}
               onSend={async ({

@@ -267,6 +267,16 @@ Los borradores aterrizan en el editor para que los revises antes de enviar nada.
 Un borrador lee el hilo hasta el mensaje al que respondes, nunca las respuestas posteriores.
 Antes de que escriba puedes decirle a la IA qué responder, y **Regenerar** lo vuelve a escribir.
 
+<!-- claim:ai-ai-drafts-3 -->
+Encima del texto de un correo nuevo, una respuesta o una respuesta a todos, la casilla
+**Instrucciones para la IA** le dice a la IA lo que quieres: lo que escribes ahí nunca se envía
+ni se guarda con el borrador. **Generar con IA** escribe el correo a partir de ellas; en un
+correo nuevo, el texto que ya hayas escrito le sirve de contexto. **Pulir** edita tu texto como
+dicen las instrucciones y mantiene sus datos y su sentido. Mientras la IA trabaja, el texto y
+**Enviar** quedan bloqueados; si falla o tarda más de dos minutos, tu texto queda como estaba.
+Unas instrucciones o un texto demasiado largos para la IA se rechazan indicando cuánto
+acortarlos, nunca se recortan.
+
 ## Clasificación {#classification}
 
 <!-- claim:ai-classification-1 -->

@@ -76,7 +76,7 @@
     "generate": "Generar con IA",
     "generating": "Generando…",
     "generatingLong": "Generando borrador… buscando hilos similares",
-    "newTitle": "Redacta este correo con IA a partir de los destinatarios, el asunto y las notas que hayas escrito",
+    "newTitle": "Redacta este correo con IA a partir de los destinatarios, el asunto, tus instrucciones y lo que ya hayas escrito. Necesita un destinatario y un asunto.",
     "rewrite": "Reescribir",
     "shorten": "Más corto",
     "expand": "Más largo",
@@ -84,8 +84,14 @@
     "toneFormal": "Formal",
     "toneCasual": "Informal",
     "toneFriendly": "Amigable",
-    "instructionPlaceholder": "Dile a la IA qué responder (opcional), p. ej. acepta pero propón el jueves",
-    "regenerate": "Regenerar"
+    "instructionPlaceholder": "Instrucciones para la IA, nunca se envían (opcional), p. ej. acepta pero propón el jueves",
+    "regenerate": "Regenerar",
+    "polish": "Pulir",
+    "polishing": "Puliendo…",
+    "polishTitle": "Edita tu borrador como dicen las instrucciones, manteniendo sus datos y su sentido",
+    "polishNeedsDraft": "Escribe algo primero y luego púlelo",
+    "failed": "La IA no pudo terminar: {{error}}. Tu texto no ha cambiado.",
+    "timedOut": "La IA ha tardado demasiado en responder. Tu texto no ha cambiado; vuelve a intentarlo."
   },
   "feedback": {
     "general": {
