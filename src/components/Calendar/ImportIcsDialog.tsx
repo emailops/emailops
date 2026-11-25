@@ -126,7 +126,7 @@ export function ImportIcsDialog({ choices, initialAccountId, onClose, onImported
           : `${dateTime(item.startTime)} – ${dateTime(item.endTime)}`;
     if (!item.recurrence) return when;
     const rule = describeRecurrence(item.recurrence, new Date(item.startTime * 1000), i18n.language || 'en');
-    return `${when} · ${rule.labelKey ? t(`calendar:create.recurrence.${rule.labelKey}`, rule.params) : rule.raw}`;
+    return `${when} · ${rule.labelKey ? t(`calendar:create.recurrence.${rule.labelKey}`, rule.params ?? {}) : rule.raw}`;
   };
 
   const footer = summary ? (

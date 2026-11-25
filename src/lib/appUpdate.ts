@@ -18,7 +18,7 @@ export interface UpdateAvailablePayload {
 type UpdateKey = 'notifications:updates.available' | 'notifications:updates.download';
 
 /** Minimal shape of the i18next translator this module needs. */
-type Translate = (key: UpdateKey, options?: Record<string, string>) => string;
+type Translate = (key: UpdateKey, options?: { version: string }) => string;
 
 /** A closed update toast stays closed this long, then comes back while the
  *  release is still newer than the running build. */

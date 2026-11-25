@@ -76,7 +76,7 @@ export function formatFeedbackTech(tech: FeedbackTech): FeedbackTechInfo {
 type FeedbackKey = `compose:feedback.${FeedbackType}.subject` | `compose:feedback.${FeedbackType}.body`;
 
 /** Minimal shape of the i18next translator this module needs. */
-type Translate = (key: FeedbackKey, options?: Record<string, string>) => string;
+type Translate = (key: FeedbackKey, options?: FeedbackTechInfo) => string;
 
 /**
  * Build the recipient / subject / body for a feedback email in the user's

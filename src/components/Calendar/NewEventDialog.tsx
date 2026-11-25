@@ -396,7 +396,7 @@ export function NewEventDialog({
                 onChange={setRecurrence}
                 options={recurrenceOpts.map((o) => ({
                   value: o.value,
-                  label: t(`calendar:create.recurrence.${o.labelKey}`, o.params),
+                  label: t(`calendar:create.recurrence.${o.labelKey}`, o.params ?? {}),
                 }))}
                 ariaLabel={t('calendar:create.recurrence.label')}
                 fullWidth

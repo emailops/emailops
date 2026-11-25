@@ -79,8 +79,7 @@ describe('formatFeedbackTech', () => {
 describe('buildFeedbackEmail', () => {
   // Fake translator: echoes the key, appending interpolation options when present,
   // so we can assert both the selected key and the values fed into it.
-  const fakeT = (key: string, options?: Record<string, string>) =>
-    options ? `${key}::${JSON.stringify(options)}` : key;
+  const fakeT = (key: string, options?: object) => (options ? `${key}::${JSON.stringify(options)}` : key);
 
   it('always addresses the feedback mailbox', () => {
     for (const type of FEEDBACK_TYPES) {

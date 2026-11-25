@@ -178,7 +178,7 @@ function nowSecs(): number {
 const UPDATE_TOAST_HOST: UpdateToastHost = {
   addToast: (toast) => useToastStore.getState().addToast(toast),
   isToastOpen: (id) => useToastStore.getState().toasts.some((t) => t.id === id),
-  t: (key, opts) => i18n.t(key, opts),
+  t: (key, opts) => i18n.t(key, opts ?? {}),
   openUrl: (url) => {
     void openExternal(url).catch((err) => {
       useLogStore.getState().addLog('error', 'system', `Failed to open release page: ${errorText(err)}`);
@@ -802,7 +802,7 @@ function AppInner() {
         const [diag, ai] = await Promise.all([api.getAppDiagnostics(), api.getAiConfig()]);
         // Use the i18next singleton so the fully-qualified `compose:` keys type-
         // check without widening this component's `t` namespace binding.
-        const { to, subject, body } = buildFeedbackEmail(type, (key, options) => i18n.t(key, options), {
+        const { to, subject, body } = buildFeedbackEmail(type, (key, options) => i18n.t(key, options ?? {}), {
           appVersion: diag.appVersion,
           osPlatform: diag.osPlatform,
           osVersion: diag.osVersion,
