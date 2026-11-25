@@ -92,6 +92,7 @@ import {
   useAccountStore,
 } from '@/stores/accountStore';
 import { useAiStore } from '@/stores/aiStore';
+import { isAllChecked } from '@/stores/attachmentStore';
 import { useAutoAdvanceStore } from '@/stores/autoAdvanceStore';
 import { calendarEnabledAccounts, useCalendarIntegrationStore } from '@/stores/calendarIntegrationStore';
 import { useChatStore } from '@/stores/chatStore';
@@ -585,13 +586,16 @@ function AppInner() {
     selectedTag,
     availableTags,
     checkedIds,
+    listError: attachmentListError,
+    isSelectingAll: isSelectingAllAttachments,
+    retry: retryAttachments,
     createRule: createAttachmentRule,
     updateRule: updateAttachmentRule,
     deleteRule: deleteAttachmentRule,
     loadMore: loadMoreAttachments,
     selectAttachment,
     toggleChecked,
-    toggleCheckAll,
+    toggleSelectAll,
     clearChecked,
     setSelectedTag,
     suggestions: attachmentRuleSuggestions,
@@ -1978,9 +1982,10 @@ function AppInner() {
                 selectedTag={selectedTag}
                 availableTags={availableTags}
                 checkedCount={checkedIds.size}
-                allChecked={attachments.length > 0 && checkedIds.size === attachments.length}
+                allChecked={isAllChecked(checkedIds, attachmentTotalCount)}
+                isSelectingAll={isSelectingAllAttachments}
                 onSetSelectedTag={setSelectedTag}
-                onToggleCheckAll={toggleCheckAll}
+                onToggleCheckAll={toggleSelectAll}
                 onClearChecked={clearChecked}
                 checkedIds={checkedIds}
                 onOpenRules={() => setIsRuleModalOpen(true)}
@@ -1995,6 +2000,8 @@ function AppInner() {
                   isLoading={isLoadingAttachments}
                   isLoadingMore={isLoadingMoreAttachments}
                   hasMore={hasMoreAttachments}
+                  listError={attachmentListError}
+                  onRetry={retryAttachments}
                   onSelectAttachment={selectAttachment}
                   onToggleChecked={toggleChecked}
                   onLoadMore={loadMoreAttachments}

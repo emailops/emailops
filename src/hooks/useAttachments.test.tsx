@@ -23,6 +23,7 @@ vi.mock('@/lib/api', () => ({
   getAttachmentTags: vi.fn(async () => []),
   getAttachments: vi.fn(async () => []),
   countAttachments: vi.fn(async () => 0),
+  listAttachmentIds: vi.fn(async () => []),
   countAttachmentsForRule: vi.fn(async () => 0),
   listAttachmentRuleSuggestions: vi.fn(async () => []),
   refreshAttachmentRuleSuggestions: vi.fn(async () => []),
@@ -69,7 +70,14 @@ async function flush() {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  useAttachmentStore.setState({ suggestions: [], suggestionsAccountId: null, dismissedSuggestions: [], error: null });
+  useAttachmentStore.getState().reset();
+  useAttachmentStore.setState({
+    suggestions: [],
+    suggestionsAccountId: null,
+    dismissedSuggestions: [],
+    error: null,
+    selectedTag: null,
+  });
   useAccountStore.setState({
     accounts: [{ id: 'acc-1', email: 'me@example.com', enabled: true } as unknown as Account],
     activeAccountId: 'acc-1',
@@ -182,5 +190,46 @@ describe('useAttachments', () => {
     expect(useAttachmentStore.getState().selectedTag).toBeNull();
     const calls = vi.mocked(api.getAttachments).mock.calls;
     expect(calls[calls.length - 1]?.slice(0, 2)).toEqual(['acc-1', null]);
+  });
+
+  it('a failed tag load goes to the output panel and the list still loads', async () => {
+    vi.mocked(api.getAttachmentTags).mockRejectedValueOnce(new Error('db locked'));
+    vi.mocked(api.getAttachments).mockClear();
+
+    await act(async () => events.handlers['attachments-updated']?.({ payload: 'acc-1' }));
+    await flush();
+
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('db locked'));
+    expect(api.getAttachments).toHaveBeenCalled();
+  });
+
+  it('a failed list load goes to the output panel', async () => {
+    vi.mocked(api.getAttachments).mockRejectedValueOnce(new Error('disk I/O error'));
+
+    await act(async () => events.handlers['attachments-updated']?.({ payload: 'acc-1' }));
+    await flush();
+
+    expect(useAttachmentStore.getState().listError).toContain('disk I/O error');
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('disk I/O error'));
+  });
+
+  it('a failed load of more rows goes to the output panel', async () => {
+    useAttachmentStore.setState({ hasMore: true, totalCount: 120 });
+    vi.mocked(api.getAttachments).mockRejectedValueOnce(new Error('offline'));
+
+    await act(async () => hook.loadMore());
+    await flush();
+
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('offline'));
+  });
+
+  it('retry reloads the list and the tags', async () => {
+    vi.mocked(api.getAttachments).mockClear();
+    vi.mocked(api.getAttachmentTags).mockClear();
+
+    await act(async () => hook.retry());
+
+    expect(api.getAttachments).toHaveBeenCalledWith('acc-1', null, 50, 0);
+    expect(api.getAttachmentTags).toHaveBeenCalledWith('acc-1');
   });
 });

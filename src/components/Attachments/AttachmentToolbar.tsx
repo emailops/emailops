@@ -50,6 +50,8 @@ interface AttachmentToolbarProps {
   availableTags: string[];
   checkedCount: number;
   allChecked: boolean;
+  /** Every id of the filter is loading for "select all". */
+  isSelectingAll: boolean;
   onSetSelectedTag: (tag: string | null) => void;
   onToggleCheckAll: () => void;
   onClearChecked: () => void;
@@ -66,6 +68,7 @@ export function AttachmentToolbar({
   availableTags,
   checkedCount,
   allChecked,
+  isSelectingAll,
   onSetSelectedTag,
   onToggleCheckAll,
   onClearChecked,
@@ -128,6 +131,7 @@ export function AttachmentToolbar({
               <input
                 type="checkbox"
                 checked={allChecked}
+                disabled={isSelectingAll}
                 onChange={onToggleCheckAll}
                 className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               />

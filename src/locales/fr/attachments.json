@@ -2,7 +2,9 @@
   "list": {
     "empty": "Aucune pièce jointe collectée pour le moment",
     "createRulesHint": "Créez des règles pour collecter automatiquement les pièces jointes des e-mails correspondants",
-    "createRule": "Créer une règle"
+    "createRule": "Créer une règle",
+    "loadError": "Impossible de charger les pièces jointes.",
+    "retry": "Réessayer"
   },
   "viewer": {
     "selectAttachment": "Sélectionnez une pièce jointe à prévisualiser",

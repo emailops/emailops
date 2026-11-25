@@ -2,7 +2,9 @@
   "list": {
     "empty": "Noch keine Anhänge gesammelt",
     "createRulesHint": "Erstelle Regeln, um Anhänge aus passenden E-Mails automatisch zu sammeln",
-    "createRule": "Regel erstellen"
+    "createRule": "Regel erstellen",
+    "loadError": "Die Anhänge konnten nicht geladen werden.",
+    "retry": "Erneut versuchen"
   },
   "viewer": {
     "selectAttachment": "Wähle einen Anhang zur Vorschau aus",

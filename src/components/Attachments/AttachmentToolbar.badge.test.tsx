@@ -35,6 +35,7 @@ function render(suggestionCount: number) {
         availableTags={[]}
         checkedCount={0}
         allChecked={false}
+        isSelectingAll={false}
         onSetSelectedTag={vi.fn()}
         onToggleCheckAll={vi.fn()}
         onClearChecked={vi.fn()}

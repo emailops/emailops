@@ -34,16 +34,17 @@ let container: HTMLDivElement;
 let root: Root;
 const onClearChecked = vi.fn();
 
-function render(checked: string[]) {
+function render(checked: string[], isSelectingAll = false) {
   act(() => {
     root.render(
       <AttachmentToolbar
         accountId="acc-1"
-        totalCount={checked.length}
+        totalCount={Math.max(checked.length, 1)}
         selectedTag={null}
         availableTags={[]}
         checkedCount={checked.length}
         allChecked={false}
+        isSelectingAll={isSelectingAll}
         onSetSelectedTag={vi.fn()}
         onToggleCheckAll={vi.fn()}
         onClearChecked={onClearChecked}
@@ -138,5 +139,11 @@ describe('AttachmentToolbar bulk download', () => {
     await download({ dest: DEST, copied: 0, skipped: [{ attachmentId: 'att-0', reason: 'copy_failed' }] }, ids(1));
 
     expect(onClearChecked).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables "select all" while every id of the filter loads', () => {
+    render([], true);
+
+    expect(container.querySelector<HTMLInputElement>('input[type="checkbox"]')?.disabled).toBe(true);
   });
 });

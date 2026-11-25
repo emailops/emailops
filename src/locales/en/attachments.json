@@ -2,7 +2,9 @@
   "list": {
     "empty": "No attachments collected yet",
     "createRulesHint": "Create rules to automatically collect attachments from matching emails",
-    "createRule": "Create a Rule"
+    "createRule": "Create a Rule",
+    "loadError": "Could not load the attachments.",
+    "retry": "Retry"
   },
   "viewer": {
     "selectAttachment": "Select an attachment to preview",

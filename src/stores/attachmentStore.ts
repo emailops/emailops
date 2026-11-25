@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as api from '@/lib/api';
+import { sameTag } from '@/lib/attachmentTags';
 import { errorText } from '@/lib/errors';
 import type { Attachment, AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 
@@ -52,12 +53,20 @@ interface AttachmentStore {
   isLoadingMore: boolean;
   hasMore: boolean;
   totalCount: number;
+  /** What the list shows: the account sent to the backend (null = all enabled) and the tag. */
+  listQuery: { accountId: string | null; tag: string | null } | null;
+  /** Scope key + tag of the list shown; a fetch with the same key is a refresh. */
+  listKey: string | null;
+  /** Loading the list (or every id for "select all") failed; shown in the list with Retry. */
+  listError: string | null;
+  /** "Select all" is fetching every id of the filter. */
+  isSelectingAll: boolean;
 
   // Filters
   selectedTag: string | null;
   availableTags: string[];
 
-  // Error
+  // Rules and suggestions error
   error: string | null;
 
   // Race condition prevention
@@ -101,22 +110,32 @@ interface AttachmentStore {
   failRuleApply: (ruleId: string, runId: string) => void;
   dropRuleApply: (ruleId: string, runId: string) => void;
 
-  // Attachment actions
-  fetchAttachments: (accountId: string, tag?: string | null) => Promise<void>;
-  loadMoreAttachments: (accountId: string) => Promise<void>;
+  // Attachment actions. `accountId` null = every enabled account; `scopeKey`
+  // names the scope (which accounts), so enabling one starts a new list.
+  fetchAttachments: (accountId: string | null, tag: string | null, scopeKey: string) => Promise<void>;
+  /** Rejects on failure; the rows already loaded stay. */
+  loadMoreAttachments: () => Promise<void>;
   selectAttachment: (attachment: Attachment | null) => void;
   toggleChecked: (id: string) => void;
-  toggleCheckAll: () => void;
+  /** Clears the selection when everything is checked, else checks every id of the filter. */
+  toggleSelectAll: () => Promise<void>;
   clearChecked: () => void;
 
   // Tag actions
   setSelectedTag: (tag: string | null) => void;
-  fetchTags: (accountId: string) => Promise<void>;
+  /** Rejects on failure. */
+  fetchTags: (accountId: string | null) => Promise<void>;
 
   // Utility
   clearError: () => void;
   reset: () => void;
 }
+
+/** Every attachment of the filter is checked. Counts only, so an id that left the list still counts. */
+export const isAllChecked = (checkedIds: Set<string>, totalCount: number): boolean =>
+  totalCount > 0 && checkedIds.size >= totalCount;
+
+const listKeyOf = (scopeKey: string, tag: string | null) => `${scopeKey}|${tag ?? ''}`;
 
 /** Pending suggestion count, shown as a badge next to the rules entry points. */
 export const selectSuggestionCount = (state: Pick<AttachmentStore, 'suggestions'>): number => state.suggestions.length;
@@ -208,6 +227,10 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   isLoadingMore: false,
   hasMore: false,
   totalCount: 0,
+  listQuery: null,
+  listKey: null,
+  listError: null,
+  isSelectingAll: false,
   selectedTag: null,
   availableTags: [],
   error: null,
@@ -339,13 +362,32 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   dropRuleApply: (ruleId, runId) =>
     set((state) => ({ ruleApplies: forRun(state.ruleApplies, ruleId, runId, () => null) })),
 
-  fetchAttachments: async (accountId, tag) => {
+  fetchAttachments: async (accountId, tag, scopeKey) => {
+    const key = listKeyOf(scopeKey, tag);
     const fetchId = get().currentFetchId + 1;
-    set({ currentFetchId: fetchId, isLoading: true, attachments: [], selectedAttachment: null, checkedIds: new Set() });
+    const isRefresh = get().listKey === key;
+    // A background refresh keeps the rows, the selection and the viewer until
+    // the new rows arrive, and reloads every row already scrolled in.
+    const limit = isRefresh ? Math.max(PAGE_SIZE, get().attachments.length) : PAGE_SIZE;
+    if (isRefresh) {
+      set({ currentFetchId: fetchId });
+    } else {
+      set({
+        currentFetchId: fetchId,
+        listKey: key,
+        listQuery: { accountId, tag },
+        isLoading: true,
+        attachments: [],
+        selectedAttachment: null,
+        checkedIds: new Set(),
+        totalCount: 0,
+        hasMore: false,
+      });
+    }
 
     try {
       const [attachments, totalCount] = await Promise.all([
-        api.getAttachments(accountId, tag, PAGE_SIZE, 0),
+        api.getAttachments(accountId, tag, limit, 0),
         api.countAttachments(accountId, tag),
       ]);
 
@@ -353,31 +395,35 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
         set({
           attachments,
           totalCount,
-          hasMore: attachments.length < totalCount,
+          hasMore: attachments.length === limit && attachments.length < totalCount,
           isLoading: false,
+          listError: null,
         });
       }
     } catch (error) {
       if (get().currentFetchId === fetchId) {
-        set({ error: errorText(error), isLoading: false });
+        set({ listError: errorText(error), isLoading: false });
       }
     }
   },
 
-  loadMoreAttachments: async (accountId) => {
-    const { attachments, hasMore, isLoadingMore, selectedTag } = get();
-    if (!hasMore || isLoadingMore) return;
+  loadMoreAttachments: async () => {
+    const { attachments, hasMore, isLoadingMore, listQuery, currentFetchId } = get();
+    if (!hasMore || isLoadingMore || !listQuery) return;
 
     set({ isLoadingMore: true });
     try {
-      const more = await api.getAttachments(accountId, selectedTag, PAGE_SIZE, attachments.length);
-      set((state) => ({
-        attachments: [...state.attachments, ...more],
-        hasMore: state.attachments.length + more.length < state.totalCount,
-        isLoadingMore: false,
-      }));
-    } catch (error) {
-      set({ error: errorText(error), isLoadingMore: false });
+      const more = await api.getAttachments(listQuery.accountId, listQuery.tag, PAGE_SIZE, attachments.length);
+      if (get().currentFetchId !== currentFetchId) return;
+      set((state) => {
+        // A row that arrived since the first page shifts the rest down one:
+        // its neighbour comes back on this page.
+        const loaded = new Set(state.attachments.map((a) => a.id));
+        const next = [...state.attachments, ...more.filter((a) => !loaded.has(a.id))];
+        return { attachments: next, hasMore: more.length === PAGE_SIZE && next.length < state.totalCount };
+      });
+    } finally {
+      set({ isLoadingMore: false });
     }
   },
 
@@ -391,31 +437,40 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       return { checkedIds: next };
     }),
 
-  toggleCheckAll: () =>
-    set((state) => {
-      if (state.checkedIds.size === state.attachments.length) {
-        return { checkedIds: new Set() };
-      }
-      return { checkedIds: new Set(state.attachments.map((a) => a.id)) };
-    }),
+  toggleSelectAll: async () => {
+    const { checkedIds, totalCount, listKey, listQuery, isSelectingAll } = get();
+    if (isAllChecked(checkedIds, totalCount)) {
+      set({ checkedIds: new Set() });
+      return;
+    }
+    if (!listQuery || isSelectingAll) return;
+
+    set({ isSelectingAll: true });
+    try {
+      const ids = await api.listAttachmentIds(listQuery.accountId, listQuery.tag);
+      // A refresh of the same list may land meanwhile; only a new list drops the ids.
+      if (get().listKey === listKey) set({ checkedIds: new Set(ids) });
+    } catch (error) {
+      if (get().listKey === listKey) set({ listError: errorText(error) });
+    } finally {
+      set({ isSelectingAll: false });
+    }
+  },
 
   clearChecked: () => set({ checkedIds: new Set() }),
 
   setSelectedTag: (tag) => set({ selectedTag: tag }),
 
   fetchTags: async (accountId) => {
-    try {
-      const tags = await api.getAttachmentTags(accountId);
-      // A tag picked on another account, or whose last attachment went with a
-      // deleted rule, would keep filtering the list to nothing with no chip
-      // lit to show why: fall back to "All".
-      set((state) => ({
-        availableTags: tags,
-        selectedTag: state.selectedTag !== null && tags.includes(state.selectedTag) ? state.selectedTag : null,
-      }));
-    } catch (error) {
-      console.error('Failed to fetch tags:', error);
-    }
+    const tags = await api.getAttachmentTags(accountId);
+    // A tag picked on another account, or whose last attachment went with a
+    // deleted rule, would keep filtering the list to nothing with no chip lit
+    // to show why: fall back to "All". The same tag spelled differently in
+    // the new scope stays selected, under the spelling its chip shows.
+    set((state) => ({
+      availableTags: tags,
+      selectedTag: state.selectedTag === null ? null : (tags.find((t) => sameTag(t, state.selectedTag ?? '')) ?? null),
+    }));
   },
 
   clearError: () => set({ error: null }),
@@ -429,6 +484,10 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
       isLoadingMore: false,
       hasMore: false,
       totalCount: 0,
+      listQuery: null,
+      listKey: null,
+      listError: null,
+      isSelectingAll: false,
       error: null,
     }),
 }));

@@ -2,7 +2,9 @@
   "list": {
     "empty": "Aún no se han recopilado adjuntos",
     "createRulesHint": "Crea reglas para recopilar automáticamente adjuntos de los correos coincidentes",
-    "createRule": "Crear una regla"
+    "createRule": "Crear una regla",
+    "loadError": "No se pudieron cargar los adjuntos.",
+    "retry": "Reintentar"
   },
   "viewer": {
     "selectAttachment": "Selecciona un adjunto para previsualizar",
