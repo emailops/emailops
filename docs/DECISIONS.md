@@ -5016,3 +5016,24 @@ the GitHub API* — no release step to forget, but the hop would exist only to b
 *Generating the file in the site build from the newest tag* — a tag exists hours before
 its release is published, so any site build in that window would announce a release with
 no installers.
+
+## 2026-11-25 — An updated invitation moves the copy EmailOps imported; look-alike events are not merged
+
+**Decision:** "Yes"/"Maybe" on an invitation whose event is a copy EmailOps imported first rewrites
+that copy (times, title, place, description, SEQUENCE) without notifying anyone, then answers as
+before, but only when the invitation's SEQUENCE is higher than the copy's. Google keeps SEQUENCE on
+the event (PATCH with `sendUpdates=none`); Outlook keeps it in an EmailOps extended property next
+to the UID one, and copies imported before it count as 0. Only single events move: a series, an
+answer to one occurrence (`RECURRENCE-ID`) and an invitation the import planner refuses leave the
+copy where it is. A failed move sends no reply. Two events with different UIDs stay two events,
+however alike they look.
+**Context:** A reported duplicate was two separate bookings from a scheduling tool (different UIDs,
+no CANCEL for the first), so both were real. The actual gap was a same-UID update leaving the copy
+at the old time. Ordering by SEQUENCE (RFC 5546 §2.1.4) keeps an older email from moving the copy
+back.
+**Rejected:**
+- *Hiding events with the same title and organizer on the same day*: it hides genuine double
+  bookings.
+- *Re-importing the updated event*: Google does not document what `events.import` does with an
+  existing iCalUID.
+- *Moving series*: their exceptions and exclusions would need rewriting too; left for a follow-up.
