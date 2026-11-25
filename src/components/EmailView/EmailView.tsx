@@ -9,6 +9,7 @@ import { useShortcutHint } from '@/hooks/useShortcutHint';
 import type { DraftFailedEvent, DraftGeneratedEvent, DraftSource, EmailAttachment, OutgoingMessage } from '@/lib/api';
 import * as api from '@/lib/api';
 import { findThreadReplyDraft } from '@/lib/composeDraft';
+import { planOwnFirst } from '@/lib/conversationView';
 import { AI_DRAFT_TIMEOUT_MS, createDraftRequestTracker, type DraftOutcome } from '@/lib/draftRequest';
 import { errorText } from '@/lib/errors';
 import { formatShortcut } from '@/lib/platform';
@@ -16,6 +17,7 @@ import type { PaneCommand } from '@/lib/shortcutPlan';
 import { getThreadViewItems } from '@/lib/threadCollapse';
 import { buildOccurrenceSlots, getThreadSearchMatches, stepMatchIndex } from '@/lib/threadSearch';
 import { beginLeave, finishLeave } from '@/stores/autoAdvanceStore';
+import { useConversationViewStore } from '@/stores/conversationViewStore';
 import { isSnoozed, isThreadStarred, isThreadUnread, threadRefOf, useEmailStore } from '@/stores/emailStore';
 import { useLogStore } from '@/stores/logStore';
 import { useOutboxStore } from '@/stores/outboxStore';
@@ -307,6 +309,20 @@ export function EmailView({
   isReplyOpenRef.current = isReplyOpen;
   const isThread = threadEmails.length > 1;
 
+  // Settings → Appearance → Conversation view. The own-first layout only
+  // reorders what is shown: replies and forwards keep using `threadEmails`.
+  const conversationView = useConversationViewStore((s) => s.view);
+  const ownFirst = useMemo(() => {
+    if (conversationView !== 'own-first' || !latestEmailForEffect) return null;
+    const { accountId } = latestEmailForEffect;
+    return planOwnFirst(threadEmails, accountId, accounts.find((a) => a.id === accountId)?.email);
+  }, [conversationView, threadEmails, latestEmailForEffect, accounts]);
+  // The messages in the order they are shown; search walks them in this order.
+  const shownEmails = useMemo(
+    () => (ownFirst ? [...(ownFirst.own ? [ownFirst.own] : []), ...ownFirst.rest] : threadEmails),
+    [ownFirst, threadEmails],
+  );
+
   // Where a reply to each message goes when it names a Reply-To. Read once
   // per thread; until it arrives (or if it fails) replies go to the senders.
   const [threadReplyTo, setThreadReplyTo] = useState<Record<string, string[]>>({});
@@ -328,8 +344,8 @@ export function EmailView({
 
   const threadSearchActive = threadSearchOpen && threadSearchQuery.trim().length > 0;
   const threadMatches = useMemo(
-    () => (threadSearchActive ? getThreadSearchMatches(threadEmails, threadSearchQuery) : []),
-    [threadSearchActive, threadSearchQuery, threadEmails],
+    () => (threadSearchActive ? getThreadSearchMatches(shownEmails, threadSearchQuery) : []),
+    [threadSearchActive, threadSearchQuery, shownEmails],
   );
   // Occurrence counts per email, reported asynchronously by each rendered
   // body frame after it applies the highlight. Slots flatten those counts
@@ -379,20 +395,20 @@ export function EmailView({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openThreadSearch]);
 
-  // When a search is active, find the oldest email in the thread whose subject,
-  // snippet, or (already-loaded) body contains the query. We highlight that email
-  // and scroll its first in-body match into view.
+  // When a search is active, find the first shown email (the oldest, in the
+  // per-message view) whose subject, snippet, or (already-loaded) body contains
+  // the query. We highlight that email and scroll its first in-body match into view.
   const searchHighlightEmailId = useMemo(() => {
     const q = searchQuery?.trim().toLowerCase();
     if (!q) return null;
-    const match = threadEmails.find(
+    const match = shownEmails.find(
       (e) =>
         e.subject.toLowerCase().includes(q) ||
         e.snippet.toLowerCase().includes(q) ||
         (e.body ?? '').toLowerCase().includes(q),
     );
     return match?.id ?? null;
-  }, [threadEmails, searchQuery]);
+  }, [shownEmails, searchQuery]);
 
   // Reset compose state when the user moves to a different thread. Keyed on
   // the thread, NOT its latest message: a sync that brings a new message into
@@ -670,6 +686,49 @@ export function EmailView({
       }
       return next;
     });
+  };
+
+  /** One message of the conversation. `pinnedOpen`: open, its header not a
+   *  collapse toggle — the latest message, or every message in the own-first
+   *  view. */
+  const renderThreadEmail = (email: Email, pinnedOpen: boolean) => {
+    const isFocused = focusEmailId === email.id;
+    // In-thread search takes over highlighting from the global search
+    // while it is active; the email holding the active occurrence
+    // drives scroll-into-view.
+    const isSearchMatch = threadSearchActive ? activeSlot?.emailId === email.id : searchHighlightEmailId === email.id;
+    // Which occurrence inside THIS email is active. For the global
+    // search there is no occurrence navigation — the first occurrence
+    // in the matching email is the one scrolled to.
+    const searchActiveMatchIndex = threadSearchActive
+      ? activeSlot?.emailId === email.id
+        ? activeSlot.indexInEmail
+        : null
+      : isSearchMatch
+        ? 0
+        : null;
+    const isExpanded =
+      pinnedOpen ||
+      isFocused ||
+      isSearchMatch ||
+      expandedEmails.has(email.id) ||
+      (threadSearchActive && threadMatches.includes(email.id));
+
+    return (
+      <ThreadEmailItem
+        key={email.id}
+        email={email}
+        isExpanded={isExpanded}
+        isLast={pinnedOpen}
+        isFocused={isFocused}
+        isSearchMatch={isSearchMatch}
+        highlightQuery={threadSearchActive ? threadSearchQuery : searchQuery}
+        searchActiveMatchIndex={searchActiveMatchIndex}
+        onSearchMatches={threadSearchActive ? handleSearchMatches : undefined}
+        onToggle={() => toggleEmailExpanded(email.id)}
+        onOpenAttachment={handleOpenAttachment}
+      />
+    );
   };
 
   return (
@@ -1080,63 +1139,52 @@ export function EmailView({
             </button>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto">
-          {getThreadViewItems(threadEmails, threadExpanded || threadSearchActive, focusEmailId).map((item) => {
-            if (item.type === 'collapsed') {
-              return (
-                <button
-                  key="collapsed"
-                  type="button"
-                  onClick={() => setThreadExpanded(true)}
-                  className="w-full px-6 py-3 text-sm text-primary-600 hover:bg-primary-50 border-b border-gray-100 transition-colors text-left"
-                >
-                  Show {item.count} more message{item.count !== 1 ? 's' : ''}
-                </button>
-              );
-            }
-
-            const { email, index } = item;
-            const isLast = index === threadEmails.length - 1;
-            const isFocused = focusEmailId === email.id;
-            // In-thread search takes over highlighting from the global search
-            // while it is active; the email holding the active occurrence
-            // drives scroll-into-view.
-            const isSearchMatch = threadSearchActive
-              ? activeSlot?.emailId === email.id
-              : searchHighlightEmailId === email.id;
-            // Which occurrence inside THIS email is active. For the global
-            // search there is no occurrence navigation — the first occurrence
-            // in the matching email is the one scrolled to.
-            const searchActiveMatchIndex = threadSearchActive
-              ? activeSlot?.emailId === email.id
-                ? activeSlot.indexInEmail
-                : null
-              : isSearchMatch
-                ? 0
-                : null;
-            const isExpanded =
-              isLast ||
-              isFocused ||
-              isSearchMatch ||
-              expandedEmails.has(email.id) ||
-              (threadSearchActive && threadMatches.includes(email.id));
-
-            return (
-              <ThreadEmailItem
-                key={email.id}
-                email={email}
-                isExpanded={isExpanded}
-                isLast={isLast}
-                isFocused={isFocused}
-                isSearchMatch={isSearchMatch}
-                highlightQuery={threadSearchActive ? threadSearchQuery : searchQuery}
-                searchActiveMatchIndex={searchActiveMatchIndex}
-                onSearchMatches={threadSearchActive ? handleSearchMatches : undefined}
-                onToggle={() => toggleEmailExpanded(email.id)}
-                onOpenAttachment={handleOpenAttachment}
-              />
-            );
-          })}
+        {/* Keyed on the conversation in the own-first view: another one starts
+            from the top, with its own message first. */}
+        <div
+          key={ownFirst ? threadKey : undefined}
+          data-testid="conversation-messages"
+          className="flex-1 overflow-y-auto"
+        >
+          {ownFirst ? (
+            <>
+              {ownFirst.own ? (
+                <>
+                  <p className="px-6 pt-3 pb-1 text-xs font-semibold text-primary-700">
+                    {t('inbox:emailView.ownFirstLatest')}
+                  </p>
+                  {renderThreadEmail(ownFirst.own, true)}
+                  {ownFirst.rest.length > 0 && (
+                    <p className="px-6 pt-4 pb-1 text-xs font-semibold text-gray-500">
+                      {t('inbox:emailView.ownFirstRest')}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="px-6 py-3 text-xs text-gray-500 border-b border-gray-100">
+                  {t('inbox:emailView.ownFirstNoOwn')}
+                </p>
+              )}
+              {/* Every message open, like the latest one in the per-message view. */}
+              {ownFirst.rest.map((email) => renderThreadEmail(email, true))}
+            </>
+          ) : (
+            getThreadViewItems(threadEmails, threadExpanded || threadSearchActive, focusEmailId).map((item) => {
+              if (item.type === 'collapsed') {
+                return (
+                  <button
+                    key="collapsed"
+                    type="button"
+                    onClick={() => setThreadExpanded(true)}
+                    className="w-full px-6 py-3 text-sm text-primary-600 hover:bg-primary-50 border-b border-gray-100 transition-colors text-left"
+                  >
+                    Show {item.count} more message{item.count !== 1 ? 's' : ''}
+                  </button>
+                );
+              }
+              return renderThreadEmail(item.email, item.index === threadEmails.length - 1);
+            })
+          )}
         </div>
       </div>
     </div>

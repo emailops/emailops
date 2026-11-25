@@ -476,6 +476,17 @@ recipients and does not sort. The **Columns** button at the end of the header sh
 message, attachments included, as Gmail or the IMAP server reports it when the message is synced.
 Outlook reports none, and mail synced before the column existed has none either: both show a dash.
 
+<!-- claim:feat-interface-8 -->
+**Settings → Appearance → Conversation view** chooses how an open conversation is shown. **Open
+the latest message, expand the others one by one**, the default, opens the newest message and shows
+the earlier ones closed, to open with a click. **Your latest message first, every message open**
+puts the last message you sent from that account on top and the rest of the conversation below it,
+oldest first, with every message open and each one shown once; a conversation you have not written
+in says so and shows every message oldest first. Opening another conversation starts it from the
+top, unless it was opened on one message, from a link, which is brought into view as in the default
+view. The view only changes what is on screen: **Reply**, **Reply all** and **Forward** answer,
+quote and attach the same messages in both, and the choice is kept across restarts.
+
 ## Keyboard shortcuts {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

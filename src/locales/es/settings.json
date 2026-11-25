@@ -77,6 +77,10 @@
     "afterLeaveNext": "Abrir la conversación siguiente",
     "afterLeavePrevious": "Abrir la conversación anterior",
     "afterLeaveList": "Volver a la lista",
+    "conversationView": "Vista de conversación",
+    "conversationViewHelp": "Cómo se muestra una conversación abierta. Con tu último mensaje primero, todos los mensajes están abiertos: arriba el último que escribiste y debajo el resto de la conversación, del más antiguo al más reciente. Responder, Responder a todos y Reenviar funcionan igual en las dos.",
+    "conversationViewPerMessage": "Abrir el último mensaje y desplegar los demás uno a uno",
+    "conversationViewOwnFirst": "Tu último mensaje primero, todos los mensajes abiertos",
     "defaultSender": "Enviar mensajes nuevos desde",
     "defaultSenderHelp": "La cuenta con la que empieza un mensaje nuevo. Las respuestas, los reenvíos y los borradores mantienen su propia cuenta.",
     "defaultSenderView": "Cuenta de la vista seleccionada"

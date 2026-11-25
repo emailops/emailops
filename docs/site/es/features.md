@@ -500,6 +500,19 @@ adjuntos, tal como lo indica Gmail o el servidor IMAP al sincronizar el mensaje.
 indica, y el correo sincronizado antes de que existiera la columna tampoco lo tiene: ambos muestran
 un guion.
 
+<!-- claim:feat-interface-8 -->
+**Ajustes → Apariencia → Vista de conversación** elige cómo se muestra una conversación abierta.
+**Abrir el último mensaje y desplegar los demás uno a uno**, la predeterminada, abre el mensaje más
+reciente y muestra cerrados los anteriores, que se abren con un clic. **Tu último mensaje primero,
+todos los mensajes abiertos** pone arriba el último mensaje que enviaste desde esa cuenta y debajo el
+resto de la conversación, del más antiguo al más reciente, con todos los mensajes abiertos y cada uno
+una sola vez; una conversación en la que no has escrito lo indica y muestra todos los mensajes del más
+antiguo al más reciente. Al abrir otra conversación se empieza desde arriba,
+salvo si se abrió en un mensaje concreto desde un enlace, que se muestra como en la vista
+predeterminada. La vista solo cambia lo
+que se ve: **Responder**, **Responder a todos** y **Reenviar** contestan, citan y adjuntan los mismos
+mensajes en las dos, y la elección se conserva entre reinicios.
+
 ## Atajos de teclado {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->

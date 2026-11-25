@@ -944,6 +944,11 @@ checks = [
   { manual = 'No Outlook account or pre-update mailbox in the demo; the Graph adapter stores no size (sync/outlook.rs) and EmailRow.columns.test.tsx shows an unknown size as a dash.', covers = ["Outlook reports none, and mail synced before the column existed has none either: both show a dash."] },
 ]
 
+[feat-interface-8]
+checks = [
+  { judge = "Open Settings → Appearance. Does Conversation view offer 'Open the latest message, expand the others one by one' (selected with no saved choice) and 'Your latest message first, every message open'? With the second chosen, does a conversation the user replied in show the last message they sent on top, then the rest oldest first, every message open and none twice; does one they never wrote in say so and list every message oldest first; does opening another conversation start at the top, while one opened on a message from a link (chat citation) scrolls to that message; do Reply, Reply all and Forward open with the same recipients, quote and attachments as in the default view; and is the choice still selected after a relaunch?", evidence = ["file:src/lib/conversationView.ts", "file:src/lib/conversationView.test.ts", "file:src/components/Settings/ConversationViewSetting.tsx", "file:src/stores/conversationViewStore.test.ts", "file:src/components/EmailView/EmailView.ownFirst.test.tsx"], visual = true, covers = ["Settings → Appearance → Conversation view chooses how an open conversation is shown.", "Open the latest message, expand the others one by one, the default, opens the newest message and shows the earlier ones closed, to open with a click.", "Your latest message first, every message open puts the last message you sent from that account on top and the rest of the conversation below it, oldest first, with every message open and each one shown once; a conversation you have not written in says so and shows every message oldest first.", "Opening another conversation starts it from the top, unless it was opened on one message, from a link, which is brought into view as in the default view.", "The view only changes what is on screen: Reply, Reply all and Forward answer, quote and attach the same messages in both, and the choice is kept across restarts."] },
+]
+
 [feat-shortcuts-1]
 checks = [
   { app = true },

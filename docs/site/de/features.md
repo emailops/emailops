@@ -516,6 +516,19 @@ erhalten. Die Größe ist die der ganzen Nachricht, Anhänge eingeschlossen, so 
 IMAP-Server sie beim Synchronisieren der Nachricht angibt. Outlook gibt keine an, und E-Mails, die
 vor dieser Spalte synchronisiert wurden, haben auch keine: Beide zeigen einen Strich.
 
+<!-- claim:feat-interface-8 -->
+**Einstellungen → Erscheinungsbild → Konversationsansicht** legt fest, wie eine geöffnete
+Konversation angezeigt wird. **Neueste Nachricht öffnen, die anderen einzeln aufklappen**, die
+Voreinstellung, öffnet die neueste Nachricht und zeigt die früheren geschlossen, zum Öffnen per Klick.
+**Ihre letzte Nachricht zuerst, alle Nachrichten geöffnet** zeigt oben die letzte Nachricht, die Sie
+von diesem Konto gesendet haben, und darunter den Rest der Konversation, die älteste zuerst, mit allen
+Nachrichten geöffnet und jeder nur einmal; eine Konversation, in der Sie nichts geschrieben haben,
+weist darauf hin und zeigt alle Nachrichten, die älteste zuerst. Eine andere Konversation beginnt
+beim Öffnen oben, außer sie wurde über einen Link bei einer bestimmten Nachricht geöffnet, die wie in
+der Standardansicht angezeigt wird. Die Ansicht ändert nur, was zu sehen ist: **Antworten**, **Allen antworten** und
+**Weiterleiten** beantworten, zitieren und hängen in beiden dieselben Nachrichten an, und die Wahl
+bleibt über Neustarts erhalten.
+
 ## Tastenkombinationen {#keyboard-shortcuts}
 
 <!-- claim:feat-shortcuts-1 -->
