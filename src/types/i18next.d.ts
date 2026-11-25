@@ -57,5 +57,6 @@ declare module 'i18next' {
       shortcuts: typeof shortcuts;
     };
     returnNull: false;
+    returnEmptyString: true;
   }
 }

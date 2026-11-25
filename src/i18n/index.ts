@@ -36,6 +36,9 @@ export async function initI18n(language: string | null | undefined): Promise<typ
         escapeValue: false,
       },
       returnNull: false,
+      // An empty string is a real translation meaning "show nothing"
+      // (`inbox:junk.kind.legit`); i18next 27 would fall back to the key.
+      returnEmptyString: true,
     });
     initialised = true;
   } else if (i18n.language !== lng) {
