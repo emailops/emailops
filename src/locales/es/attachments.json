@@ -4,7 +4,8 @@
     "createRulesHint": "Crea reglas para recopilar automáticamente adjuntos de los correos coincidentes",
     "createRule": "Crear una regla",
     "loadError": "No se pudieron cargar los adjuntos.",
-    "retry": "Reintentar"
+    "retry": "Reintentar",
+    "emptyForTag": "Ningún adjunto con la etiqueta «{{tag}}»"
   },
   "viewer": {
     "selectAttachment": "Selecciona un adjunto para previsualizar",
@@ -19,7 +20,8 @@
     "download": "Descargar",
     "zoomOut": "Alejar",
     "zoomIn": "Acercar",
-    "fitWidth": "Ajustar al ancho"
+    "fitWidth": "Ajustar al ancho",
+    "account": "Cuenta: {{email}}"
   },
   "toolbar": {
     "title": "Adjuntos",
@@ -101,7 +103,8 @@
     "applyDone_many": "Listo: {{count}} adjuntos en esta regla",
     "applyDoneNew_one": "{{count}} nuevo",
     "applyDoneNew_other": "{{count}} nuevos",
-    "applyDoneNew_many": "{{count}} nuevos"
+    "applyDoneNew_many": "{{count}} nuevos",
+    "accountHeader": "Cuenta: {{email}}"
   },
   "suggestions": {
     "title": "Reglas sugeridas",

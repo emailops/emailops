@@ -44,7 +44,8 @@ function downloadLogEntry(
 }
 
 interface AttachmentToolbarProps {
-  accountId: string | null;
+  /** Account the list reads; null = every enabled account ("All accounts"). */
+  queryAccountId: string | null;
   totalCount: number;
   selectedTag: string | null;
   availableTags: string[];
@@ -62,7 +63,7 @@ interface AttachmentToolbarProps {
 }
 
 export function AttachmentToolbar({
-  accountId,
+  queryAccountId,
   totalCount,
   selectedTag,
   availableTags,
@@ -82,10 +83,10 @@ export function AttachmentToolbar({
   const [isDownloading, setIsDownloading] = useState(false);
 
   const handleBulkDownload = async () => {
-    if (checkedCount === 0 || !accountId) return;
+    if (checkedCount === 0) return;
     setIsDownloading(true);
     try {
-      const summary = await api.bulkDownloadAttachments(accountId, Array.from(checkedIds));
+      const summary = await api.bulkDownloadAttachments(queryAccountId, Array.from(checkedIds));
       const { level, message } = downloadLogEntry(summary, t);
       addLog(level, 'attachments', message);
       const total = summary.copied + summary.skipped.length;

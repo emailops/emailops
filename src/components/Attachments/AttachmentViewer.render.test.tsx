@@ -93,3 +93,29 @@ describe('AttachmentViewer', () => {
     expect(frame()).toBeNull();
   });
 });
+
+describe('AttachmentViewer account', () => {
+  it('"View email" opens the email in the account of the attachment', async () => {
+    const onViewEmail = vi.fn();
+    await act(async () =>
+      root.render(
+        <AttachmentViewer attachment={attachment({ accountId: 'acct-2', emailId: 'e9' })} onViewEmail={onViewEmail} />,
+      ),
+    );
+
+    const viewEmail = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('attachments:viewer.viewEmail'),
+    );
+    act(() => viewEmail?.click());
+
+    expect(onViewEmail).toHaveBeenCalledWith('acct-2', 'e9');
+  });
+
+  it('names the account only when given one', async () => {
+    await act(async () => root.render(<AttachmentViewer attachment={attachment({})} accountLabel="b@example.com" />));
+    expect(container.textContent).toContain('attachments:viewer.account');
+
+    await act(async () => root.render(<AttachmentViewer attachment={attachment({})} />));
+    expect(container.textContent).not.toContain('attachments:viewer.account');
+  });
+});

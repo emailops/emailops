@@ -4935,3 +4935,29 @@ the GitHub API* — no release step to forget, but the hop would exist only to b
 *Generating the file in the site build from the newest tag* — a tag exists hours before
 its release is published, so any site build in that window would announce a release with
 no installers.
+
+## 2026-11-25 — Attachments "All accounts" reads through AccountScope, not a frontend fan-out
+
+**Decision:** With "All accounts" selected, the Attachments view lists the attachments of
+every enabled account in one list. The frontend sends no account id (`toQueryAccountId`)
+and the backend reads with `AccountScope::AllEnabled`, joining `accounts` on
+`enabled = 1` as the outbox does. The list, its count, the tag chips, "select all"
+(`list_attachment_ids`) and the bulk download all take that scope. Rules and rule
+suggestions stay per account: the rules modal works on one account, the account of the
+email it was opened from or else the effective account, and names it in its header in
+"All accounts"; it has no account picker. A download whose files span several accounts
+prefixes each file name with its account's address.
+**Context:** People who send invoices from several accounts want them in one list to
+download together. The calendar's "All accounts" (2026-10-26) fans out in the frontend
+because each account calls its own provider and can fail or need re-auth on its own;
+attachments are local SQLite reads with none of that, and the list pages with one offset
+over one date order.
+**Rejected:** *A per-account fan-out in the frontend* — a cursor per account, merging N
+lists and fetching N×50 rows to show 50, with counts and tags summed by hand.
+*`account_id: Option<String>` down to `db/`* — a forgotten `None` would read every
+account without showing in the code; `Option` stays at the command boundary.
+*Summing every account's suggestions in the badge* — the number would not match the modal,
+which shows one account, and the suggestion miner skips sent mail anyway. *An account
+picker in the rules modal* — none of the list's problems need it, and it costs a remount,
+a reset path and a race between two accounts' rule responses; the rules of another
+account are one sidebar click away.

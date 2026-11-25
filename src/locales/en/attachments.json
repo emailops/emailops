@@ -4,7 +4,8 @@
     "createRulesHint": "Create rules to automatically collect attachments from matching emails",
     "createRule": "Create a Rule",
     "loadError": "Could not load the attachments.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "emptyForTag": "No attachments with the tag “{{tag}}”"
   },
   "viewer": {
     "selectAttachment": "Select an attachment to preview",
@@ -19,7 +20,8 @@
     "download": "Download",
     "zoomOut": "Zoom out",
     "zoomIn": "Zoom in",
-    "fitWidth": "Fit to width"
+    "fitWidth": "Fit to width",
+    "account": "Account: {{email}}"
   },
   "toolbar": {
     "title": "Attachments",
@@ -101,7 +103,8 @@
     "applyDone_many": "Done: {{count}} attachments in this rule",
     "applyDoneNew_one": "{{count}} new",
     "applyDoneNew_other": "{{count}} new",
-    "applyDoneNew_many": "{{count}} new"
+    "applyDoneNew_many": "{{count}} new",
+    "accountHeader": "Account: {{email}}"
   },
   "suggestions": {
     "title": "Suggested rules",

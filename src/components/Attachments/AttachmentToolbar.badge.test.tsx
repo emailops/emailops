@@ -29,7 +29,7 @@ function render(suggestionCount: number) {
   act(() => {
     root.render(
       <AttachmentToolbar
-        accountId="acc-1"
+        queryAccountId="acc-1"
         totalCount={0}
         selectedTag={null}
         availableTags={[]}

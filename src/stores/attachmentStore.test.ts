@@ -313,7 +313,7 @@ describe('rules', () => {
   });
 
   beforeEach(() => {
-    useAttachmentStore.setState({ rules: [], isLoadingRules: false });
+    useAttachmentStore.setState({ rules: [], rulesAccountId: null, isLoadingRules: false });
   });
 
   it('loads the account rules', async () => {
@@ -352,6 +352,33 @@ describe('rules', () => {
       .updateRule('acct-1', 'r1', 'New name', 'billing@acme.com', null, null, [], true);
 
     expect(useAttachmentStore.getState().rules.map((r) => r.name)).toEqual(['New name']);
+  });
+
+  it('drops a slower rules response for an account the user already left', async () => {
+    const slow = deferred<ReturnType<typeof rule>[]>();
+    vi.mocked(api.listAttachmentRules)
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValueOnce([{ ...rule('rb'), accountId: 'acc-2' }]);
+
+    const first = useAttachmentStore.getState().fetchRules('acc-1');
+    await useAttachmentStore.getState().fetchRules('acc-2');
+    slow.resolve([rule('ra')]);
+    await first;
+
+    const state = useAttachmentStore.getState();
+    expect(state.rules.map((r) => r.id)).toEqual(['rb']);
+    expect(state.rulesAccountId).toBe('acc-2');
+    expect(state.isLoadingRules).toBe(false);
+  });
+
+  it("clears the previous account's rules while the new ones load", async () => {
+    useAttachmentStore.setState({ rules: [rule('ra')], rulesAccountId: 'acc-1' });
+    vi.mocked(api.listAttachmentRules).mockReturnValueOnce(new Promise(() => {}));
+
+    void useAttachmentStore.getState().fetchRules('acc-2');
+
+    expect(useAttachmentStore.getState().rules).toEqual([]);
+    expect(useAttachmentStore.getState().isLoadingRules).toBe(true);
   });
 
   it('a deleted rule leaves the list', async () => {

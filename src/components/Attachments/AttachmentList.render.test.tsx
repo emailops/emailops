@@ -44,7 +44,7 @@ function render(props: Partial<Parameters<typeof AttachmentList>[0]>) {
       <AttachmentList
         attachments={[]}
         selectedAttachment={null}
-        ruleNames={{}}
+        selectedTag={null}
         checkedIds={new Set()}
         isLoading={false}
         isLoadingMore={false}
@@ -95,5 +95,33 @@ describe('AttachmentList load error', () => {
     render({ attachments: [attachment('a1')] });
 
     expect(button('attachments:list.retry')).toBeNull();
+  });
+});
+
+describe('AttachmentList rows', () => {
+  it('in All accounts each row shows its account and the rule that saved it', () => {
+    render({
+      attachments: [{ ...attachment('b1'), accountId: 'acc-2', ruleName: 'Sent invoices' }],
+      getAccountBadge: (a) => ({ colorClass: 'bg-sky-500', label: a.accountId === 'acc-2' ? 'b@example.com' : '?' }),
+    });
+
+    const chip = container.querySelector('[data-testid="attachment-account-chip"]');
+    expect(chip?.textContent).toBe('b@example.com');
+    expect(chip?.getAttribute('title')).toBe('b@example.com');
+    expect(container.textContent).toContain('Sent invoices');
+  });
+
+  it('shows no account chip for a single account', () => {
+    render({ attachments: [attachment('a1')] });
+
+    expect(container.querySelector('[data-testid="attachment-account-chip"]')).toBeNull();
+    expect(container.textContent).toContain('Invoices');
+  });
+
+  it('with a tag selected and nothing listed, says so instead of offering a first rule', () => {
+    render({ selectedTag: 'invoice' });
+
+    expect(container.textContent).toContain('attachments:list.emptyForTag{"tag":"invoice"}');
+    expect(button('attachments:list.createRule')).toBeNull();
   });
 });

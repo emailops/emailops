@@ -34,11 +34,11 @@ let container: HTMLDivElement;
 let root: Root;
 const onClearChecked = vi.fn();
 
-function render(checked: string[], isSelectingAll = false) {
+function render(checked: string[], isSelectingAll = false, queryAccountId: string | null = 'acc-1') {
   act(() => {
     root.render(
       <AttachmentToolbar
-        accountId="acc-1"
+        queryAccountId={queryAccountId}
         totalCount={Math.max(checked.length, 1)}
         selectedTag={null}
         availableTags={[]}
@@ -56,9 +56,9 @@ function render(checked: string[], isSelectingAll = false) {
   });
 }
 
-async function download(summary: BulkDownloadSummary, checked: string[]) {
+async function download(summary: BulkDownloadSummary, checked: string[], queryAccountId: string | null = 'acc-1') {
   bulkDownloadAttachments.mockResolvedValue(summary);
-  render(checked);
+  render(checked, false, queryAccountId);
   const button = Array.from(container.querySelectorAll('button')).find((b) =>
     b.textContent?.includes('attachments:toolbar.download'),
   );
@@ -145,5 +145,11 @@ describe('AttachmentToolbar bulk download', () => {
     render([], true);
 
     expect(container.querySelector<HTMLInputElement>('input[type="checkbox"]')?.disabled).toBe(true);
+  });
+
+  it('in All accounts sends the ids of every account with no account', async () => {
+    await download({ dest: DEST, copied: 2, skipped: [] }, ['a1', 'b1'], null);
+
+    expect(bulkDownloadAttachments).toHaveBeenCalledWith(null, ['a1', 'b1']);
   });
 });

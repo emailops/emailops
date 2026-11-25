@@ -1,22 +1,47 @@
 import { listen } from '@tauri-apps/api/event';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { errorText } from '@/lib/errors';
-import { selectEffectiveAccountId, useAccountStore } from '@/stores/accountStore';
+import { isUnifiedMode, selectEffectiveAccountId, toQueryAccountId, useAccountStore } from '@/stores/accountStore';
 import { useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
-import type { Attachment, AttachmentRule } from '@/types';
+import type { Attachment, AttachmentRule, AttachmentRuleSuggestion } from '@/types';
 import { useRuleApplyEvents } from './useRuleApplyEvents';
 
+/** A sync of several accounts sends one `attachments-updated` per account: reload once they settle. */
+const ATTACHMENT_EVENTS_SETTLE_MS = 500;
+
+const NO_RULES: AttachmentRule[] = [];
+const NO_SUGGESTIONS: AttachmentRuleSuggestion[] = [];
+
 export function useAttachments() {
-  // Attachments stay per-account: in unified ("All accounts") mode we scope
-  // to the first enabled account instead of leaking the sentinel id to the
-  // backend. `selectEffectiveAccountId` returns the id unchanged otherwise.
-  const activeAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
-  const scopeKey = activeAccountId ? `account:${activeAccountId}` : null;
+  // The list reads one account, or every enabled account in unified ("All
+  // accounts") mode, where `toQueryAccountId` sends null. Nothing is read
+  // until an account is selected and the accounts have loaded, so a null id
+  // never means "all" by accident.
+  const activeAccountId = useAccountStore((s) => s.activeAccountId);
+  const accounts = useAccountStore((s) => s.accounts);
+  const effectiveAccountId = useAccountStore((s) => selectEffectiveAccountId(s.accounts, s.activeAccountId));
+  const isUnified = isUnifiedMode(activeAccountId);
+  const enabledIds = useMemo(() => accounts.filter((a) => a.enabled).map((a) => a.id), [accounts]);
+  const queryAccountId = toQueryAccountId(activeAccountId);
+  // Which accounts the list covers: enabling or disabling one starts a new list.
+  const scopeKey =
+    activeAccountId === null || accounts.length === 0
+      ? null
+      : isUnified
+        ? `all:${enabledIds.join(',')}`
+        : `account:${activeAccountId}`;
+
+  // Rules and suggestions stay per account. The rules modal works on the
+  // account of the email it was opened from, else on the effective account
+  // (the first enabled one in unified mode), whose suggestions the badge counts.
+  const [ruleAccountFromEmail, setRuleAccountFromEmail] = useState<string | null>(null);
+  const rulesAccountId = ruleAccountFromEmail ?? effectiveAccountId;
   const addLog = useLogStore((s) => s.addLog);
 
   const {
     rules,
+    rulesAccountId: loadedRulesAccountId,
     isLoadingRules,
     attachments,
     selectedAttachment,
@@ -45,6 +70,7 @@ export function useAttachments() {
     clearError,
     reset,
     suggestions,
+    suggestionsAccountId,
     fetchSuggestions,
     refreshSuggestions,
     dismissSuggestion,
@@ -69,7 +95,7 @@ export function useAttachments() {
   // Tag chips load alongside the list; a failure goes to the output panel and
   // the list loads anyway.
   const loadTagsLogged = useCallback(
-    (accountId: string) => {
+    (accountId: string | null) => {
       fetchTags(accountId).catch((err) => {
         addLog('error', 'attachments', `Failed to load attachment tags: ${errorText(err)}`);
       });
@@ -80,59 +106,66 @@ export function useAttachments() {
   // Reload the list and its tag chips. With the same account and tag the list
   // refreshes in place, keeping the selection and the open attachment.
   const reloadList = useCallback(() => {
-    if (!activeAccountId || !scopeKey) return;
-    fetchAttachments(activeAccountId, selectedTag, scopeKey);
-    loadTagsLogged(activeAccountId);
-  }, [activeAccountId, scopeKey, selectedTag, fetchAttachments, loadTagsLogged]);
+    if (!scopeKey) return;
+    fetchAttachments(queryAccountId, selectedTag, scopeKey);
+    loadTagsLogged(queryAccountId);
+  }, [queryAccountId, scopeKey, selectedTag, fetchAttachments, loadTagsLogged]);
 
   // The list shows its own error state; the output panel gets the details.
   useEffect(() => {
     if (listError) addLog('error', 'attachments', `Failed to load attachments: ${listError}`);
   }, [listError, addLog]);
 
-  // Load rules, tags and rule suggestions when account changes
+  // Load the rules and rule suggestions of the rules account.
   useEffect(() => {
-    if (activeAccountId) {
-      fetchRules(activeAccountId);
-      loadTagsLogged(activeAccountId);
-      loadSuggestionsLogged(activeAccountId, fetchSuggestions);
+    if (rulesAccountId) {
+      fetchRules(rulesAccountId);
+      loadSuggestionsLogged(rulesAccountId, fetchSuggestions);
     }
-  }, [activeAccountId, fetchRules, loadTagsLogged, fetchSuggestions, loadSuggestionsLogged]);
+  }, [rulesAccountId, fetchRules, fetchSuggestions, loadSuggestionsLogged]);
 
   // The backend re-mines rule suggestions after every sync that brought new
   // mail; reload them so the badge reflects the new candidates.
   useEffect(() => {
-    if (!activeAccountId) return;
+    if (!rulesAccountId) return;
     const unlisten = listen<string>('attachment-rule-suggestions-updated', (event) => {
-      if (event.payload && event.payload !== activeAccountId) return;
-      loadSuggestionsLogged(activeAccountId, fetchSuggestions);
+      if (event.payload && event.payload !== rulesAccountId) return;
+      loadSuggestionsLogged(rulesAccountId, fetchSuggestions);
     });
     return () => {
       void unlisten.then((u) => u());
     };
-  }, [activeAccountId, fetchSuggestions, loadSuggestionsLogged]);
+  }, [rulesAccountId, fetchSuggestions, loadSuggestionsLogged]);
 
-  // Load attachments when account or selected tag changes
+  // Load the tag chips when the scope changes.
   useEffect(() => {
-    if (activeAccountId && scopeKey) {
-      fetchAttachments(activeAccountId, selectedTag, scopeKey);
-    }
-  }, [activeAccountId, scopeKey, selectedTag, fetchAttachments]);
+    if (scopeKey) loadTagsLogged(queryAccountId);
+  }, [scopeKey, queryAccountId, loadTagsLogged]);
+
+  // Load attachments when the scope or the selected tag changes.
+  useEffect(() => {
+    if (scopeKey) fetchAttachments(queryAccountId, selectedTag, scopeKey);
+  }, [scopeKey, queryAccountId, selectedTag, fetchAttachments]);
 
   // Refresh when the backend reports new attachments were saved (during sync
   // or retroactive rule application). Without this, newly-saved attachments
   // only appear after restart.
   useEffect(() => {
-    if (!activeAccountId) return;
+    if (!scopeKey) return;
+    // The payload is the account that saved them; other accounts' events are
+    // ignored, and so are those of a disabled account in unified mode.
+    const inScope = (accountId: string) => (isUnified ? enabledIds.includes(accountId) : accountId === activeAccountId);
+    let settle: ReturnType<typeof setTimeout> | undefined;
     const unlisten = listen<string>('attachments-updated', (event) => {
-      // Backend sends the account_id as payload — ignore events for other accounts.
-      if (event.payload && event.payload !== activeAccountId) return;
-      reloadList();
+      if (event.payload && !inScope(event.payload)) return;
+      clearTimeout(settle);
+      settle = setTimeout(reloadList, ATTACHMENT_EVENTS_SETTLE_MS);
     });
     return () => {
+      clearTimeout(settle);
       void unlisten.then((u) => u());
     };
-  }, [activeAccountId, reloadList]);
+  }, [scopeKey, isUnified, enabledIds, activeAccountId, reloadList]);
 
   const handleCreateRule = useCallback(
     async (
@@ -142,14 +175,14 @@ export function useAttachments() {
       filenamePattern: string | null,
       tags: string[],
     ): Promise<AttachmentRule> => {
-      if (!activeAccountId) throw new Error('No active account');
-      const rule = await createRule(activeAccountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags);
+      if (!rulesAccountId) throw new Error('No active account');
+      const rule = await createRule(rulesAccountId, name, senderEmailPattern, subjectPattern, filenamePattern, tags);
       addLog('success', 'attachments', `Created rule: ${name}`);
       // A suggestion the new rule covers must leave the list.
-      loadSuggestionsLogged(activeAccountId, refreshSuggestions);
+      loadSuggestionsLogged(rulesAccountId, refreshSuggestions);
       return rule;
     },
-    [activeAccountId, createRule, addLog, loadSuggestionsLogged, refreshSuggestions],
+    [rulesAccountId, createRule, addLog, loadSuggestionsLogged, refreshSuggestions],
   );
 
   const handleUpdateRule = useCallback(
@@ -162,9 +195,9 @@ export function useAttachments() {
       tags: string[],
       enabled: boolean,
     ): Promise<AttachmentRule> => {
-      if (!activeAccountId) throw new Error('No account is selected');
+      if (!rulesAccountId) throw new Error('No account is selected');
       const rule = await updateRule(
-        activeAccountId,
+        rulesAccountId,
         ruleId,
         name,
         senderEmailPattern,
@@ -178,23 +211,23 @@ export function useAttachments() {
       // rules modal re-scans existing mail in the background with progress.
       reloadList();
       // New patterns may now cover — or stop covering — a suggestion.
-      loadSuggestionsLogged(activeAccountId, refreshSuggestions);
+      loadSuggestionsLogged(rulesAccountId, refreshSuggestions);
       return rule;
     },
-    [updateRule, addLog, activeAccountId, reloadList, loadSuggestionsLogged, refreshSuggestions],
+    [updateRule, addLog, rulesAccountId, reloadList, loadSuggestionsLogged, refreshSuggestions],
   );
 
   const handleDeleteRule = useCallback(
     async (ruleId: string) => {
-      if (!activeAccountId) return;
-      await deleteRule(ruleId, activeAccountId);
+      if (!rulesAccountId) return;
+      await deleteRule(ruleId, rulesAccountId);
       addLog('success', 'attachments', 'Rule deleted');
       // Refresh attachments and tags since deletions may have occurred, and
       // suggestions since the deleted rule's documents may be candidates again.
       reloadList();
-      loadSuggestionsLogged(activeAccountId, refreshSuggestions);
+      loadSuggestionsLogged(rulesAccountId, refreshSuggestions);
     },
-    [activeAccountId, deleteRule, reloadList, refreshSuggestions, addLog, loadSuggestionsLogged],
+    [rulesAccountId, deleteRule, reloadList, refreshSuggestions, addLog, loadSuggestionsLogged],
   );
 
   // A failed page leaves the rows already shown; the output panel says why.
@@ -220,60 +253,66 @@ export function useAttachments() {
 
   // The rules modal re-mines on open and loads the dismissed list for undo.
   const handleRefreshSuggestions = useCallback(() => {
-    if (!activeAccountId) return;
-    loadSuggestionsLogged(activeAccountId, refreshSuggestions);
-    loadSuggestionsLogged(activeAccountId, fetchDismissedSuggestions);
-  }, [activeAccountId, refreshSuggestions, fetchDismissedSuggestions, loadSuggestionsLogged]);
+    if (!rulesAccountId) return;
+    loadSuggestionsLogged(rulesAccountId, refreshSuggestions);
+    loadSuggestionsLogged(rulesAccountId, fetchDismissedSuggestions);
+  }, [rulesAccountId, refreshSuggestions, fetchDismissedSuggestions, loadSuggestionsLogged]);
 
   const handleRestoreSuggestion = useCallback(
     async (suggestionId: string) => {
-      if (!activeAccountId) return;
+      if (!rulesAccountId) return;
       try {
-        await restoreSuggestion(activeAccountId, suggestionId);
+        await restoreSuggestion(rulesAccountId, suggestionId);
       } catch (err) {
         addLog('error', 'attachments', `Failed to restore suggested attachment rule: ${errorText(err)}`);
         throw err;
       }
       addLog('success', 'attachments', 'Restored suggested attachment rule');
     },
-    [activeAccountId, restoreSuggestion, addLog],
+    [rulesAccountId, restoreSuggestion, addLog],
   );
 
   // Both rethrow after logging so the rules modal can show the failure inline.
   const handleDismissSuggestion = useCallback(
     async (suggestionId: string) => {
-      if (!activeAccountId) return;
+      if (!rulesAccountId) return;
       try {
-        await dismissSuggestion(activeAccountId, suggestionId);
+        await dismissSuggestion(rulesAccountId, suggestionId);
       } catch (err) {
         addLog('error', 'attachments', `Failed to dismiss suggested attachment rule: ${errorText(err)}`);
         throw err;
       }
       addLog('success', 'attachments', 'Dismissed suggested attachment rule');
     },
-    [activeAccountId, dismissSuggestion, addLog],
+    [rulesAccountId, dismissSuggestion, addLog],
   );
 
   const handleAcceptSuggestion = useCallback(
     async (suggestionId: string) => {
-      if (!activeAccountId) return;
+      if (!rulesAccountId) return;
       try {
-        await acceptSuggestion(activeAccountId, suggestionId);
+        await acceptSuggestion(rulesAccountId, suggestionId);
       } catch (err) {
         addLog('error', 'attachments', `Failed to mark suggested attachment rule as accepted: ${errorText(err)}`);
         throw err;
       }
     },
-    [activeAccountId, acceptSuggestion, addLog],
+    [rulesAccountId, acceptSuggestion, addLog],
   );
 
   // Rule scans run in the background and may finish after the rules modal
   // closed; this app-wide listener records their outcome.
   useRuleApplyEvents(reloadList);
 
+  // For one render after `rulesAccountId` changes the store still holds the
+  // previous account's rules and suggestions; never hand them to the modal.
+  const rulesReady = loadedRulesAccountId === rulesAccountId;
+
   return {
-    rules,
-    isLoadingRules,
+    rulesAccountId,
+    setRuleAccountFromEmail,
+    rules: rulesReady ? rules : NO_RULES,
+    isLoadingRules: isLoadingRules || !rulesReady,
     attachments,
     selectedAttachment,
     isLoading,
@@ -298,7 +337,7 @@ export function useAttachments() {
     setSelectedTag: handleSetSelectedTag,
     clearError,
     reset,
-    suggestions,
+    suggestions: suggestionsAccountId === rulesAccountId ? suggestions : NO_SUGGESTIONS,
     suggestionsLoading,
     dismissedSuggestions,
     restoreSuggestion: handleRestoreSuggestion,

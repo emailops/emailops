@@ -4,7 +4,8 @@
     "createRulesHint": "Erstelle Regeln, um Anhänge aus passenden E-Mails automatisch zu sammeln",
     "createRule": "Regel erstellen",
     "loadError": "Die Anhänge konnten nicht geladen werden.",
-    "retry": "Erneut versuchen"
+    "retry": "Erneut versuchen",
+    "emptyForTag": "Keine Anhänge mit dem Tag „{{tag}}“"
   },
   "viewer": {
     "selectAttachment": "Wähle einen Anhang zur Vorschau aus",
@@ -19,7 +20,8 @@
     "download": "Herunterladen",
     "zoomOut": "Verkleinern",
     "zoomIn": "Vergrößern",
-    "fitWidth": "An Breite anpassen"
+    "fitWidth": "An Breite anpassen",
+    "account": "Konto: {{email}}"
   },
   "toolbar": {
     "title": "Anhänge",
@@ -101,7 +103,8 @@
     "applyDone_many": "Fertig: {{count}} Anhänge in dieser Regel",
     "applyDoneNew_one": "{{count}} neu",
     "applyDoneNew_other": "{{count}} neu",
-    "applyDoneNew_many": "{{count}} neu"
+    "applyDoneNew_many": "{{count}} neu",
+    "accountHeader": "Konto: {{email}}"
   },
   "suggestions": {
     "title": "Vorgeschlagene Regeln",

@@ -46,9 +46,9 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
-import { useAccountStore } from '@/stores/accountStore';
+import { ALL_ACCOUNTS_ID, useAccountStore } from '@/stores/accountStore';
 import { useAttachmentStore } from '@/stores/attachmentStore';
-import type { Account } from '@/types';
+import type { Account, AttachmentRule } from '@/types';
 import { useAttachments } from './useAttachments';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -196,7 +196,7 @@ describe('useAttachments', () => {
     vi.mocked(api.getAttachmentTags).mockRejectedValueOnce(new Error('db locked'));
     vi.mocked(api.getAttachments).mockClear();
 
-    await act(async () => events.handlers['attachments-updated']?.({ payload: 'acc-1' }));
+    await act(async () => hook.retry());
     await flush();
 
     expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('db locked'));
@@ -206,7 +206,7 @@ describe('useAttachments', () => {
   it('a failed list load goes to the output panel', async () => {
     vi.mocked(api.getAttachments).mockRejectedValueOnce(new Error('disk I/O error'));
 
-    await act(async () => events.handlers['attachments-updated']?.({ payload: 'acc-1' }));
+    await act(async () => hook.retry());
     await flush();
 
     expect(useAttachmentStore.getState().listError).toContain('disk I/O error');
@@ -231,5 +231,120 @@ describe('useAttachments', () => {
 
     expect(api.getAttachments).toHaveBeenCalledWith('acc-1', null, 50, 0);
     expect(api.getAttachmentTags).toHaveBeenCalledWith('acc-1');
+  });
+});
+
+describe('useAttachments in All accounts', () => {
+  const account = (id: string, email: string, enabled = true) => ({ id, email, enabled }) as unknown as Account;
+  const twoAccounts = () => [
+    account('acc-1', 'a@example.com'),
+    account('acc-2', 'b@example.com'),
+    account('acc-3', 'c@example.com', false),
+  ];
+
+  async function mountAll(accounts: Account[] = twoAccounts()) {
+    act(() => root.unmount());
+    vi.clearAllMocks();
+    useAttachmentStore.getState().reset();
+    useAccountStore.setState({ accounts, activeAccountId: ALL_ACCOUNTS_ID });
+    root = createRoot(container);
+    await act(async () => root.render(<Probe />));
+    await flush();
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks for the attachments and tags of every enabled account', async () => {
+    await mountAll();
+
+    expect(api.getAttachments).toHaveBeenCalledWith(null, null, 50, 0);
+    expect(api.countAttachments).toHaveBeenCalledWith(null, null);
+    expect(api.getAttachmentTags).toHaveBeenCalledWith(null);
+  });
+
+  it('asks for nothing before the accounts load', async () => {
+    await mountAll([]);
+
+    expect(api.getAttachments).not.toHaveBeenCalled();
+    expect(api.getAttachmentTags).not.toHaveBeenCalled();
+  });
+
+  it('groups attachment events of enabled accounts into one reload', async () => {
+    await mountAll();
+    vi.mocked(api.getAttachments).mockClear();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    act(() => events.handlers['attachments-updated']?.({ payload: 'acc-1' }));
+    act(() => vi.advanceTimersByTime(100));
+    act(() => events.handlers['attachments-updated']?.({ payload: 'acc-2' }));
+    act(() => vi.advanceTimersByTime(200));
+    act(() => events.handlers['attachments-updated']?.({ payload: 'acc-1' }));
+    act(() => vi.advanceTimersByTime(499));
+    expect(api.getAttachments).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(1));
+    expect(api.getAttachments).toHaveBeenCalledTimes(1);
+    expect(api.getAttachments).toHaveBeenCalledWith(null, null, 50, 0);
+  });
+
+  it('ignores attachment events of a disabled account', async () => {
+    await mountAll();
+    vi.mocked(api.getAttachments).mockClear();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    act(() => events.handlers['attachments-updated']?.({ payload: 'acc-3' }));
+    act(() => vi.advanceTimersByTime(1000));
+
+    expect(api.getAttachments).not.toHaveBeenCalled();
+  });
+
+  it('enabling an account starts a new list and clears the selection', async () => {
+    await mountAll();
+    act(() => useAttachmentStore.getState().toggleChecked('att-1'));
+    vi.mocked(api.getAttachments).mockClear();
+
+    await act(async () =>
+      useAccountStore.setState({ accounts: twoAccounts().map((a) => ({ ...a, enabled: true }) as Account) }),
+    );
+    await flush();
+
+    expect(api.getAttachments).toHaveBeenCalledWith(null, null, 50, 0);
+    expect(useAttachmentStore.getState().checkedIds.size).toBe(0);
+  });
+
+  it('rules follow the effective account, or the account of the email the rules were opened from', async () => {
+    await mountAll();
+    expect(api.listAttachmentRules).toHaveBeenCalledWith('acc-1');
+    expect(hook.rulesAccountId).toBe('acc-1');
+
+    await act(async () => hook.setRuleAccountFromEmail('acc-2'));
+    await flush();
+    expect(api.listAttachmentRules).toHaveBeenLastCalledWith('acc-2');
+    expect(api.listAttachmentRuleSuggestions).toHaveBeenLastCalledWith('acc-2');
+
+    await act(async () => {
+      await hook.createRule('Sent invoices', 'b@example.com', null, '*invoice*', ['invoice']);
+    });
+    expect(vi.mocked(api.createAttachmentRule).mock.calls[0][0]).toBe('acc-2');
+
+    await act(async () => hook.setRuleAccountFromEmail(null));
+    await flush();
+    expect(api.listAttachmentRules).toHaveBeenLastCalledWith('acc-1');
+  });
+
+  it("shows no rules of another account while the email's account loads", async () => {
+    await mountAll();
+    vi.mocked(api.listAttachmentRules).mockReturnValueOnce(new Promise(() => {}));
+    useAttachmentStore.setState({
+      rules: [{ id: 'ra', accountId: 'acc-1' } as unknown as AttachmentRule],
+      rulesAccountId: 'acc-1',
+    });
+
+    await act(async () => hook.setRuleAccountFromEmail('acc-2'));
+
+    expect(hook.rules).toEqual([]);
+    expect(hook.isLoadingRules).toBe(true);
   });
 });

@@ -28,8 +28,9 @@ export interface RuleApplyProgress {
 }
 
 interface AttachmentStore {
-  // Rules
+  // Rules of the account in `rulesAccountId` (the rules modal works on one account).
   rules: AttachmentRule[];
+  rulesAccountId: string | null;
   isLoadingRules: boolean;
 
   // Candidate rules mined from recurring document attachments, for the
@@ -147,6 +148,9 @@ const withoutSuggestion = (suggestions: AttachmentRuleSuggestion[], id: string) 
 // account the user already switched away from never overwrites the list.
 let suggestionsLoadId = 0;
 
+// Same guard for the rules list.
+let rulesLoadId = 0;
+
 // Suggestions the user accepted or dismissed in this session. A load that was
 // already in flight when they did must not bring them back.
 const resolvedSuggestionIds = new Set<string>();
@@ -214,6 +218,7 @@ function forRun(
 
 export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   rules: [],
+  rulesAccountId: null,
   isLoadingRules: false,
   suggestions: [],
   suggestionsAccountId: null,
@@ -237,12 +242,17 @@ export const useAttachmentStore = create<AttachmentStore>((set, get) => ({
   currentFetchId: 0,
 
   fetchRules: async (accountId) => {
+    const loadId = ++rulesLoadId;
+    // Another account's rules must not show (or be edited) while these load.
+    if (get().rulesAccountId !== accountId) set({ rules: [], rulesAccountId: accountId });
     set({ isLoadingRules: true });
     try {
       const rules = await api.listAttachmentRules(accountId);
-      set({ rules, isLoadingRules: false });
+      if (loadId === rulesLoadId) set({ rules });
     } catch (error) {
-      set({ error: errorText(error), isLoadingRules: false });
+      if (loadId === rulesLoadId) set({ error: errorText(error) });
+    } finally {
+      if (loadId === rulesLoadId) set({ isLoadingRules: false });
     }
   },
 

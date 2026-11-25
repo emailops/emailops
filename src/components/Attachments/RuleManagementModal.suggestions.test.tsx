@@ -88,13 +88,14 @@ const handlers = {
 function render(
   suggestions: AttachmentRuleSuggestion[],
   rules: AttachmentRule[] = [],
-  extra: { dismissed?: AttachmentRuleSuggestion[]; loading?: boolean } = {},
+  extra: { dismissed?: AttachmentRuleSuggestion[]; loading?: boolean; accountLabel?: string } = {},
 ) {
   act(() => {
     root.render(
       <RuleManagementModal
         rules={rules}
         accountId="acc-1"
+        accountLabel={extra.accountLabel}
         suggestions={suggestions}
         suggestionsLoading={extra.loading ?? false}
         dismissedSuggestions={extra.dismissed ?? []}
@@ -625,5 +626,17 @@ describe('RuleManagementModal suggestions', () => {
 
     expect(container.textContent).toContain('facturas');
     expect(container.textContent).toContain('acme');
+  });
+});
+
+describe('RuleManagementModal account', () => {
+  it('names the account its rules belong to when given one', () => {
+    render([], [], { accountLabel: 'b@example.com' });
+    expect(container.textContent).toContain('attachments:rules.accountHeader{"email":"b@example.com"}');
+  });
+
+  it('names no account otherwise', () => {
+    render([]);
+    expect(container.textContent).not.toContain('attachments:rules.accountHeader');
   });
 });

@@ -1,10 +1,16 @@
 import { useFormatters } from '@/hooks/useFormatters';
 import type { Attachment } from '@/types';
 
+/** Account of the row in "All accounts": its colour dot and address. */
+export interface AttachmentAccountBadge {
+  colorClass: string;
+  label: string;
+}
+
 interface AttachmentRowProps {
   attachment: Attachment;
-  ruleName?: string;
   ruleColor?: string;
+  accountBadge?: AttachmentAccountBadge;
   isSelected: boolean;
   isChecked: boolean;
   onToggleChecked: () => void;
@@ -40,14 +46,15 @@ function formatFileSize(bytes: number): string {
 
 export function AttachmentRow({
   attachment,
-  ruleName,
   ruleColor: color,
+  accountBadge,
   isSelected,
   isChecked,
   onToggleChecked,
   onClick,
 }: AttachmentRowProps) {
   const fmt = useFormatters();
+  const ruleName = attachment.ruleName;
   const date = new Date(attachment.emailTimestamp * 1000);
   const isThisYear = date.getFullYear() === new Date().getFullYear();
   const formattedDate = fmt.date(
@@ -85,8 +92,21 @@ export function AttachmentRow({
           </div>
           <span className="text-[11px] text-gray-400 flex-shrink-0">{formattedDate}</span>
         </div>
-        {/* Line 2: file size  tags */}
-        <div className="flex items-center gap-1.5 mt-0.5">
+        {/* Line 2: account (All accounts only)  file size  tags */}
+        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+          {accountBadge && (
+            <span
+              data-testid="attachment-account-chip"
+              className="inline-flex items-center gap-1 flex-shrink min-w-0 max-w-[50%] rounded-full px-1.5 text-[10px] bg-gray-100 text-gray-700"
+              title={accountBadge.label}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${accountBadge.colorClass}`}
+                aria-hidden="true"
+              />
+              <span className="truncate">{accountBadge.label}</span>
+            </span>
+          )}
           <span className="text-[11px] text-gray-400">{formatFileSize(attachment.fileSize)}</span>
           {attachment.tags.map((tag) => (
             <span

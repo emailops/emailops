@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDate } from '@/lib/intl';
 import type { Attachment } from '@/types';
-import { AttachmentRow, ruleColor } from './AttachmentRow';
+import { type AttachmentAccountBadge, AttachmentRow, ruleColor } from './AttachmentRow';
 
 function monthLabel(timestamp: number, locale: string): string {
   const date = new Date(timestamp * 1000);
@@ -14,7 +14,10 @@ function monthLabel(timestamp: number, locale: string): string {
 interface AttachmentListProps {
   attachments: Attachment[];
   selectedAttachment: Attachment | null;
-  ruleNames: Record<string, string>;
+  /** The tag filter in use; with no rows, the empty state names it. */
+  selectedTag: string | null;
+  /** In "All accounts", the account each row shows. */
+  getAccountBadge?: (attachment: Attachment) => AttachmentAccountBadge;
   checkedIds: Set<string>;
   isLoading: boolean;
   isLoadingMore: boolean;
@@ -31,7 +34,8 @@ interface AttachmentListProps {
 export function AttachmentList({
   attachments,
   selectedAttachment,
-  ruleNames,
+  selectedTag,
+  getAccountBadge,
   checkedIds,
   isLoading,
   isLoadingMore,
@@ -83,6 +87,12 @@ export function AttachmentList({
           <div className="flex items-center justify-center h-32">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600" />
           </div>
+        ) : attachments.length === 0 && selectedTag !== null ? (
+          !listError && (
+            <p className="px-6 py-10 text-center text-sm text-gray-500">
+              {t('attachments:list.emptyForTag', { tag: selectedTag })}
+            </p>
+          )
         ) : attachments.length === 0 ? (
           !listError && (
             <div className="flex flex-col items-center justify-center h-64 px-6 text-center">
@@ -120,8 +130,8 @@ export function AttachmentList({
                   )}
                   <AttachmentRow
                     attachment={att}
-                    ruleName={ruleNames[att.ruleId]}
                     ruleColor={ruleColor(att.ruleId)}
+                    accountBadge={getAccountBadge?.(att)}
                     isSelected={selectedAttachment?.id === att.id}
                     isChecked={checkedIds.has(att.id)}
                     onToggleChecked={() => onToggleChecked(att.id)}

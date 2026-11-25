@@ -143,6 +143,22 @@ describe('deriveChatContext', () => {
     ).toEqual({ threadId: '', accountId: 'acct-saved', subject: 'minutes.docx', attachmentId: 'saved-1' });
   });
 
+  it("keeps the selected attachment's own account in the All accounts list", () => {
+    // The list mixes accounts; the chat must read the document from the account that holds it.
+    const fromSecondAccount = {
+      ...savedAttachment({ mimeType: 'application/pdf', filename: 'invoice.pdf' }),
+      accountId: 'acct-second',
+    };
+    expect(
+      deriveChatContext({
+        viewMode: 'attachments',
+        activeTab: null,
+        selectedEmail: null,
+        selectedAttachment: fromSecondAccount,
+      })?.accountId,
+    ).toBe('acct-second');
+  });
+
   it('offers nothing in the Attachments view for a non-PDF or no selection', () => {
     const image = savedAttachment({ mimeType: 'image/png', filename: 'scan.png' });
     for (const selectedAttachment of [image, null]) {

@@ -4,7 +4,8 @@
     "createRulesHint": "Créez des règles pour collecter automatiquement les pièces jointes des e-mails correspondants",
     "createRule": "Créer une règle",
     "loadError": "Impossible de charger les pièces jointes.",
-    "retry": "Réessayer"
+    "retry": "Réessayer",
+    "emptyForTag": "Aucune pièce jointe avec l’étiquette « {{tag}} »"
   },
   "viewer": {
     "selectAttachment": "Sélectionnez une pièce jointe à prévisualiser",
@@ -19,7 +20,8 @@
     "download": "Télécharger",
     "zoomOut": "Zoom arrière",
     "zoomIn": "Zoom avant",
-    "fitWidth": "Ajuster à la largeur"
+    "fitWidth": "Ajuster à la largeur",
+    "account": "Compte : {{email}}"
   },
   "toolbar": {
     "title": "Pièces jointes",
@@ -101,7 +103,8 @@
     "applyDone_many": "Terminé : {{count}} pièces jointes dans cette règle",
     "applyDoneNew_one": "{{count}} nouvelle",
     "applyDoneNew_other": "{{count}} nouvelles",
-    "applyDoneNew_many": "{{count}} nouvelles"
+    "applyDoneNew_many": "{{count}} nouvelles",
+    "accountHeader": "Compte : {{email}}"
   },
   "suggestions": {
     "title": "Règles suggérées",
