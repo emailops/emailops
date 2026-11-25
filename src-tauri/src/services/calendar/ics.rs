@@ -431,7 +431,7 @@ pub fn with_iana_tzid(param: &str, fixed_zones: &HashMap<String, chrono::FixedOf
 /// RFC 5545 §3.3.5: a local time the change to daylight time skips is read
 /// with the offset in force before the change. Zones change offset at most
 /// once a day, so the day before is on the right side of it.
-fn skipped_local_time(tz: chrono_tz::Tz, naive: chrono::NaiveDateTime) -> i64 {
+pub(super) fn skipped_local_time(tz: chrono_tz::Tz, naive: chrono::NaiveDateTime) -> i64 {
     use chrono::{Offset, TimeZone};
     let before = tz.offset_from_utc_datetime(&(naive - chrono::Days::new(1))).fix();
     naive.and_utc().timestamp() - i64::from(before.local_minus_utc())

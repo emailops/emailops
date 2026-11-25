@@ -598,6 +598,23 @@ impl OutlookClient {
         Ok(crate::sync::provider::SentMessageMeta::default())
     }
 
+    /// Send an already-built MIME message: Graph takes it as base64 text on
+    /// `/me/sendMail` and answers 202. Never resent after the request left.
+    pub async fn send_raw_mime(&self, mime: &[u8]) -> Result<()> {
+        use base64::Engine as _;
+        let body = base64::engine::general_purpose::STANDARD.encode(mime);
+        let url = format!("{}/me/sendMail", self.base_url);
+        self.send_request_with_policy("send raw mime", RetryPolicy::NoRetryAfterSend, |client, token| {
+            client
+                .post(&url)
+                .bearer_auth(token)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain")
+                .body(body.clone())
+        })
+        .await?;
+        Ok(())
+    }
+
     // ── Drafts ───────────────────────────────────────────────────────────────
 
     pub async fn create_draft(
@@ -1821,6 +1838,10 @@ impl EmailProvider for OutlookClient {
     ) -> Result<crate::sync::provider::SentMessageMeta> {
         self.send_new_email(from_email, to_emails, cc_emails, bcc_emails, subject, body, attachments)
             .await
+    }
+
+    async fn send_raw_mime(&self, mime: &[u8]) -> Result<()> {
+        self.send_raw_mime(mime).await
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
@@ -4446,5 +4467,46 @@ mod tests {
             .collect();
         assert!(about_file.iter().any(|e| e.level == "info"), "{events:?}");
         assert!(about_file.iter().any(|e| e.level == "success"), "{events:?}");
+    }
+
+    #[tokio::test]
+    async fn outlook_sends_mime_as_base64_text() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .and(header("content-type", "text/plain"))
+            .respond_with(ResponseTemplate::new(202))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mime = b"From: me@example.com\r\n\r\nhello";
+
+        EmailProvider::send_raw_mime(&client_for(&server), mime)
+            .await
+            .expect("sent");
+
+        let sent = requests_to(&server, "POST", "/me/sendMail").await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            String::from_utf8(sent[0].body.clone()).unwrap(),
+            base64::engine::general_purpose::STANDARD.encode(mime)
+        );
+    }
+
+    #[tokio::test]
+    async fn outlook_raw_mime_is_never_resent_after_a_server_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/me/sendMail"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+            .mount(&server)
+            .await;
+
+        let err = EmailProvider::send_raw_mime(&client_for(&server), b"x")
+            .await
+            .expect_err("refused");
+
+        assert!(matches!(err, AppError::SyncError(_)), "{err}");
+        assert_eq!(requests_to(&server, "POST", "/me/sendMail").await.len(), 1);
     }
 }

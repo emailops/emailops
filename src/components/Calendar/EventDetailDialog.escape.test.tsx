@@ -67,6 +67,7 @@ describe('EventDetailDialog — Escape', () => {
           provider="gmail"
           onClose={onClose}
           onDeleted={() => {}}
+          onResponded={() => {}}
           onAuthError={() => {}}
         />,
       ),
@@ -90,6 +91,7 @@ describe('EventDetailDialog — Escape', () => {
             provider="gmail"
             onClose={onClose}
             onDeleted={() => {}}
+            onResponded={() => {}}
             onAuthError={() => {}}
           />
           <Modal open onClose={closeTop} title="On top">

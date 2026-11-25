@@ -209,11 +209,14 @@ pub fn build_calendar_provider(db: &Database, account: &Account) -> Result<Box<d
         }
         CalendarKind::Outlook => {
             let mut tokens = crate::services::accounts::get_tokens(&account.id)?;
-            Ok(Box::new(crate::sync::outlook_calendar::OutlookCalendarClient::new(
-                std::mem::take(&mut tokens.access_token),
-                tokens.refresh_token.take(),
-                Some(account.id.clone()),
-            )))
+            Ok(Box::new(
+                crate::sync::outlook_calendar::OutlookCalendarClient::new(
+                    std::mem::take(&mut tokens.access_token),
+                    tokens.refresh_token.take(),
+                    Some(account.id.clone()),
+                )
+                .with_owner_email(account.email.clone()),
+            ))
         }
     }
 }

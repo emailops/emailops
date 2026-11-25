@@ -744,6 +744,22 @@ impl GmailClient {
         Ok(sent_meta_from_response(response.json().await.ok(), message_id_header))
     }
 
+    /// Send an already-built MIME message as is (`raw`). Never resent after the
+    /// request left: a repeat could deliver it twice.
+    pub async fn send_raw_mime(&self, mime: &[u8]) -> Result<()> {
+        let payload = serde_json::json!({ "raw": base64_url_encode(mime) });
+        let url = format!("{}/users/me/messages/send", self.base_url);
+        let response = self.send_post_json_no_resend(&url, &payload, "send raw mime").await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(AppError::SyncError(format!(
+                "Failed to send email ({status}): {error_text}"
+            )));
+        }
+        Ok(())
+    }
+
     /// Build the base64url-encoded MIME + `{message:{raw}}` payload shared by
     /// draft create and update.
     /// A reply draft carries the same threading a sent reply does —
@@ -2058,6 +2074,10 @@ impl EmailProvider for GmailClient {
             attachments,
         )
         .await
+    }
+
+    async fn send_raw_mime(&self, mime: &[u8]) -> Result<()> {
+        self.send_raw_mime(mime).await
     }
 
     async fn fetch_attachment_bytes(&self, message_id: &str, attachment_id: &str) -> Result<Vec<u8>> {
@@ -5350,5 +5370,43 @@ mod batch_slotting_tests {
         let slotted = slot_batch_parts(parse_batch_parts(&body, "bnd"), 2);
 
         assert!(matches!(slotted[1], Some(Err(429))));
+    }
+
+    #[tokio::test]
+    async fn gmail_sends_raw_mime() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mime = b"From: me@example.com\r\n\r\nhello";
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .and(body_json(serde_json::json!({ "raw": base64_url_encode(mime) })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "m1" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-raw-mime".into())).with_base_url(server.uri());
+        EmailProvider::send_raw_mime(&client, mime).await.expect("sent");
+    }
+
+    #[tokio::test]
+    async fn gmail_raw_mime_failure_is_a_sync_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/users/me/messages/send"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("denied"))
+            .mount(&server)
+            .await;
+
+        let client =
+            GmailClient::new("tok".into(), None, None, Some("test-raw-mime-err".into())).with_base_url(server.uri());
+        let err = EmailProvider::send_raw_mime(&client, b"x").await.expect_err("refused");
+        assert!(matches!(err, AppError::SyncError(_)), "{err}");
     }
 }

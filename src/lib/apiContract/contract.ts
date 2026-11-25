@@ -18,6 +18,8 @@ const RUST_SOURCES: Record<string, string> = Object.fromEntries(
         '../../../src-tauri/src/ai/provider.rs',
         '../../../src-tauri/src/services/ai_activity.rs',
         '../../../src-tauri/src/services/calendar/invite.rs',
+        '../../../src-tauri/src/services/calendar/import.rs',
+        '../../../src-tauri/src/services/calendar/respond.rs',
         '../../../src-tauri/src/services/backup/mod.rs',
         '../../../src-tauri/src/services/sender_controls.rs',
         '../../../src-tauri/src/services/unsubscribe.rs',
@@ -202,6 +204,52 @@ export function rustEnumVariants(relPath: string, name: string): string[] {
   if (!m) throw new Error(`enum ${name} not found in ${relPath}`);
   const open = m.index + m[0].length - 1;
   return splitTopLevel(src.slice(open + 1, closing(src, open))).map((v) => v[0].toLowerCase() + v.slice(1));
+}
+
+/** Variants of a `#[serde(tag = "kind", rename_all = "camelCase")]` enum: tag value -> its camelCase field names. */
+export function rustTaggedEnum(relPath: string, name: string): Record<string, string[]> {
+  const src = stripComments(rustSource(relPath));
+  const m = new RegExp(`pub enum ${name}\\s*\\{`).exec(src);
+  if (!m) throw new Error(`enum ${name} not found in ${relPath}`);
+  const open = m.index + m[0].length - 1;
+  const variants: Record<string, string[]> = {};
+  for (const raw of splitTopLevel(src.slice(open + 1, closing(src, open)))) {
+    const v = raw.replace(/#\[[^\]]*\]\s*/g, '').trim();
+    const brace = v.indexOf('{');
+    const variant = (brace < 0 ? v : v.slice(0, brace)).trim();
+    const fields =
+      brace < 0
+        ? []
+        : splitTopLevel(v.slice(brace + 1, closing(v, brace)))
+            .map((f) => camel(f.split(':')[0].trim()))
+            .sort();
+    variants[variant[0].toLowerCase() + variant.slice(1)] = fields;
+  }
+  return variants;
+}
+
+/** Members of an `export type X = { kind: 'a'; … } | { kind: 'b' }` union: kind -> its other property names. */
+export function tsTaggedUnion(name: string, relPath = 'src/types/index.ts'): Record<string, string[]> {
+  const src = stripComments(TS_SOURCES[relPath] ?? '');
+  const m = new RegExp(`export type ${name}\\s*=`).exec(src);
+  if (!m) throw new Error(`type ${name} not found in ${relPath}`);
+  const members: Record<string, string[]> = {};
+  let at = m.index + m[0].length;
+  for (;;) {
+    const open = src.indexOf('{', at);
+    const close = closing(src, open);
+    const props = [
+      ...src.slice(open + 1, close).matchAll(/(?:^|[;\n{])\s*([A-Za-z_][A-Za-z0-9_]*)\??\s*:\s*([^;\n]*)/g),
+    ];
+    const kind = props.find((p) => p[1] === 'kind');
+    if (!kind) throw new Error(`a member of ${name} has no kind`);
+    members[kind[2].trim().replace(/'/g, '')] = props
+      .map((p) => p[1])
+      .filter((k) => k !== 'kind')
+      .sort();
+    at = close + 1;
+    if (!/^\s*\|/.test(src.slice(at))) return members;
+  }
 }
 
 /** Keys of the `serde_json::json!({…})` a command function answers with. */

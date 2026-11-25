@@ -16,6 +16,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import * as api from '@/lib/api';
+import { useCalendarChangeStore } from '@/stores/calendarChangeStore';
 import type { CalendarEvent } from '@/types';
 import { useCalendarData } from './useCalendarData';
 
@@ -79,6 +80,26 @@ describe('useCalendarData', () => {
     expect(api.syncCalendarNow).toHaveBeenCalledWith('a');
     expect(container.textContent).toBe('a1');
     expect(latest?.isSyncing).toBe(false);
+  });
+
+  it('re-syncs when an invite answer changed a shown account', async () => {
+    vi.mocked(api.syncCalendarNow).mockResolvedValue(1);
+    vi.mocked(api.getCalendarEvents).mockResolvedValue([makeEvent('a1', 'a')]);
+    await act(async () => root.render(<Probe accountId="a" />));
+
+    await act(async () => useCalendarChangeStore.getState().markChanged('a'));
+
+    expect(api.syncCalendarNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a change to an account it does not show', async () => {
+    vi.mocked(api.syncCalendarNow).mockResolvedValue(1);
+    vi.mocked(api.getCalendarEvents).mockResolvedValue([makeEvent('a1', 'a')]);
+    await act(async () => root.render(<Probe accountId="a" />));
+
+    await act(async () => useCalendarChangeStore.getState().markChanged('b'));
+
+    expect(api.syncCalendarNow).toHaveBeenCalledTimes(1);
   });
 
   it('a sync finishing after an account switch does not overwrite the new account', async () => {
