@@ -1065,6 +1065,12 @@ pub fn get_tags(db: &Arc<Database>, scope: AccountScope<'_>) -> Result<Vec<Strin
     db.get_all_tags(scope)
 }
 
+/// The tags the rule form offers: those of every account's rules and
+/// attachments, so the same tag is picked in any account.
+pub fn get_tag_vocabulary(db: &Arc<Database>) -> Result<Vec<String>> {
+    db.get_tag_vocabulary()
+}
+
 /// List every attachment surfaced on one email: both the canonical
 /// `email_attachment_meta` rows (everything sync discovered) and the
 /// rule-matched `attachments` rows. Two separate result lists since their
@@ -3786,6 +3792,56 @@ pub(crate) mod tests {
             get_tags(&db, AccountScope::Account("acc-a")).expect("tags"),
             ["invoice"]
         );
+    }
+
+    fn insert_rule_with_tags(db: &Database, id: &str, account_id: &str, tags: &[&str]) {
+        db.insert_attachment_rule(&AttachmentRule {
+            id: id.into(),
+            account_id: account_id.into(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            ..make_rule(None, None)
+        })
+        .expect("insert rule");
+    }
+
+    #[test]
+    fn tag_vocabulary_offers_the_tags_of_every_accounts_rules_and_attachments() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["receipt"],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        // A rule that has collected nothing yet still names its tag.
+        insert_rule_with_tags(&db, "rule-b", "acc-b", &["invoice"]);
+
+        assert_eq!(get_tag_vocabulary(&db).expect("vocabulary"), ["invoice", "receipt"]);
+    }
+
+    #[test]
+    fn tag_vocabulary_keeps_one_spelling_per_case_folded_tag() {
+        let db = two_accounts();
+        insert_attachment_row(
+            &db,
+            &AttachmentFixture {
+                tags: &["invoice"],
+                ..AttachmentFixture::new("a1", "acc-a")
+            },
+        );
+        insert_rule_with_tags(&db, "rule-b", "acc-b", &["Invoice"]);
+
+        assert_eq!(get_tag_vocabulary(&db).expect("vocabulary"), ["Invoice"]);
+    }
+
+    #[test]
+    fn tag_vocabulary_keeps_the_tags_of_a_disabled_account() {
+        let db = two_accounts();
+        insert_rule_with_tags(&db, "rule-b", "acc-b", &["invoice"]);
+        disable_account(&db, "acc-b");
+
+        assert_eq!(get_tag_vocabulary(&db).expect("vocabulary"), ["invoice"]);
     }
 
     #[test]

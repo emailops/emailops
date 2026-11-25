@@ -32,6 +32,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('@/lib/api', () => ({
   applyRuleRetroactively: vi.fn(async () => {}),
   countAttachmentsForRule: vi.fn(async () => 0),
+  getAttachmentTagVocabulary: vi.fn(async () => ['invoice']),
 }));
 
 import * as api from '@/lib/api';
@@ -99,7 +100,6 @@ function render(
         suggestions={suggestions}
         suggestionsLoading={extra.loading ?? false}
         dismissedSuggestions={extra.dismissed ?? []}
-        existingTags={['invoice']}
         {...handlers}
       />,
     );
@@ -139,6 +139,7 @@ beforeEach(() => {
   // test may leave unconsumed so no test depends on the order they run in.
   vi.mocked(api.applyRuleRetroactively).mockReset().mockResolvedValue(undefined);
   vi.mocked(api.countAttachmentsForRule).mockReset().mockResolvedValue(0);
+  vi.mocked(api.getAttachmentTagVocabulary).mockReset().mockResolvedValue(['invoice']);
   for (const h of Object.values(handlers)) h.mockReset();
   handlers.onCreateRule.mockImplementation(async (name: string) => makeRule(name));
   handlers.onUpdateRule.mockImplementation(async (_id: string, name: string) => makeRule(name));
@@ -626,6 +627,43 @@ describe('RuleManagementModal suggestions', () => {
 
     expect(container.textContent).toContain('facturas');
     expect(container.textContent).toContain('acme');
+  });
+});
+
+describe('RuleManagementModal tags', () => {
+  /** Opens a new rule's form and its tag list, after the tags load. */
+  async function openTagList(): Promise<string[]> {
+    await act(async () => {});
+    await click(button('attachments:list.createRule'));
+    const input = container.querySelector<HTMLInputElement>('input[role="combobox"]');
+    if (!input) throw new Error('no tag input');
+    await act(async () => {
+      input.focus();
+      input.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+    });
+    return Array.from(container.querySelectorAll('[role="option"]')).map((o) => o.textContent ?? '');
+  }
+
+  it('offers the tags of every account, not only this one', async () => {
+    vi.mocked(api.getAttachmentTagVocabulary).mockResolvedValue(['factura', 'receipt']);
+    render([], [{ ...makeRule('Acme'), tags: ['acme'] }]);
+
+    expect(await openTagList()).toEqual(['acme', 'factura', 'receipt']);
+  });
+
+  it("offers one spelling of a tag this account's rules spell differently", async () => {
+    vi.mocked(api.getAttachmentTagVocabulary).mockResolvedValue(['Invoice']);
+    render([], [{ ...makeRule('Acme'), tags: ['invoice'] }]);
+
+    expect(await openTagList()).toEqual(['Invoice']);
+  });
+
+  it("logs a failed load and still offers this account's rule tags", async () => {
+    vi.mocked(api.getAttachmentTagVocabulary).mockRejectedValue(new Error('db locked'));
+    render([], [{ ...makeRule('Acme'), tags: ['acme'] }]);
+
+    expect(await openTagList()).toEqual(['acme']);
+    expect(logs.addLog).toHaveBeenCalledWith('error', 'attachments', expect.stringContaining('db locked'));
   });
 });
 

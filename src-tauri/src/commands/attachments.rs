@@ -245,6 +245,11 @@ pub async fn get_attachment_tags(
 }
 
 #[tauri::command]
+pub async fn get_attachment_tag_vocabulary(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
+    services::attachments::get_tag_vocabulary(&state.db)
+}
+
+#[tauri::command]
 pub async fn get_attachment_file_path(
     state: State<'_, AppState>,
     account_id: String,

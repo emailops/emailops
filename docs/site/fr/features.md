@@ -308,9 +308,10 @@ sélectionner** coche toutes les pièces jointes du filtre en cours, pas seuleme
 chargées. Si les fichiers que vous téléchargez viennent de plusieurs comptes, chaque nom de fichier
 commence par l'adresse de son compte. Les règles restent propres à chaque compte : **Gérer les
 règles** agit sur le premier compte activé, et **Créer une règle de pièce jointe** dans le menu
-d'un e-mail crée la règle dans le compte de cet e-mail. Pour collecter les factures que vous
-envoyez, créez la règle dans le compte d'envoi, avec votre propre adresse comme expéditeur et un
-motif de nom de fichier comme `*facture*`.
+d'un e-mail crée la règle dans le compte de cet e-mail. Les étiquettes sont communes à tous les
+comptes : le champ d'étiquettes d'une règle propose celles de tous les comptes. Pour collecter les
+factures que vous envoyez, créez la règle dans le compte d'envoi, avec votre propre adresse comme
+expéditeur et un motif de nom de fichier comme `*facture*`.
 
 ## EO Docs {#eo-docs}
 

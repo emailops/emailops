@@ -4945,7 +4945,10 @@ and the backend reads with `AccountScope::AllEnabled`, joining `accounts` on
 (`list_attachment_ids`) and the bulk download all take that scope. Rules and rule
 suggestions stay per account: the rules modal works on one account, the account of the
 email it was opened from or else the effective account, and always names it in its
-header; it has no account picker. A download whose files span several accounts
+header; it has no account picker. Tags, though, are common to every account: the rule
+form's tag picker offers the tags of every account's rules and attachments, enabled or
+not (`get_attachment_tag_vocabulary`), so the same tag can be picked in any account and
+"All accounts" shows one chip for it. A download whose files span several accounts
 prefixes each file name with its account's address.
 **Context:** People who send invoices from several accounts want them in one list to
 download together. The calendar's "All accounts" (2026-10-26) fans out in the frontend

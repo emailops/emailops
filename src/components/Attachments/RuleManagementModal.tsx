@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as api from '@/lib/api';
+import { sameTag } from '@/lib/attachmentTags';
 import { errorText } from '@/lib/errors';
 import { type RuleApplyState, useAttachmentStore } from '@/stores/attachmentStore';
 import { useLogStore } from '@/stores/logStore';
@@ -50,8 +51,6 @@ interface RuleManagementModalProps {
   onRefreshSuggestions: () => void;
   onDismissSuggestion: (suggestionId: string) => Promise<void>;
   onAcceptSuggestion: (suggestionId: string) => Promise<void>;
-  /** Tags already on collected attachments, offered by the tag picker. */
-  existingTags: string[];
 }
 
 interface RuleFormState {
@@ -88,7 +87,6 @@ export function RuleManagementModal({
   onRefreshSuggestions,
   onDismissSuggestion,
   onAcceptSuggestion,
-  existingTags,
 }: RuleManagementModalProps) {
   useOverlay();
   const { t } = useTranslation(['common', 'attachments']);
@@ -159,10 +157,29 @@ export function RuleManagementModal({
   const [isDeleting, setIsDeleting] = useState(false);
   const addLog = useLogStore((s) => s.addLog);
 
-  const allTags = useMemo(
-    () => [...new Set([...existingTags, ...rules.flatMap((r) => r.tags)])].sort((a, b) => a.localeCompare(b)),
-    [existingTags, rules],
-  );
+  // Tags are common to every account: the picker offers those of every
+  // account's rules and attachments, loaded when the modal opens. This
+  // account's rules add a tag created since, under one spelling per tag.
+  const [tagVocabulary, setTagVocabulary] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getAttachmentTagVocabulary()
+      .then((tags) => {
+        if (!cancelled) setTagVocabulary(tags);
+      })
+      .catch((err) => addLog('error', 'attachments', `Failed to load attachment tags: ${errorText(err)}`));
+    return () => {
+      cancelled = true;
+    };
+  }, [addLog]);
+  const allTags = useMemo(() => {
+    const tags = [...tagVocabulary];
+    for (const tag of rules.flatMap((r) => r.tags)) {
+      if (!tags.some((known) => sameTag(known, tag))) tags.push(tag);
+    }
+    return tags.sort((a, b) => a.localeCompare(b));
+  }, [tagVocabulary, rules]);
 
   const runApply = async (rule: AttachmentRule) => {
     // A newer apply of the same rule cancels this one in the backend.

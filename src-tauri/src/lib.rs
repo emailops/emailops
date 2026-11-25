@@ -293,6 +293,7 @@ macro_rules! app_commands {
             commands::attachments::list_attachment_ids,
             commands::attachments::get_attachment,
             commands::attachments::get_attachment_tags,
+            commands::attachments::get_attachment_tag_vocabulary,
             commands::attachments::get_attachment_file_path,
             commands::attachments::get_attachment_data,
             commands::attachments::bulk_download_attachments,

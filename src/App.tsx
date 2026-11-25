@@ -2173,7 +2173,6 @@ function AppInner() {
           onRefreshSuggestions={refreshAttachmentRuleSuggestions}
           onDismissSuggestion={dismissAttachmentRuleSuggestion}
           onAcceptSuggestion={acceptAttachmentRuleSuggestion}
-          existingTags={availableTags}
         />
       )}
 

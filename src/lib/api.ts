@@ -1065,6 +1065,11 @@ export async function getAttachmentTags(accountId: string | null): Promise<strin
   return invoke('get_attachment_tags', { accountId: accountId ?? undefined });
 }
 
+/** The tags of every account's rules and attachments, offered when picking a rule's tags. */
+export async function getAttachmentTagVocabulary(): Promise<string[]> {
+  return invoke('get_attachment_tag_vocabulary');
+}
+
 export async function getAttachmentFilePath(accountId: string, attachmentId: string): Promise<string> {
   return invoke('get_attachment_file_path', { accountId, attachmentId });
 }

@@ -279,8 +279,9 @@ account in one list, and each row names its account. **Select all** marks every 
 current filter, not only the rows loaded so far. When the files you download come from more than
 one account, each file name starts with its account's address. Rules stay per account: **Manage
 Rules** works on the first enabled account, and **Create attachment rule** in an email's menu
-creates the rule in that email's account. To collect the invoices you send, create the rule in the
-sending account with your own address as the sender and a filename pattern such as `*invoice*`.
+creates the rule in that email's account. Tags are shared by all accounts: a rule's tag field
+offers the tags of every account. To collect the invoices you send, create the rule in the sending
+account with your own address as the sender and a filename pattern such as `*invoice*`.
 
 ## EO Docs {#eo-docs}
 

@@ -372,24 +372,20 @@ impl Database {
         let tag_jsons = stmt
             .query_map(param_refs(&params).as_slice(), |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        one_spelling_per_tag(&tag_jsons)
+    }
 
-        let mut by_folded: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-        for json_str in &tag_jsons {
-            let tags: Vec<String> = serde_json::from_str(json_str)?;
-            for tag in tags {
-                by_folded
-                    .entry(tag.to_ascii_lowercase())
-                    .and_modify(|kept| {
-                        if tag < *kept {
-                            kept.clone_from(&tag);
-                        }
-                    })
-                    .or_insert(tag);
-            }
-        }
-        let mut tags: Vec<String> = by_folded.into_values().collect();
-        tags.sort();
-        Ok(tags)
+    /// Every tag a rule or a collected attachment carries, in any account,
+    /// enabled or not: what the rule form offers, so one tag serves every
+    /// account. One spelling per tag, as [`Self::get_all_tags`].
+    pub fn get_tag_vocabulary(&self) -> Result<Vec<String>> {
+        let conn = self.reader();
+        let mut stmt =
+            conn.prepare("SELECT tags_json FROM attachments UNION SELECT tags_json FROM attachment_rules")?;
+        let tag_jsons = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        one_spelling_per_tag(&tag_jsons)
     }
 
     // --- Attachment rule suggestions ---
@@ -594,6 +590,29 @@ impl Database {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
+}
+
+/// The tags in `tag_jsons` (JSON arrays), sorted, one per ASCII-case-folded
+/// tag under its smallest spelling, so "invoice" and "Invoice" make one chip.
+/// An unreadable array is an error, not a silently missing tag.
+fn one_spelling_per_tag(tag_jsons: &[String]) -> Result<Vec<String>> {
+    let mut by_folded: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for json_str in tag_jsons {
+        let tags: Vec<String> = serde_json::from_str(json_str)?;
+        for tag in tags {
+            by_folded
+                .entry(tag.to_ascii_lowercase())
+                .and_modify(|kept| {
+                    if tag < *kept {
+                        kept.clone_from(&tag);
+                    }
+                })
+                .or_insert(tag);
+        }
+    }
+    let mut tags: Vec<String> = by_folded.into_values().collect();
+    tags.sort();
+    Ok(tags)
 }
 
 fn row_to_attachment_rule(row: &rusqlite::Row) -> rusqlite::Result<AttachmentRule> {

@@ -305,9 +305,10 @@ Konten in einer Liste, und jede Zeile nennt ihr Konto. **Alle auswählen** marki
 aktuellen Filters, nicht nur die bereits geladenen Zeilen. Stammen die heruntergeladenen Dateien aus
 mehreren Konten, beginnt jeder Dateiname mit der Adresse seines Kontos. Regeln gelten weiterhin pro
 Konto: **Regeln verwalten** arbeitet mit dem ersten aktivierten Konto, und **Anhang-Regel
-erstellen** im Menü einer E-Mail legt die Regel im Konto dieser E-Mail an. Um die Rechnungen zu
-sammeln, die Sie verschicken, legen Sie die Regel im sendenden Konto an, mit Ihrer eigenen Adresse
-als Absender und einem Dateinamenmuster wie `*Rechnung*`.
+erstellen** im Menü einer E-Mail legt die Regel im Konto dieser E-Mail an. Tags gelten für alle
+Konten: Das Tag-Feld einer Regel bietet die Tags aller Konten an. Um die Rechnungen zu sammeln, die
+Sie verschicken, legen Sie die Regel im sendenden Konto an, mit Ihrer eigenen Adresse als Absender
+und einem Dateinamenmuster wie `*Rechnung*`.
 
 ## EO Docs {#eo-docs}
 
