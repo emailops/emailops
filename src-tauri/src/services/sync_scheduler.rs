@@ -174,7 +174,7 @@ impl SyncScheduler {
         // so every `make dev` would toast — unless EMAILOPS_UPDATE_CHECK=1
         // forces it on for manual QA.
         if !cfg!(debug_assertions) || std::env::var("EMAILOPS_UPDATE_CHECK").as_deref() == Ok("1") {
-            match crate::services::updates::make_github_fetch() {
+            match crate::services::updates::make_manifest_fetch() {
                 Ok(fetch) => {
                     let flag = Arc::new(AtomicBool::new(false));
                     scheduler.push_global(

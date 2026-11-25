@@ -73,6 +73,7 @@ communique exactement avec ces destinations, toutes identifiables :
 | Votre fournisseur de messagerie (Gmail, Microsoft Graph, votre serveur IMAP/SMTP) | À chaque synchronisation et envoi | Oui — c'est votre boîte |
 | Votre fournisseur d'agenda (Google, Outlook) | Synchronisation du calendrier, si activée | Données d'agenda uniquement |
 | Hugging Face | Uniquement pendant le téléchargement d'un modèle que vous avez choisi | Non |
+| getemailops.com | Une fois par jour, pour lire quelle est la dernière version | Non |
 | Votre serveur compatible OpenAI | Uniquement si vous basculez le fournisseur d'IA dessus | **Oui — les prompts contiennent le contenu des e-mails** |
 | OpenRouter | Uniquement si vous basculez le fournisseur d'IA dessus | **Oui — les prompts contiennent le contenu des e-mails** |
 
@@ -134,9 +135,18 @@ identifie, ni vous ni le destinataire.
 ## Aucune télémétrie
 
 <!-- claim:priv-no-telemetry-1 -->
-L'application ne collecte aucune donnée d'usage, n'envoie aucun rapport de plantage et ne
-comporte aucun mécanisme de remontée dans les versions publiées. Il n'y a pas d'option de
-refus parce qu'il n'y a rien à refuser. (Le dépôt contient une fonctionnalité optionnelle de
+L'application ne collecte aucune donnée d'usage et n'envoie aucun rapport de plantage. La
+seule requête qu'elle adresse au projet est la vérification quotidienne des mises à jour :
+elle télécharge depuis getemailops.com un petit fichier qui indique la dernière version. Le
+fichier et son adresse sont les mêmes pour tout le monde, et la requête ne contient rien sur
+vous, vos e-mails ou votre copie de l'application : ni identifiant, ni version de
+l'application, ni système d'exploitation. L'hébergeur du site voit la requête, comme tout
+serveur web, et le nombre de requêtes par jour est le seul chiffre dont dispose le projet sur
+le nombre de copies en service.
+**Vérifier les nouvelles versions**, dans **Paramètres → Confidentialité et sécurité**, désactive
+la vérification : l'application ne contacte alors plus getemailops.com et ne vous signale plus
+les nouvelles versions.
+(Le dépôt contient une fonctionnalité optionnelle de
 traçage OpenTelemetry pour le développement local ; elle est exclue de toutes les versions
 publiées.)
 

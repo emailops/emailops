@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Added
+
+- **A switch to turn the update check off.** **Settings → Privacy & Security →
+  Check for new versions** is on by default. Turned off, the app never contacts
+  getemailops.com and no longer tells you about new versions.
+
+### Changed
+
+- **The daily update check asks getemailops.com instead of GitHub.** EmailOps
+  already asked GitHub once a day whether a new version exists; that same
+  request now goes to the project's own site, and no request was added. It
+  downloads one small file that names the latest version,
+  <https://getemailops.com/update/latest.json>, which anyone can open in a
+  browser. The file and its address are the same for everyone, and the request
+  carries no identifier, no app version and no operating system (the request
+  to GitHub did carry the app version). The number of requests per day is the only figure the project has
+  on how many copies are in use;
+  [Privacy & security](https://getemailops.com/en/docs/privacy-security/)
+  describes it.
 
 ## [0.6.20] — 2026-11-20
 

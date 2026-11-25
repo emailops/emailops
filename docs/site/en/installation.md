@@ -218,9 +218,10 @@ sudo pacman -S gnome-keyring
 ## Updating {#updating}
 
 <!-- claim:inst-updating-1 -->
-EmailOps checks GitHub for a new release at most once a day. When there is one, a notice says
+EmailOps checks getemailops.com for a new release at most once a day. When there is one, a notice says
 **EmailOps X.Y.Z is available** with a **Download** button. Closing it hides it for 24 hours;
 it comes back until you install the update.
+To stop the check, turn off **Check for new versions** in **Settings → Privacy & Security**.
 
 <!-- claim:inst-updating-2 -->
 The first time you open EmailOps after updating, a dialog shows what is new in that version,

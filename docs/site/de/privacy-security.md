@@ -74,6 +74,7 @@ sind:
 | Ihr E-Mail-Anbieter (Gmail, Microsoft Graph, Ihr IMAP/SMTP-Server) | Bei jeder Synchronisierung und jedem Versand | Ja — es ist Ihr Postfach |
 | Ihr Kalenderanbieter (Google, Outlook) | Kalendersynchronisierung, falls aktiviert | Nur Kalenderdaten |
 | Hugging Face | Nur während des Downloads eines von Ihnen gewählten KI-Modells | Nein |
+| getemailops.com | Einmal am Tag, um die neueste Versionsnummer zu lesen | Nein |
 | Ihr OpenAI-kompatibler Server | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 | OpenRouter | Nur wenn Sie den KI-Anbieter darauf umstellen | **Ja — Prompts enthalten E-Mail-Inhalte** |
 
@@ -134,9 +135,16 @@ enthält nichts, was Sie oder den Empfänger identifiziert.
 ## Keine Telemetrie
 
 <!-- claim:priv-no-telemetry-1 -->
-Die App sammelt keine Nutzungsstatistiken, sendet keine Absturzberichte und ruft in
-veröffentlichten Builds in keiner Form „nach Hause“. Es gibt kein Opt-out, weil es nichts
-abzuwählen gibt. (Der Quellbaum enthält eine optionale OpenTelemetry-Tracing-Funktion für die
+Die App sammelt keine Nutzungsstatistiken und sendet keine Absturzberichte. Die einzige
+Anfrage, die sie an das Projekt richtet, ist die tägliche Update-Prüfung: Sie lädt von
+getemailops.com eine kleine Datei, die die neueste Version nennt. Die Datei und ihre Adresse
+sind für alle gleich, und die Anfrage enthält nichts über Sie, Ihre E-Mails oder Ihre Kopie
+der App: keine Kennung, keine App-Version, kein Betriebssystem. Der Hoster der Website sieht
+die Anfrage wie jeder Webserver, und die Zahl der Anfragen pro Tag ist die einzige Angabe, die
+das Projekt darüber hat, wie viele Kopien in Gebrauch sind.
+**Nach neuen Versionen suchen** unter **Einstellungen → Datenschutz & Sicherheit** schaltet die
+Prüfung ab: Die App kontaktiert getemailops.com dann nie und meldet keine neuen Versionen mehr.
+(Der Quellbaum enthält eine optionale OpenTelemetry-Tracing-Funktion für die
 lokale Entwicklung; sie wird aus jedem Release-Build herauskompiliert.)
 
 ## Standardmäßig lokale KI

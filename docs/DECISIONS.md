@@ -4990,3 +4990,29 @@ attendees.
 - *Deleting the series on a "No" to one occurrence*: loses every other occurrence.
 - *The notifying status update (`sendUpdates=all`) on the copy*: it could email every attendee.
 - *Deleting only the matching instance*: not taken for now; the event detail covers it.
+
+## 2026-11-20 — The update check reads a manifest on the project site, and its request count is the adoption signal
+
+**Decision:** The app's daily update check fetches `https://getemailops.com/update/latest.json`
+instead of the GitHub Releases API. It is one static file at one URL for every install,
+carrying `tag_name` and `html_url`; the request has a constant user agent and no
+identifier, app version or platform. The site's requests per day for that path are the
+count of installs in use. Every release rewrites the file in the website repo after the
+GitHub release is published (release skill, Phase 9 step 7), and the user docs and the
+site's privacy policy say what the request is. **Settings → Privacy & Security → Check for
+new versions** (pref `app_update_check_enabled`, on by default) turns the check off, and
+the app then never requests the file. This supersedes the endpoint and the "no Settings
+toggle" choice in the 2026-07-24 update-notification entry and adds one app-side signal
+to the 2026-08-26 "no telemetry" entry; everything else in both stands.
+**Context:** Downloads were flat and nothing told installs in use apart from installers
+fetched: GitHub sees the update checks but reports no count. The check already existed,
+so counting it adds no new request and no new data. It only changes which host sees the
+request, from GitHub to the site's host.
+**Rejected:** *The installed version and platform in the path* — a breakdown nobody has
+asked a question of yet, and data the check does not need. *An opt-in anonymous ping with
+a rotating install id* — it would give retention, but it rewrites the "no telemetry"
+promise and a self-selected minority is not representative. *A redirect on the site to
+the GitHub API* — no release step to forget, but the hop would exist only to be counted.
+*Generating the file in the site build from the newest tag* — a tag exists hours before
+its release is published, so any site build in that window would announce a release with
+no installers.

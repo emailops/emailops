@@ -220,9 +220,11 @@ sudo pacman -S gnome-keyring
 ## Actualizar {#updating}
 
 <!-- claim:inst-updating-1 -->
-EmailOps comprueba en GitHub si hay una versión nueva como mucho una vez al día. Si la hay, un
+EmailOps comprueba en getemailops.com si hay una versión nueva como mucho una vez al día. Si la hay, un
 aviso dice **EmailOps X.Y.Z está disponible** con un botón **Descargar**. Al cerrarlo se oculta
 durante 24 horas; vuelve hasta que instales la actualización.
+Para detener la comprobación, desactiva **Comprobar si hay versiones nuevas** en
+**Ajustes → Privacidad y seguridad**.
 
 <!-- claim:inst-updating-2 -->
 La primera vez que abres EmailOps tras actualizar, un diálogo muestra las novedades de esa
