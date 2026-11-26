@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.6.21] — 2026-11-26
+
 ### Added
 
+- **Import .ics files into your calendar.** **Calendar → Import .ics** previews
+  the events in a file, says why any of them cannot be imported, and adds the
+  rest to the primary Google or Outlook calendar. A recurring series goes in
+  whole or not at all.
+- **Answer an invitation that never reached your calendar.** Answering from the
+  invitation card adds the event to the receiving account's calendar and sends
+  your answer to the organizer. When the organizer moves a meeting EmailOps
+  added, answering the updated invitation moves EmailOps' copy too. The event
+  detail can mail the organizer or the participants and change **Your
+  response**, for one occurrence or the whole series.
+- **Delete forever, Empty Trash and Empty Spam** on IMAP and Outlook accounts.
+  Each asks first and says how many messages will go. Gmail accounts do not
+  offer them: deleting for good needs wider access to the mailbox than
+  EmailOps asks for.
+- **Polish your own draft.** In the composer, **Polish** edits the text you
+  wrote as your instructions say, keeping its facts and meaning; **Generate
+  with AI** still writes a draft from them. The instructions box is never sent
+  and never saved with the draft. Polish works on plain text, so it is not
+  offered while the draft holds a link or an image.
+- **Size and Has attachment columns.** In the full-width email list,
+  **Columns** shows or hides them, and the Sender, Subject, Date and Size
+  headers sort the whole list, not only the loaded page. Outlook mail, and mail
+  synced before this version, show no size.
+- **Your latest message first.** **Settings → Appearance → Conversation view**
+  can open every message of a conversation, with the last one you wrote on top
+  and the rest oldest first.
+- **Attachments from every account in one list.** The Attachments view and its
+  rules work on **All accounts**, each row with its account. Tags are shared
+  across accounts, and a rule's sender field suggests senders as you type.
+- **Keep only the latest version of each file in a thread.** A new attachment
+  rule option, on by default: a file with the same name sent again in the same
+  conversation replaces the earlier copy.
 - **A switch to turn the update check off.** **Settings → Privacy & Security →
   Check for new versions** is on by default. Turned off, the app never contacts
   getemailops.com and no longer tells you about new versions.
@@ -26,6 +62,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on how many copies are in use;
   [Privacy & security](https://getemailops.com/en/docs/privacy-security/)
   describes it.
+- **Attachment rules you already have keep only the latest version too.** The
+  new option is on for existing rules: when a file arrives again in the same
+  conversation, or when you edit or re-apply the rule, the older copies that
+  rule held are removed. Turn the option off in the rule to keep every copy.
+
+### Fixed
+
+- Outlook finds invitations organised outside Exchange again, so answering
+  them updates the right event, and an Outlook calendar shows your own answer
+  in **Your response**.
+- Deleting an Outlook meeting you were invited to no longer fails with an
+  error.
+- A click in the calendar grid lands on the event under the pointer instead of
+  hours away until you scrolled.
+- **Create attachment rule** from an email creates the rule in that email's
+  account.
+- A chat reply no longer starts with text from a step the AI threw away, and a
+  stray reasoning marker no longer shows. Ollama errors are short and carry no
+  HTML.
+
+### Security
+
+- url 2.5.9 (RUSTSEC-2026-0592) and cookie 0.18.3 (RUSTSEC-2026-0594).
+- The OpenRouter client no longer follows redirects, and AI error and log text
+  carries less server and message content.
 
 ## [0.6.20] — 2026-11-20
 
