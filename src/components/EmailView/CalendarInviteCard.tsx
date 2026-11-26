@@ -168,7 +168,7 @@ export function CalendarInviteCard({ email }: { email: Email }) {
     : null;
   const recurrenceLine = recurrence
     ? recurrence.labelKey
-      ? t(`calendar:create.recurrence.${recurrence.labelKey}`, recurrence.params)
+      ? t(`calendar:create.recurrence.${recurrence.labelKey}`, recurrence.params ?? {})
       : recurrence.raw
     : null;
 
