@@ -140,10 +140,12 @@ enthält nichts, was Sie oder den Empfänger identifiziert.
 Die App sammelt keine Nutzungsstatistiken und sendet keine Absturzberichte. Die einzige
 Anfrage, die sie an das Projekt richtet, ist die tägliche Update-Prüfung: Sie lädt von
 getemailops.com eine kleine Datei, die die neueste Version nennt. Die Datei und ihre Adresse
-sind für alle gleich, und die Anfrage enthält nichts über Sie, Ihre E-Mails oder Ihre Kopie
-der App: keine Kennung, keine App-Version, kein Betriebssystem. Der Hoster der Website sieht
-die Anfrage wie jeder Webserver, und die Zahl der Anfragen pro Tag ist die einzige Angabe, die
-das Projekt darüber hat, wie viele Kopien in Gebrauch sind.
+sind für alle gleich, und die Anfrage enthält nichts über Ihre E-Mails oder Ihre Kopie der
+App: keine Kennung, keine App-Version, kein Betriebssystem. Die Website wird bei AWS Amplify
+gehostet, das jede Anfrage mit der IP-Adresse, von der sie kommt, in Zugriffsprotokollen
+festhält, die es aufbewahrt, solange die Website dort gehostet wird; Amplify bietet keine
+Möglichkeit, sie abzuschalten oder diese Frist zu verkürzen. Das Projekt liest nur die Zahl der
+Anfragen pro Tag, die einzige Angabe, die es darüber hat, wie viele Kopien in Gebrauch sind.
 **Nach neuen Versionen suchen** unter **Einstellungen → Datenschutz & Sicherheit** schaltet die
 Prüfung ab: Die App kontaktiert getemailops.com dann nie und meldet keine neuen Versionen mehr.
 (Der Quellbaum enthält eine optionale OpenTelemetry-Tracing-Funktion für die

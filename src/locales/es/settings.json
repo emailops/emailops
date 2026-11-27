@@ -576,7 +576,7 @@
     "allowRemoteToggleDesc": "Cuando está desactivado, se bloquean imágenes externas y rastreadores. Un aviso te permite cargarlos por correo.",
     "updates": "Actualizaciones",
     "updateCheckToggle": "Comprobar si hay versiones nuevas",
-    "updateCheckToggleDesc": "Una vez al día EmailOps descarga de getemailops.com un fichero pequeño que indica cuál es la última versión. La petición es la misma para todo el mundo y no dice nada sobre ti. Si lo desactivas, la app nunca contacta con getemailops.com y no te avisa de versiones nuevas.",
+    "updateCheckToggleDesc": "Una vez al día EmailOps descarga de getemailops.com un fichero pequeño que indica cuál es la última versión. La petición no lleva ningún identificador, ni la versión de la app ni datos de tu equipo, pero el hosting de la web (AWS) registra tu dirección IP, como en cualquier visita a una web. Si lo desactivas, la app nunca contacta con getemailops.com y no te avisa de versiones nuevas.",
     "privacyPolicyLink": "Política de privacidad",
     "loading": "Cargando...",
     "loadFailed": "No se pudieron cargar los ajustes de privacidad: {{error}}",

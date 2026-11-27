@@ -136,10 +136,12 @@ pie de un correo; no contiene nada que os identifique ni a ti ni al destinatario
 La app no recopila analíticas de uso ni envía informes de fallos. La única petición que hace
 al proyecto es la comprobación diaria de actualizaciones: descarga de getemailops.com un
 fichero pequeño que indica cuál es la última versión. El fichero y su dirección son los mismos
-para todo el mundo, y la petición no lleva nada sobre ti, tu correo ni tu copia de la app: ni
-identificador, ni versión de la app, ni sistema operativo. El alojamiento de la web ve la
-petición, como cualquier servidor web, y el número de peticiones por día es el único dato que
-tiene el proyecto sobre cuántas copias están en uso.
+para todo el mundo, y la petición no lleva nada sobre tu correo ni tu copia de la app: ni
+identificador, ni versión de la app, ni sistema operativo. La web está alojada en AWS Amplify,
+que registra cada petición, con la dirección IP de la que viene, en unos registros de acceso
+que conserva mientras la web esté alojada allí; Amplify no permite desactivarlos ni acortar ese
+plazo. El proyecto solo lee el número de peticiones por día, el único dato que tiene sobre
+cuántas copias están en uso.
 **Comprobar si hay versiones nuevas**, en **Ajustes → Privacidad y seguridad**, desactiva la
 comprobación: la app deja de contactar con getemailops.com y ya no te avisa de versiones nuevas.
 (El código fuente contiene una función opcional de trazas con OpenTelemetry para

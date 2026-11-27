@@ -576,7 +576,7 @@
     "allowRemoteToggleDesc": "When off, external images and trackers are blocked. A banner lets you load them per-email.",
     "updates": "Updates",
     "updateCheckToggle": "Check for new versions",
-    "updateCheckToggleDesc": "Once a day EmailOps downloads a small file from getemailops.com that names the latest version. The request is the same for everyone and says nothing about you. When off, the app never contacts getemailops.com and does not tell you about new versions.",
+    "updateCheckToggleDesc": "Once a day EmailOps downloads a small file from getemailops.com that names the latest version. The request carries no identifier, app version or system details, but the site's host (AWS) records your IP address, as with any visit to a website. When off, the app never contacts getemailops.com and does not tell you about new versions.",
     "privacyPolicyLink": "Privacy policy",
     "loading": "Loading...",
     "loadFailed": "Could not load privacy settings: {{error}}",

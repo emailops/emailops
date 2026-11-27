@@ -5132,3 +5132,21 @@ also filed under a label folder was collected twice. The migration is V045, afte
 not its bytes, which is the case the option is for. *A view-level filter that hides older
 copies* — counts, "select all" and the bulk download would still see them. *Off by
 default* — the developer asked for it on; one copy per thread is what the view is for.
+
+## 2026-11-27 — The update-check copy says the site's host records the IP address
+
+**Decision:** The update-check setting text, the privacy docs and the site's privacy policy
+say that the site's host (AWS Amplify) records every request, update checks included, with
+the IP address it came from, in access logs it keeps for as long as the site is hosted
+there, and that the project reads only the daily request count. They no longer say the
+request "says nothing about you"; they name what it does not carry (an identifier, the app
+version, system details). This amends the copy promised in the 2026-11-20 update-manifest
+entry; the rest of that entry stands.
+**Context:** The first day of counts showed that Amplify Hosting keeps access logs, client
+IP included, until the app is deleted, with no setting to turn them off, shorten that period
+or drop fields. The old copy promised more than the hosting delivers, and the site's privacy
+policy did not list the update check among the cases where data leaves the device.
+**Rejected:** *Saying the IP is kept "temporarily"* — Amplify gives no period to back it.
+*Keeping the old copy until the site moves to a host whose logs can omit the IP* — it would
+stay wrong meanwhile, and any host still receives the IP to answer the request, so the
+honest promise is about what the project keeps, never that nobody sees it.
