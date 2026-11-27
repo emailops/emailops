@@ -141,10 +141,12 @@ L'application ne collecte aucune donnée d'usage et n'envoie aucun rapport de pl
 seule requête qu'elle adresse au projet est la vérification quotidienne des mises à jour :
 elle télécharge depuis getemailops.com un petit fichier qui indique la dernière version. Le
 fichier et son adresse sont les mêmes pour tout le monde, et la requête ne contient rien sur
-vous, vos e-mails ou votre copie de l'application : ni identifiant, ni version de
-l'application, ni système d'exploitation. L'hébergeur du site voit la requête, comme tout
-serveur web, et le nombre de requêtes par jour est le seul chiffre dont dispose le projet sur
-le nombre de copies en service.
+vos e-mails ou votre copie de l'application : ni identifiant, ni version de l'application, ni
+système d'exploitation. Le site est hébergé sur AWS Amplify, qui enregistre chaque requête,
+avec l'adresse IP dont elle provient, dans des journaux d'accès qu'il conserve tant que le site
+y est hébergé ; Amplify ne permet ni de les désactiver ni de raccourcir cette durée. Le projet
+ne lit que le nombre de requêtes par jour, le seul chiffre dont il dispose sur le nombre de
+copies en service.
 **Vérifier les nouvelles versions**, dans **Paramètres → Confidentialité et sécurité**, désactive
 la vérification : l'application ne contacte alors plus getemailops.com et ne vous signale plus
 les nouvelles versions.

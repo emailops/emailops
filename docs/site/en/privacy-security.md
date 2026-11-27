@@ -134,9 +134,11 @@ email footer; nothing in it identifies you or the recipient.
 The app collects no usage analytics and sends no crash reports. The one request it makes to
 the project is the daily update check: it downloads a small file from getemailops.com that
 names the latest version. The file and its address are the same for everyone, and the request
-carries nothing about you, your mail or your copy of the app: no identifier, no app version,
-no operating system. The website's host sees the request, as any web server does, and the
-number of requests per day is the only figure the project has on how many copies are in use.
+carries nothing about your mail or your copy of the app: no identifier, no app version, no
+operating system. The site is hosted on AWS Amplify, which records every request, with the IP
+address it came from, in access logs it keeps for as long as the site is hosted there; Amplify
+offers no way to turn them off or shorten that period. The project reads only the number of
+requests per day, the one figure it has on how many copies are in use.
 **Check for new versions** in **Settings → Privacy & Security** turns the check off: the app
 then never contacts getemailops.com and no longer tells you about new versions.
 (The source tree contains an optional OpenTelemetry tracing feature for local development; it is

@@ -576,7 +576,7 @@
     "allowRemoteToggleDesc": "Lorsque c'est désactivé, les images externes et trackers sont bloqués. Un bandeau vous permet de les charger par courriel.",
     "updates": "Mises à jour",
     "updateCheckToggle": "Vérifier les nouvelles versions",
-    "updateCheckToggleDesc": "Une fois par jour, EmailOps télécharge depuis getemailops.com un petit fichier qui indique la dernière version. La requête est la même pour tout le monde et ne dit rien sur vous. Si c'est désactivé, l'application ne contacte jamais getemailops.com et ne vous signale pas les nouvelles versions.",
+    "updateCheckToggleDesc": "Une fois par jour, EmailOps télécharge depuis getemailops.com un petit fichier qui indique la dernière version. La requête ne contient ni identifiant, ni version de l'application, ni détails sur votre système, mais l'hébergeur du site (AWS) enregistre votre adresse IP, comme pour toute visite d'un site web. Si c'est désactivé, l'application ne contacte jamais getemailops.com et ne vous signale pas les nouvelles versions.",
     "privacyPolicyLink": "Politique de confidentialité",
     "loading": "Chargement...",
     "loadFailed": "Impossible de charger les paramètres de confidentialité : {{error}}",
